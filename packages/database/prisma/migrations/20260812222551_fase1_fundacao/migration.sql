@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "LeadStatus" AS ENUM ('NOVO', 'IMPORTADO', 'PRONTO', 'EM_CAMPANHA', 'AGUARDANDO_RESPOSTA', 'AGENDADO', 'ATENCAO_NECESSARIA', 'ENCERRADO', 'OPORTUNIDADE', 'CLIENTE');
+CREATE TYPE "LeadStatus" AS ENUM ('NOVO', 'IMPORTADO', 'PRONTO', 'EM_CAMPANHA', 'AGUARDANDO_RESPOSTA', 'EM_CONVERSA', 'AGUARDANDO_INTERVENCAO', 'AGENDADO', 'PAUSADO', 'ENCERRADO', 'OPT_OUT', 'OPORTUNIDADE', 'CLIENTE');
 
 -- CreateEnum
 CREATE TYPE "Temperatura" AS ENUM ('FRIO', 'MORNO', 'QUENTE');
@@ -23,7 +23,7 @@ CREATE TYPE "SnoozeUnidade" AS ENUM ('HORAS', 'DIAS', 'DATA_ESPECIFICA');
 CREATE TYPE "CampaignStatus" AS ENUM ('RASCUNHO', 'ATIVA', 'PAUSADA', 'CONCLUIDA', 'ARQUIVADA');
 
 -- CreateEnum
-CREATE TYPE "LeadCampaignStatus" AS ENUM ('PENDENTE', 'EM_ANDAMENTO', 'AGUARDANDO_RESPOSTA', 'AGUARDANDO_INTERVENCAO', 'AGENDADO', 'CONCLUIDO', 'PARADO', 'OPT_OUT');
+CREATE TYPE "LeadCampaignStatus" AS ENUM ('PENDENTE', 'EM_ANDAMENTO', 'AGUARDANDO_RESPOSTA', 'AGUARDANDO_INTERVENCAO', 'AGENDADO', 'PAUSADO', 'CONCLUIDO', 'PARADO', 'OPT_OUT');
 
 -- CreateEnum
 CREATE TYPE "MessageDirection" AS ENUM ('ENVIADA', 'RECEBIDA');
@@ -44,7 +44,7 @@ CREATE TYPE "TaskType" AS ENUM ('CRIAR_PREVIEW', 'RESPONDER_CLIENTE', 'ENVIAR_PR
 CREATE TYPE "NotificationLevel" AS ENUM ('INFO', 'SUCESSO', 'ALERTA', 'ERRO');
 
 -- CreateEnum
-CREATE TYPE "NotificationType" AS ENUM ('LEAD_QUENTE', 'ATENCAO_NECESSARIA', 'RESPOSTA_RECEBIDA', 'PEDIDO_PREVIEW', 'PEDIDO_PRECO', 'OPT_OUT', 'CAMPANHA_INICIADA', 'CAMPANHA_PAUSADA', 'CAMPANHA_CONCLUIDA', 'WHATSAPP_CONECTADO', 'WHATSAPP_DESCONECTADO', 'IMPORTACAO_CONCLUIDA', 'IMPORTACAO_FALHOU', 'ENVIO_FALHOU', 'LIMITE_DIARIO_ATINGIDO', 'SISTEMA');
+CREATE TYPE "NotificationType" AS ENUM ('LEAD_QUENTE', 'INTERVENCAO_NECESSARIA', 'RESPOSTA_RECEBIDA', 'PEDIDO_PREVIEW', 'PEDIDO_PRECO', 'OPT_OUT', 'CAMPANHA_INICIADA', 'CAMPANHA_PAUSADA', 'CAMPANHA_CONCLUIDA', 'WHATSAPP_CONECTADO', 'WHATSAPP_DESCONECTADO', 'IMPORTACAO_CONCLUIDA', 'IMPORTACAO_FALHOU', 'ENVIO_FALHOU', 'LIMITE_DIARIO_ATINGIDO', 'SISTEMA');
 
 -- CreateEnum
 CREATE TYPE "JobStatus" AS ENUM ('PENDENTE', 'AGENDADO', 'EXECUTANDO', 'CONCLUIDO', 'FALHOU', 'CANCELADO');
@@ -59,7 +59,7 @@ CREATE TYPE "ImportRowStatus" AS ENUM ('PENDENTE', 'IMPORTADO', 'DUPLICADO', 'IN
 CREATE TYPE "DedupeCriterio" AS ENUM ('TELEFONE', 'NOME_ENDERECO', 'NOME_CIDADE');
 
 -- CreateEnum
-CREATE TYPE "LeadEventType" AS ENUM ('CRIADO', 'IMPORTADO', 'NORMALIZADO', 'DUPLICADO_DETECTADO', 'WEBSITE_VERIFICADO', 'STATUS_ALTERADO', 'TEMPERATURA_ALTERADA', 'ENTROU_EM_CAMPANHA', 'SAIU_DA_CAMPANHA', 'MENSAGEM_ENVIADA', 'MENSAGEM_SIMULADA', 'MENSAGEM_FALHOU', 'MENSAGEM_RECEBIDA', 'RESPOSTA_CLASSIFICADA', 'RESPOSTA_NAO_RECONHECIDA', 'ETAPA_AVANCADA', 'SNOOZE_AGENDADO', 'SNOOZE_CANCELADO', 'OPT_OUT_REGISTRADO', 'TAREFA_CRIADA', 'TAREFA_CONCLUIDA', 'LIBERADO_MANUALMENTE', 'OBSERVACAO_ADICIONADA', 'EDITADO_MANUALMENTE');
+CREATE TYPE "LeadEventType" AS ENUM ('CRIADO', 'IMPORTADO', 'NORMALIZADO', 'DUPLICADO_DETECTADO', 'WEBSITE_VERIFICADO', 'STATUS_ALTERADO', 'TEMPERATURA_ALTERADA', 'ENTROU_EM_CAMPANHA', 'SAIU_DA_CAMPANHA', 'MENSAGEM_ENVIADA', 'MENSAGEM_SIMULADA', 'MENSAGEM_FALHOU', 'MENSAGEM_RECEBIDA', 'RESPOSTA_CLASSIFICADA', 'RESPOSTA_NAO_RECONHECIDA', 'ETAPA_AVANCADA', 'SNOOZE_AGENDADO', 'SNOOZE_CANCELADO', 'OPT_OUT_REGISTRADO', 'INTERVENCAO_NECESSARIA', 'INTERVENCAO_RESOLVIDA', 'PAUSADO_MANUALMENTE', 'RETOMADO_MANUALMENTE', 'TAREFA_CRIADA', 'TAREFA_CONCLUIDA', 'LIBERADO_MANUALMENTE', 'OBSERVACAO_ADICIONADA', 'EDITADO_MANUALMENTE');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -108,6 +108,7 @@ CREATE TABLE "social_domains" (
     "dominio" TEXT NOT NULL,
     "rotulo" TEXT,
     "ativo" BOOLEAN NOT NULL DEFAULT true,
+    "incluir_subdominios" BOOLEAN NOT NULL DEFAULT true,
     "padrao" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -137,6 +138,7 @@ CREATE TABLE "capture_sessions" (
     "cidade" TEXT NOT NULL,
     "estado" TEXT,
     "observacao" TEXT,
+    "fonte_url" TEXT,
     "user_id" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
@@ -218,11 +220,18 @@ CREATE TABLE "leads" (
     "opt_out" BOOLEAN NOT NULL DEFAULT false,
     "opt_out_em" TIMESTAMP(3),
     "origem" TEXT,
+    "fonte_url" TEXT,
     "capture_session_id" TEXT,
     "import_id" TEXT,
     "capturado_em" TIMESTAMP(3),
+    "importado_em" TIMESTAMP(3),
+    "dados_brutos" JSONB,
+    "chave_dedupe" TEXT,
     "ultima_interacao_em" TIMESTAMP(3),
     "ultima_mensagem_em" TIMESTAMP(3),
+    "ultima_categoria" "RespostaCategoria",
+    "proxima_acao" TEXT,
+    "proxima_acao_em" TIMESTAMP(3),
     "observacoes" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
@@ -383,6 +392,7 @@ CREATE TABLE "messages" (
     "categoria" "RespostaCategoria",
     "categorias_detectadas" JSONB,
     "termos_casados" JSONB,
+    "campaign_step_rule_id" TEXT,
     "texto_normalizado" TEXT,
     "erro" TEXT,
     "tentativas" INTEGER NOT NULL DEFAULT 0,
@@ -424,6 +434,7 @@ CREATE TABLE "notifications" (
     "titulo" TEXT NOT NULL,
     "mensagem" TEXT NOT NULL,
     "link" TEXT,
+    "prioridade" INTEGER NOT NULL DEFAULT 50,
     "lida" BOOLEAN NOT NULL DEFAULT false,
     "lida_em" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -498,10 +509,16 @@ CREATE INDEX "imports_capture_session_id_idx" ON "imports"("capture_session_id")
 CREATE INDEX "import_rows_import_id_status_idx" ON "import_rows"("import_id", "status");
 
 -- CreateIndex
+CREATE INDEX "import_rows_lead_duplicado_id_idx" ON "import_rows"("lead_duplicado_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "import_rows_import_id_numero_linha_key" ON "import_rows"("import_id", "numero_linha");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "leads_telefone_normalizado_key" ON "leads"("telefone_normalizado");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "leads_chave_dedupe_key" ON "leads"("chave_dedupe");
 
 -- CreateIndex
 CREATE INDEX "leads_status_idx" ON "leads"("status");
@@ -529,6 +546,12 @@ CREATE INDEX "leads_opt_out_idx" ON "leads"("opt_out");
 
 -- CreateIndex
 CREATE INDEX "leads_ultima_interacao_em_idx" ON "leads"("ultima_interacao_em");
+
+-- CreateIndex
+CREATE INDEX "leads_ultima_categoria_idx" ON "leads"("ultima_categoria");
+
+-- CreateIndex
+CREATE INDEX "leads_proxima_acao_em_idx" ON "leads"("proxima_acao_em");
 
 -- CreateIndex
 CREATE INDEX "leads_nome_completo_cidade_idx" ON "leads"("nome_completo", "cidade");
@@ -582,6 +605,12 @@ CREATE UNIQUE INDEX "messages_idempotency_key_key" ON "messages"("idempotency_ke
 CREATE UNIQUE INDEX "messages_whatsapp_message_id_key" ON "messages"("whatsapp_message_id");
 
 -- CreateIndex
+CREATE INDEX "messages_campaign_step_rule_id_idx" ON "messages"("campaign_step_rule_id");
+
+-- CreateIndex
+CREATE INDEX "messages_categoria_idx" ON "messages"("categoria");
+
+-- CreateIndex
 CREATE INDEX "messages_conversation_id_created_at_idx" ON "messages"("conversation_id", "created_at");
 
 -- CreateIndex
@@ -606,7 +635,7 @@ CREATE INDEX "tasks_lead_id_idx" ON "tasks"("lead_id");
 CREATE INDEX "tasks_prazo_idx" ON "tasks"("prazo");
 
 -- CreateIndex
-CREATE INDEX "notifications_lida_created_at_idx" ON "notifications"("lida", "created_at");
+CREATE INDEX "notifications_lida_prioridade_created_at_idx" ON "notifications"("lida", "prioridade", "created_at");
 
 -- CreateIndex
 CREATE INDEX "notifications_lead_id_idx" ON "notifications"("lead_id");
@@ -640,6 +669,9 @@ ALTER TABLE "import_rows" ADD CONSTRAINT "import_rows_import_id_fkey" FOREIGN KE
 
 -- AddForeignKey
 ALTER TABLE "import_rows" ADD CONSTRAINT "import_rows_lead_id_fkey" FOREIGN KEY ("lead_id") REFERENCES "leads"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "import_rows" ADD CONSTRAINT "import_rows_lead_duplicado_id_fkey" FOREIGN KEY ("lead_duplicado_id") REFERENCES "leads"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "leads" ADD CONSTRAINT "leads_capture_session_id_fkey" FOREIGN KEY ("capture_session_id") REFERENCES "capture_sessions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -688,6 +720,9 @@ ALTER TABLE "messages" ADD CONSTRAINT "messages_campaign_id_fkey" FOREIGN KEY ("
 
 -- AddForeignKey
 ALTER TABLE "messages" ADD CONSTRAINT "messages_campaign_step_id_fkey" FOREIGN KEY ("campaign_step_id") REFERENCES "campaign_steps"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "messages" ADD CONSTRAINT "messages_campaign_step_rule_id_fkey" FOREIGN KEY ("campaign_step_rule_id") REFERENCES "campaign_step_rules"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_lead_id_fkey" FOREIGN KEY ("lead_id") REFERENCES "leads"("id") ON DELETE CASCADE ON UPDATE CASCADE;

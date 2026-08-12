@@ -130,7 +130,7 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | Instalação passo a passo no Windows 11 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Camadas, decisões técnicas e o porquê de cada uma |
-| [docs/DATABASE.md](docs/DATABASE.md) | As 19 tabelas, campos, índices e constraints |
+| [docs/DATABASE.md](docs/DATABASE.md) | As 20 tabelas, campos, índices e constraints |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Cada variável do `.env` explicada |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | O que fazer quando algo não sobe |
 

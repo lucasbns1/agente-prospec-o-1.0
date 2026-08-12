@@ -17,6 +17,10 @@ export const EVENT_TYPES = [
   'lead.atualizado',
   'lead.temperatura_alterada',
   'lead.status_alterado',
+  /// O evento de MAIOR prioridade do sistema: uma resposta nao foi
+  /// reconhecida e a automacao parou esperando voce.
+  'lead.intervencao_necessaria',
+  'lead.opt_out',
   'mensagem.enviada',
   'mensagem.simulada',
   'mensagem.recebida',
@@ -66,4 +70,21 @@ export interface NotificacaoEvent {
   titulo: string;
   mensagem: string;
   link?: string | null;
+  prioridade: number;
+}
+
+/**
+ * Emitido quando o motor de regras NAO reconhece uma resposta.
+ *
+ * A automacao para nesse ponto. O sistema nao tenta adivinhar, nao envia
+ * a proxima mensagem e nao responde nada — apenas avisa voce.
+ */
+export interface IntervencaoEvent {
+  leadId: string;
+  nome: string | null;
+  /// A mensagem do lead que o sistema nao soube classificar.
+  textoRecebido: string;
+  etapaAtual: string | null;
+  campanha: string | null;
+  em: string;
 }

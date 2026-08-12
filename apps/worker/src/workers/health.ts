@@ -10,7 +10,7 @@
  */
 import { Worker, type Job } from 'bullmq';
 import { QUEUES } from '@prospector/shared';
-import { prisma } from '@prospector/database';
+import { prisma, Prisma } from '@prospector/database';
 import { opcoesRedis } from '../redis.js';
 import { publicarEvento } from '../events.js';
 import type { Logger } from 'pino';
@@ -27,24 +27,25 @@ export function criarWorkerHealth(log: Logger): Worker<HealthJobData> {
       const { mensagem, idempotencyKey } = job.data;
 
       // --- Padrao de idempotencia ---
-      // Tenta reservar a chave ANTES de fazer qualquer coisa. Se ela ja
-      // existe, este job e um retry de algo que ja rodou: aborta em vez
-      // de repetir o efeito.
-      const existente = await prisma.job.findUnique({
-        where: { idempotencyKey },
-      });
-
-      if (existente && existente.status === 'CONCLUIDO') {
-        log.warn(
-          { idempotencyKey, jobId: job.id },
-          'Job ja executado anteriormente — ignorando retry'
-        );
-        return { ignorado: true, motivo: 'ja_executado' };
-      }
-
-      const registro =
-        existente ??
-        (await prisma.job.create({
+      //
+      // Tenta RESERVAR a chave antes de fazer qualquer coisa. Se ela ja
+      // existe, este job e um retry (ou uma corrida com outro worker) e
+      // precisa abortar sem repetir o efeito.
+      //
+      // ATENCAO — POR QUE NAO E UM `findUnique` SEGUIDO DE `create`:
+      // esse par nao e atomico. Com dois workers (ou dois processos apos
+      // um restart mal feito), ambos podem ler "nao existe" e tentar
+      // criar. A constraint UNIQUE impede a linha duplicada, mas o
+      // segundo `create` lanca P2002 — e um job que ESTOURA e reenfileirado
+      // pelo BullMQ, o que na Fase 7 significaria tentar reenviar uma
+      // mensagem que ja saiu.
+      //
+      // A forma correta e tentar o INSERT direto e tratar a colisao como
+      // "ja processado". A decisao fica com o banco, que e o unico ponto
+      // onde a operacao e realmente atomica.
+      let registro;
+      try {
+        registro = await prisma.job.create({
           data: {
             fila: QUEUES.CREATE_NOTIFICATION,
             bullJobId: job.id ?? null,
@@ -53,7 +54,20 @@ export function criarWorkerHealth(log: Logger): Worker<HealthJobData> {
             payload: { mensagem },
             iniciadoEm: new Date(),
           },
-        }));
+        });
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          log.warn(
+            { idempotencyKey, jobId: job.id },
+            'Chave de idempotencia ja reservada — ignorando retry, nada sera reexecutado'
+          );
+          return { ignorado: true, motivo: 'ja_executado' };
+        }
+        throw err;
+      }
 
       log.info({ mensagem, jobId: job.id }, 'Health job executado');
 

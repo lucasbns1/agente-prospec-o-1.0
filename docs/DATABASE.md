@@ -4,6 +4,9 @@
 > MÁQUINA.** Leia as decisões de modelagem abaixo. Se algo estiver errado,
 > eu ajusto o schema e regenero a migration — nada foi executado no seu
 > computador ainda.
+>
+> **Revisado na auditoria pós-Fase 1.** 10 correções aplicadas; ver
+> [Correções da auditoria](#correções-da-auditoria) no final.
 
 PostgreSQL 16 + Prisma 6. O banco é a fonte de verdade do sistema.
 
@@ -11,13 +14,20 @@ PostgreSQL 16 + Prisma 6. O banco é a fonte de verdade do sistema.
 
 ## Contagem de tabelas
 
-Você pediu 16 entidades. O schema tem **19**. As três a mais e o motivo:
+**São 20 tabelas, não 19.** O relatório da Fase 1 dizia 19 — eu contei
+errado. A contagem verificada no banco está abaixo.
+
+Você listou 17 entidades no documento original (`users`, `leads`,
+`campaigns`, `campaign_steps`, `campaign_step_rules`, `lead_campaigns`,
+`conversations`, `messages`, `lead_events`, `tasks`, `notifications`,
+`jobs`, `settings`, `capture_sessions`, `imports`, `import_rows`,
+`website_checks`). Todas existem. As **3 a mais**:
 
 | Tabela extra | Por que existe |
 |---|---|
 | `sessions` | Login por cookie precisa de sessão persistida. Sem ela, reiniciar a API deslogaria você. |
 | `social_domains` | Você pediu que a lista de domínios sociais fosse **configurável pelo painel**. Uma tabela permite CRUD direto; um JSON solto dentro de `settings` não. |
-| `response_keywords` | Mesma razão: você pediu para "abrir o painel e alterar/adicionar palavras de cada categoria". Uma tabela por termo permite editar, desativar e pesquisar. |
+| `response_keywords` | Mesma razão: você pediu para "abrir o painel e alterar/adicionar palavras de cada categoria". Uma tabela por termo permite editar, desativar, pesquisar e ter escopo por etapa. |
 
 Se preferir, `social_domains` e `response_keywords` podem virar chaves JSON
 dentro de `settings` — mas a tela de configuração fica bem pior. **Recomendo
@@ -29,10 +39,12 @@ manter como tabelas.**
 
 ### `LeadStatus` — onde o lead está no processo
 `NOVO` · `IMPORTADO` · `PRONTO` · `EM_CAMPANHA` · `AGUARDANDO_RESPOSTA` ·
-`AGENDADO` · `ATENCAO_NECESSARIA` · `ENCERRADO` · `OPORTUNIDADE` · `CLIENTE`
+`EM_CONVERSA` · `AGUARDANDO_INTERVENCAO` · `AGENDADO` · `PAUSADO` ·
+`ENCERRADO` · `OPT_OUT` · `OPORTUNIDADE` · `CLIENTE`
 
-> `AGENDADO` foi acrescentado à sua lista original para suportar o snooze
-> do "falar depois".
+Cobre integralmente a lista do requisito 15. `AGUARDANDO_INTERVENCAO` é o
+estado central da regra crítica de resposta: o sistema entra nele quando não
+reconhece uma resposta, e **nunca sai dele sozinho**.
 
 ### `Temperatura` — quão perto de comprar
 `FRIO` · `MORNO` · `QUENTE`
@@ -70,7 +82,7 @@ limite diário** — só `ENVIADA`, `ENTREGUE` e `LIDA` contam.
 
 ---
 
-## As 19 tabelas
+## As 20 tabelas
 
 ### Autenticação
 | Tabela | Papel |
@@ -154,13 +166,22 @@ retry rodar a mesma unidade de trabalho, o INSERT colide e o envio é
 abortado. O BullMQ sozinho **não** garante execução única — a garantia vem
 do banco. Isso foi testado: 3 jobs com a mesma chave → 1 execução, 1 linha.
 
-### 4. Deduplicação com apoio de índice
+### 4. Deduplicação garantida pelo banco nas três prioridades
 
 - `leads.telefoneNormalizado` — `UNIQUE` (prioridade 1)
-- índice composto `(nomeCompleto, cidade)` (prioridades 2 e 3)
+- `leads.chaveDedupe` — `UNIQUE` (prioridades 2 e 3)
+- índice composto `(nomeCompleto, cidade)` para a busca
 
-O Postgres permite múltiplos `NULL` em coluna `UNIQUE`, então leads sem
-telefone não colidem entre si — que é o comportamento desejado.
+O Postgres aceita vários `NULL` numa coluna `UNIQUE`. Isso é o que queremos
+para o telefone — leads sem telefone não devem colidir *por causa do
+telefone*. Mas significa que, **só com essa constraint**, dois leads com o
+mesmo nome e endereço e sem telefone entrariam os dois.
+
+Por isso existe `chaveDedupe`: um hash determinístico calculado na
+importação, na ordem telefone → nome+endereço → nome+cidade. Com ele, as
+prioridades 2 e 3 passam a ser garantidas pelo banco, e não apenas pela
+lógica da aplicação — que pode ter bug ou ser contornada por uma inserção
+manual.
 
 ### 5. `lead_events` é append-only
 
@@ -229,3 +250,84 @@ pnpm db:reset          # APAGA TUDO e recria
 
 O schema completo, com comentários linha a linha, está em
 `packages/database/prisma/schema.prisma`.
+
+---
+
+## Correções da auditoria
+
+Auditoria feita após a Fase 1, comparando o schema com o documento completo
+de requisitos. Foram encontrados **10 problemas**, todos corrigidos antes de
+qualquer código de negócio ser escrito.
+
+### 1. `LeadStatus` não cobria a lista do requisito 15
+Faltavam `EM_CONVERSA`, `PAUSADO` e `OPT_OUT`, e `ATENCAO_NECESSARIA` tinha
+nome diferente do que você especificou.
+**Correção:** renomeado para `AGUARDANDO_INTERVENCAO` e os três status
+acrescentados.
+
+### 2. `ImportRow.leadDuplicadoId` era uma FK fantasma
+Coluna sem `@relation`: nada impedia apontar para um lead inexistente, e
+apagar um lead deixaria a referência quebrada em silêncio — a auditoria da
+importação mentiria.
+**Correção:** relação explícita `LinhaDuplicouLead` com `onDelete: SetNull`.
+
+### 3. Deduplicação sem telefone não era garantida pelo banco
+`telefoneNormalizado` é `UNIQUE`, mas o Postgres aceita vários `NULL`. Dois
+leads com o mesmo nome e endereço, ambos sem telefone, **entrariam os dois**.
+**Correção:** coluna `chaveDedupe` `UNIQUE`, preenchida na importação com um
+hash determinístico (telefone → nome+endereço → nome+cidade). As prioridades
+2 e 3 passam a ser garantidas pelo banco, não pela aplicação.
+
+### 4. Não guardávamos qual regra foi acionada (requisito 12)
+`Message.termosCasados` dizia quais palavras casaram, mas não qual
+configuração de campanha decidiu a ação.
+**Correção:** `Message.campaignStepRuleId` com FK para `CampaignStepRule`.
+
+### 5. Faltava a URL da fonte (requisito 6)
+**Correção:** `Lead.fonteUrl` (ficha no Google Maps) e
+`CaptureSession.fonteUrl` (a busca que originou a captura).
+
+### 6. Faltavam dados brutos no próprio lead (requisito 6)
+Os dados crus só existiam em `ImportRow`. Apagar uma importação antiga
+deixaria o lead sem origem rastreável.
+**Correção:** `Lead.dadosBrutos` (JSON) e `Lead.importadoEm`.
+
+### 7. Faltava "próxima ação" (requisito 6)
+**Correção:** `Lead.proximaAcao` e `Lead.proximaAcaoEm`, com índice.
+
+### 8. Dashboard não tinha como contar "negativos" e "interessados"
+Só dava para saber varrendo `messages` a cada carregamento.
+**Correção:** `Lead.ultimaCategoria` denormalizada e indexada.
+
+### 9. Domínios sociais não cobriam subdomínios
+`m.facebook.com` precisava ser cadastrado à mão, e `br.instagram.com`
+passaria como site próprio.
+**Correção:** `SocialDomain.incluirSubdominios`. Um domínio desconhecido
+continua **nunca** virando rede social automaticamente — o casamento só
+ocorre contra esta lista.
+
+### 10. Notificações não tinham ordem de prioridade
+Ordenar "o que importa primeiro" exigiria um `CASE` sobre o tipo em toda
+consulta.
+**Correção:** `Notification.prioridade` (menor = primeiro), com
+`INTERVENCAO_NECESSARIA = 1`, e índice `(lida, prioridade, createdAt)`.
+
+---
+
+## Bug encontrado fora do schema
+
+A auditoria também expôs uma **corrida no padrão de idempotência** do worker.
+
+O código fazia `findUnique` e depois `create`. Esse par **não é atômico**:
+com dois workers (ou um restart mal feito deixando dois processos), ambos
+leem "não existe" e tentam criar. A constraint `UNIQUE` impedia a linha
+duplicada — mas o segundo `create` lançava `P2002` **não tratado**, e um job
+que estoura é reenfileirado pelo BullMQ. Na Fase 7 isso significaria tentar
+reenviar uma mensagem que já saiu.
+
+**Correção:** `INSERT` direto com `try/catch` em `P2002`, tratando a colisão
+como "já processado". A decisão fica com o banco, único ponto onde a
+operação é realmente atômica.
+
+**Verificado:** 6 jobs simultâneos com a mesma chave e 2 workers competindo →
+1 execução, 5 bloqueios limpos, 0 falhas, 1 linha no banco.

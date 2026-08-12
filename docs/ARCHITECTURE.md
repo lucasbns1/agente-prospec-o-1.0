@@ -241,7 +241,7 @@ preview sozinho.
 | Componente | Estado |
 |---|---|
 | Monorepo pnpm | ✅ funcionando |
-| PostgreSQL + Prisma, 19 tabelas | ✅ migration aplicada e testada |
+| PostgreSQL + Prisma, 20 tabelas | ✅ migration aplicada e testada |
 | Redis + BullMQ, 8 filas | ✅ registradas, esteira testada |
 | API Fastify | ✅ health, auth, SSE, dashboard, settings |
 | Autenticação Argon2 + cookie | ✅ testada (login, 401, sessão) |

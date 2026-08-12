@@ -15,13 +15,38 @@ export const LEAD_STATUS = [
   'PRONTO',
   'EM_CAMPANHA',
   'AGUARDANDO_RESPOSTA',
+  'EM_CONVERSA',
+  'AGUARDANDO_INTERVENCAO',
   'AGENDADO',
-  'ATENCAO_NECESSARIA',
+  'PAUSADO',
   'ENCERRADO',
+  'OPT_OUT',
   'OPORTUNIDADE',
   'CLIENTE',
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUS)[number];
+
+/**
+ * Status que significam "este lead esta parado esperando VOCE".
+ * Alimenta a secao "precisa da sua atencao" do dashboard.
+ */
+export const STATUS_PRECISA_ATENCAO: readonly LeadStatus[] = [
+  'AGUARDANDO_INTERVENCAO',
+];
+
+/** Status que contam como "ja foi prospectado". */
+export const STATUS_PROSPECTADO: readonly LeadStatus[] = [
+  'EM_CAMPANHA',
+  'AGUARDANDO_RESPOSTA',
+  'EM_CONVERSA',
+  'AGUARDANDO_INTERVENCAO',
+  'AGENDADO',
+  'PAUSADO',
+  'ENCERRADO',
+  'OPT_OUT',
+  'OPORTUNIDADE',
+  'CLIENTE',
+];
 
 export const TEMPERATURA = ['FRIO', 'MORNO', 'QUENTE'] as const;
 export type Temperatura = (typeof TEMPERATURA)[number];

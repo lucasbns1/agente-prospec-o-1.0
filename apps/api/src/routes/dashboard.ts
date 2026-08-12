@@ -11,7 +11,11 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '@prospector/database';
-import type { DashboardResponse } from '@prospector/shared';
+import {
+  STATUS_ENVIO_REAL,
+  STATUS_PROSPECTADO,
+  type DashboardResponse,
+} from '@prospector/shared';
 import { exigirAutenticacao } from '../plugins/auth.js';
 
 export async function rotasDashboard(app: FastifyInstance): Promise<void> {
@@ -24,9 +28,15 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
         totalImportados,
         totalProspectados,
         semSite,
+        comSite,
         aguardandoResposta,
+        emConversa,
+        intervencoesPendentes,
+        interessados,
+        negativos,
         mensagensEnviadas,
-        respostasRecebidas,
+        mensagensRecebidas,
+        errosEnvio,
         frios,
         mornos,
         quentes,
@@ -36,32 +46,27 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
       ] = await Promise.all([
         prisma.lead.count(),
         prisma.lead.count({ where: { importId: { not: null } } }),
-        prisma.lead.count({
-          where: {
-            status: {
-              in: [
-                'EM_CAMPANHA',
-                'AGUARDANDO_RESPOSTA',
-                'AGENDADO',
-                'ATENCAO_NECESSARIA',
-                'OPORTUNIDADE',
-                'CLIENTE',
-                'ENCERRADO',
-              ],
-            },
-          },
-        }),
+        prisma.lead.count({ where: { status: { in: [...STATUS_PROSPECTADO] } } }),
         // "Sem site proprio" = tudo que NAO for SITE_PROPRIO e que ja
         // tenha passado pela verificacao.
         prisma.lead.count({
           where: { websiteStatus: { in: ['NAO_INFORMADO', 'REDE_SOCIAL', 'INVALIDO'] } },
         }),
+        prisma.lead.count({ where: { websiteStatus: 'SITE_PROPRIO' } }),
         prisma.lead.count({ where: { status: 'AGUARDANDO_RESPOSTA' } }),
+        prisma.lead.count({ where: { status: 'EM_CONVERSA' } }),
+        prisma.lead.count({ where: { status: 'AGUARDANDO_INTERVENCAO' } }),
+        // Usa a categoria denormalizada no lead — sem varrer mensagens.
+        prisma.lead.count({
+          where: { ultimaCategoria: { in: ['POSITIVO', 'INTERESSE', 'PRECO'] } },
+        }),
+        prisma.lead.count({ where: { ultimaCategoria: 'NEGATIVO' } }),
         // Apenas envios REAIS. Simulacoes (dry-run) ficam de fora.
         prisma.message.count({
-          where: { direcao: 'ENVIADA', status: { in: ['ENVIADA', 'ENTREGUE', 'LIDA'] } },
+          where: { direcao: 'ENVIADA', status: { in: [...STATUS_ENVIO_REAL] } },
         }),
         prisma.message.count({ where: { direcao: 'RECEBIDA' } }),
+        prisma.message.count({ where: { status: 'FALHOU' } }),
         prisma.lead.count({ where: { temperatura: 'FRIO' } }),
         prisma.lead.count({ where: { temperatura: 'MORNO' } }),
         prisma.lead.count({ where: { temperatura: 'QUENTE' } }),
@@ -70,15 +75,27 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
         prisma.task.count({ where: { status: { in: ['ABERTA', 'EM_ANDAMENTO'] } } }),
       ]);
 
+      // Campanha ativa: na Fase 1 ainda nao existe nenhuma.
+      const campanha = await prisma.campaign.findFirst({
+        where: { status: 'ATIVA' },
+        orderBy: { iniciadaEm: 'desc' },
+      });
+
       return {
         metricas: {
           totalLeads,
           totalImportados,
           totalProspectados,
           semSite,
+          comSite,
           aguardandoResposta,
+          emConversa,
+          intervencoesPendentes,
+          interessados,
+          negativos,
           mensagensEnviadas,
-          respostasRecebidas,
+          mensagensRecebidas,
+          errosEnvio,
           frios,
           mornos,
           quentes,
@@ -86,13 +103,26 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
           clientes,
           tarefasPendentes,
         },
+        campanhaAtiva: campanha
+          ? {
+              id: campanha.id,
+              nome: campanha.nome,
+              nicho: campanha.nicho,
+              cidade: campanha.cidade,
+              totalLeads: 0,
+              enviadasHoje: 0,
+              respostas: 0,
+              quentes: 0,
+              limiteDiario: campanha.limiteDiarioEnvios,
+            }
+          : null,
         // Populada na Fase 9, quando existirem leads e conversas.
         atencao: [],
         funil: [
           { rotulo: 'Capturados', total: totalLeads },
           { rotulo: 'Sem site', total: semSite },
           { rotulo: 'Prospectados', total: totalProspectados },
-          { rotulo: 'Responderam', total: respostasRecebidas },
+          { rotulo: 'Responderam', total: mensagensRecebidas },
           { rotulo: 'Mornos', total: mornos },
           { rotulo: 'Quentes', total: quentes },
           { rotulo: 'Clientes', total: clientes },

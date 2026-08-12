@@ -37,11 +37,14 @@ enum LeadStatus {
   NOVO // criado manualmente, ainda sem tratamento
   IMPORTADO // veio de um CSV/XLSX, ainda nao normalizado
   PRONTO // normalizado e validado, pode entrar em campanha
-  EM_CAMPANHA // sequencia em andamento
+  EM_CAMPANHA // entrou na campanha, primeira mensagem ainda nao saiu
   AGUARDANDO_RESPOSTA // mensagem enviada, esperando o lead responder
+  EM_CONVERSA // o lead ja respondeu; ha troca ativa em andamento
+  AGUARDANDO_INTERVENCAO // resposta nao reconhecida: PRECISA DE VOCE
   AGENDADO // lead pediu para falar depois (snooze ativo)
-  ATENCAO_NECESSARIA // precisa de intervencao humana
+  PAUSADO // sequencia suspensa manualmente por voce
   ENCERRADO // sequencia terminada sem conversao
+  OPT_OUT // pediu para nao receber mais. Terminal e irreversivel.
   OPORTUNIDADE // negociacao em andamento
   CLIENTE // fechou
 }
@@ -119,8 +122,9 @@ enum LeadCampaignStatus {
   AGUARDANDO_RESPOSTA
   AGUARDANDO_INTERVENCAO
   AGENDADO // snooze ativo
+  PAUSADO // suspenso manualmente por voce
   CONCLUIDO // chegou ao fim da sequencia
-  PARADO // interrompido por regra ou manualmente
+  PARADO // interrompido por uma regra
   OPT_OUT // lead pediu para nao receber mais
 }
 
@@ -177,7 +181,8 @@ enum NotificationLevel {
 
 enum NotificationType {
   LEAD_QUENTE
-  ATENCAO_NECESSARIA
+  /// A notificacao de maior prioridade do sistema (requisito 16).
+  INTERVENCAO_NECESSARIA
   RESPOSTA_RECEBIDA
   PEDIDO_PREVIEW
   PEDIDO_PRECO
@@ -247,6 +252,10 @@ enum LeadEventType {
   SNOOZE_AGENDADO
   SNOOZE_CANCELADO
   OPT_OUT_REGISTRADO
+  INTERVENCAO_NECESSARIA
+  INTERVENCAO_RESOLVIDA
+  PAUSADO_MANUALMENTE
+  RETOMADO_MANUALMENTE
   TAREFA_CRIADA
   TAREFA_CONCLUIDA
   LIBERADO_MANUALMENTE
@@ -331,6 +340,12 @@ model SocialDomain {
   dominio   String   @unique
   rotulo    String?
   ativo     Boolean  @default(true)
+  /// true = qualquer subdominio tambem conta como rede social.
+  /// Com isso, "instagram.com" ja cobre www.instagram.com, m.instagram.com
+  /// e br.instagram.com — sem precisar cadastrar cada variacao a mao.
+  /// Continua valendo a regra: dominio DESCONHECIDO nunca vira social
+  /// automaticamente; o casamento so ocorre contra esta lista.
+  incluirSubdominios Boolean @default(true) @map("incluir_subdominios")
   /// Marcados como padrao vem do seed e nao devem ser apagados sem aviso.
   padrao    Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
@@ -380,6 +395,9 @@ model CaptureSession {
   cidade     String
   estado     String?
   observacao String?
+  /// URL da busca no Google Maps que originou esta captura.
+  /// Permite refazer a mesma pesquisa depois.
+  fonteUrl   String?  @map("fonte_url")
   userId     String?  @map("user_id")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
@@ -454,10 +472,15 @@ model ImportRow {
   createdAt      DateTime        @default(now()) @map("created_at")
 
   import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
-  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  lead   Lead?  @relation("LinhaGerouLead", fields: [leadId], references: [id], onDelete: SetNull)
+  /// Relacao explicita: sem ela, `leadDuplicadoId` seria uma FK fantasma —
+  /// nada impediria apontar para um lead inexistente, e apagar o lead
+  /// deixaria a referencia quebrada em silencio.
+  leadDuplicado Lead? @relation("LinhaDuplicouLead", fields: [leadDuplicadoId], references: [id], onDelete: SetNull)
 
   @@unique([importId, numeroLinha])
   @@index([importId, status])
+  @@index([leadDuplicadoId])
   @@map("import_rows")
 }
 
@@ -524,13 +547,38 @@ model Lead {
 
   // ---- Rastreabilidade ----
   origem           String? // "importacao" | "manual" | "api"
-  captureSessionId String? @map("capture_session_id")
-  importId         String? @map("import_id")
+  /// Link da ficha no Google Maps, quando o scraper trouxer.
+  /// Permite voltar a fonte e conferir o dado original.
+  fonteUrl         String?   @map("fonte_url")
+  captureSessionId String?   @map("capture_session_id")
+  importId         String?   @map("import_id")
   capturadoEm      DateTime? @map("capturado_em")
+  importadoEm      DateTime? @map("importado_em")
+  /// A linha crua da planilha, copiada para o proprio lead.
+  /// Existe alem de ImportRow.dadosOriginais de proposito: se voce apagar
+  /// uma importacao antiga, o lead nao perde a origem do dado.
+  dadosBrutos      Json?     @map("dados_brutos")
+
+  // ---- Deduplicacao ----
+  /// Chave deterministica calculada na importacao, em UNIQUE.
+  /// E o que faz as prioridades 2 e 3 (nome+endereco, nome+cidade) serem
+  /// garantidas pelo BANCO, e nao apenas pela logica da aplicacao.
+  /// Sem isso, dois leads sem telefone e com o mesmo nome entrariam os dois.
+  chaveDedupe String? @unique @map("chave_dedupe")
 
   // ---- Atividade ----
   ultimaInteracaoEm DateTime? @map("ultima_interacao_em")
   ultimaMensagemEm  DateTime? @map("ultima_mensagem_em")
+  /// Categoria da ULTIMA resposta classificada.
+  /// Denormalizado de propósito: o dashboard precisa contar "negativos" e
+  /// "interessados" sem varrer a tabela de mensagens a cada carregamento.
+  ultimaCategoria   RespostaCategoria? @map("ultima_categoria")
+
+  // ---- Proxima acao ----
+  /// O que precisa acontecer com este lead, em texto legivel.
+  /// Ex: "Criar preview", "Responder duvida sobre clinica".
+  proximaAcao   String?   @map("proxima_acao")
+  proximaAcaoEm DateTime? @map("proxima_acao_em")
 
   observacoes String?
   createdAt   DateTime @default(now()) @map("created_at")
@@ -547,7 +595,8 @@ model Lead {
   tasks         Task[]
   notifications Notification[]
   websiteChecks WebsiteCheck[]
-  importRows    ImportRow[]
+  importRows    ImportRow[] @relation("LinhaGerouLead")
+  duplicouLinhas ImportRow[] @relation("LinhaDuplicouLead")
 
   @@index([status])
   @@index([temperatura])
@@ -558,6 +607,10 @@ model Lead {
   @@index([campaignId])
   @@index([optOut])
   @@index([ultimaInteracaoEm])
+  /// Suporta a contagem de "negativos" e "interessados" no dashboard.
+  @@index([ultimaCategoria])
+  /// Suporta a fila de "precisa da sua atencao".
+  @@index([proximaAcaoEm])
   /// Suporta a dedupe de prioridade 2 e 3 sem varredura completa.
   @@index([nomeCompleto, cidade])
   @@map("leads")
@@ -729,6 +782,9 @@ model CampaignStepRule {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   campaignStep CampaignStep @relation(fields: [campaignStepId], references: [id], onDelete: Cascade)
+  /// Mensagens cuja acao foi decidida por esta regra. Permite responder
+  /// "quantas vezes esta regra disparou e com que resultado?".
+  messages     Message[]
 
   @@unique([campaignStepId, categoria])
   @@index([campaignStepId])
@@ -846,6 +902,11 @@ model Message {
   categoriasDetectadas Json? @map("categorias_detectadas")
   /// Quais termos do dicionario dispararam a classificacao.
   termosCasados Json? @map("termos_casados")
+  /// QUAL REGRA foi acionada (requisito 12: "guardar qual regra foi
+  /// acionada"). O JSON acima diz quais palavras casaram; este campo diz
+  /// qual configuracao de campanha decidiu a acao. Sao coisas diferentes,
+  /// e sem a FK nao da para auditar por que o sistema fez o que fez.
+  campaignStepRuleId String? @map("campaign_step_rule_id")
   /// Texto apos lowercase/remocao de acentos/pontuacao.
   textoNormalizado String? @map("texto_normalizado")
 
@@ -862,7 +923,10 @@ model Message {
   lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaign     Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   campaignStep CampaignStep? @relation(fields: [campaignStepId], references: [id], onDelete: SetNull)
+  campaignStepRule CampaignStepRule? @relation(fields: [campaignStepRuleId], references: [id], onDelete: SetNull)
 
+  @@index([campaignStepRuleId])
+  @@index([categoria])
   @@index([conversationId, createdAt])
   @@index([leadId])
   @@index([status])
@@ -910,6 +974,10 @@ model Notification {
   mensagem String
   /// Deep link para a tela relevante (ex: "/conversas/{leadId}").
   link     String?
+  /// Menor numero = aparece primeiro. INTERVENCAO_NECESSARIA usa 1.
+  /// Sem este campo, ordenar "o que importa" exigiria um CASE gigante
+  /// sobre o tipo em cada consulta.
+  prioridade Int             @default(50)
   lida     Boolean           @default(false)
   lidaEm   DateTime?         @map("lida_em")
   createdAt DateTime         @default(now()) @map("created_at")
@@ -917,7 +985,7 @@ model Notification {
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
   lead Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
-  @@index([lida, createdAt])
+  @@index([lida, prioridade, createdAt])
   @@index([leadId])
   @@map("notifications")
 }

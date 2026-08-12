@@ -163,11 +163,13 @@ const SETTINGS: Array<{
 // Um dominio desconhecido NUNCA e classificado como social automaticamente:
 // so entra nesta lista por decisao explicita do usuario.
 // -----------------------------------------------------------------------------
+// `incluirSubdominios: true` faz "instagram.com" ja cobrir
+// www.instagram.com, m.instagram.com e br.instagram.com — nao e preciso
+// cadastrar cada variacao.
 const SOCIAL_DOMAINS: Array<{ dominio: string; rotulo: string }> = [
   { dominio: 'instagram.com', rotulo: 'Instagram' },
   { dominio: 'facebook.com', rotulo: 'Facebook' },
   { dominio: 'fb.com', rotulo: 'Facebook (curto)' },
-  { dominio: 'm.facebook.com', rotulo: 'Facebook (mobile)' },
 ];
 
 // -----------------------------------------------------------------------------
@@ -341,7 +343,12 @@ async function main(): Promise<void> {
     await prisma.socialDomain.upsert({
       where: { dominio: d.dominio },
       update: { rotulo: d.rotulo },
-      create: { dominio: d.dominio, rotulo: d.rotulo, padrao: true },
+      create: {
+        dominio: d.dominio,
+        rotulo: d.rotulo,
+        padrao: true,
+        incluirSubdominios: true,
+      },
     });
   }
   console.log(`  [ok] ${SOCIAL_DOMAINS.length} dominios sociais (nao contam como site proprio)`);
