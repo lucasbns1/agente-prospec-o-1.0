@@ -1,0 +1,74 @@
+@import 'tailwindcss';
+
+/**
+ * Design tokens.
+ *
+ * Estetica escolhida: fundo cinza muito suave, cards brancos, bordas
+ * discretas, sombra minima. Cor forte so em ESTADO — temperatura, alerta,
+ * sucesso. Nada de gradiente decorativo nem cor por enfeite: num CRM que
+ * vai ficar aberto o dia inteiro, cor precisa significar alguma coisa.
+ */
+@theme {
+  --color-fundo: #f6f7f9;
+  --color-superficie: #ffffff;
+  --color-borda: #e6e8ec;
+  --color-borda-forte: #d3d7de;
+
+  --color-texto: #14161a;
+  --color-texto-suave: #5b6472;
+  --color-texto-fraco: #8b94a3;
+
+  --color-marca: #1f2b4d;
+  --color-marca-clara: #2f4278;
+
+  /* Temperatura — a escala visual central do sistema */
+  --color-frio: #5b7aa8;
+  --color-frio-bg: #eef3f9;
+  --color-morno: #b8860b;
+  --color-morno-bg: #fdf6e3;
+  --color-quente: #d1451b;
+  --color-quente-bg: #fdefe9;
+
+  /* Estados */
+  --color-sucesso: #1a7f4f;
+  --color-sucesso-bg: #eaf6ef;
+  --color-alerta: #b42318;
+  --color-alerta-bg: #fdeceb;
+  --color-info: #2f4278;
+  --color-info-bg: #eef1f8;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-borda);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-fundo);
+    color: var(--color-texto);
+    font-family:
+      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+      'Helvetica Neue', Arial, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Acessibilidade: foco sempre visivel na navegacao por teclado. */
+  :focus-visible {
+    outline: 2px solid var(--color-marca-clara);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Numeros tabulares nas metricas: sem isso os digitos "dancam"
+     lateralmente a cada atualizacao do dashboard. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+}

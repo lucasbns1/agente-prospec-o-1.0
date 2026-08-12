@@ -1,0 +1,53 @@
+# PostgreSQL + Redis locais para o Prospector.
+#
+#   Subir:    docker compose up -d
+#   Parar:    docker compose down
+#   Apagar:   docker compose down -v   (CUIDADO: apaga todos os dados)
+#
+# Nenhum destes servicos e exposto para fora da maquina: o bind e explicito
+# em 127.0.0.1 para que nada na sua rede local alcance o banco.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prospector-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prospector}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prospector}
+      POSTGRES_DB: ${POSTGRES_DB:-prospector}
+      # Necessario para acentuacao e ordenacao correta em portugues
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8'
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - prospector_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-prospector} -d ${POSTGRES_DB:-prospector}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: prospector-redis
+    restart: unless-stopped
+    # appendonly garante que os jobs pendentes do BullMQ sobrevivam a um
+    # restart do computador (requisito 48 do documento de arquitetura).
+    command: redis-server --appendonly yes
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - prospector_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  prospector_postgres_data:
+    name: prospector_postgres_data
+  prospector_redis_data:
+    name: prospector_redis_data

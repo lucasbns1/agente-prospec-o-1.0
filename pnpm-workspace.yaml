@@ -1,0 +1,19 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# O pnpm 10 bloqueia scripts de instalacao por padrao (protecao contra
+# supply-chain). Estes pacotes precisam do postinstall para funcionar:
+#   - prisma / @prisma/client / @prisma/engines: baixam os engines nativos
+#   - argon2: compila o binding nativo do hash de senha
+#   - esbuild: baixa o binario da plataforma
+#   - msgpackr-extract: acelerador opcional do BullMQ
+# Sem esta lista, `pnpm install` termina "com sucesso" mas o Prisma e o
+# argon2 quebram em runtime.
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - argon2
+  - esbuild
+  - msgpackr-extract
+  - prisma

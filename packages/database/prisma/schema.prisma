@@ -1,0 +1,958 @@
+// =============================================================================
+// PROSPECTOR — Schema do banco de dados
+//
+// Fonte de verdade do sistema. Documentacao detalhada de cada decisao de
+// modelagem em docs/DATABASE.md.
+//
+// PRINCIPIOS APLICADOS AQUI:
+//
+//  1. STATUS e TEMPERATURA sao coisas separadas. Nunca misturar.
+//  2. Dados ORIGINAIS importados sao preservados lado a lado com os
+//     NORMALIZADOS. Nada e sobrescrito, nada e inventado.
+//  3. Nenhum texto de mensagem, palavra-chave ou regra fica no codigo.
+//     Tudo vive aqui e e editavel pelo painel.
+//  4. Campo vazio = NULL. O sistema nunca preenche um campo por deducao.
+//  5. Idempotencia por constraint UNIQUE, nao por logica de aplicacao.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  // Sem `output` customizado de proposito: no layout do pnpm, o
+  // @prisma/client resolve `.prisma/client` a partir da PROPRIA pasta
+  // dele dentro do store. Apontar a saida para outro lugar gera o
+  // cliente onde nada consegue importa-lo.
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+/// Onde o lead esta no processo comercial. NAO confundir com temperatura.
+enum LeadStatus {
+  NOVO // criado manualmente, ainda sem tratamento
+  IMPORTADO // veio de um CSV/XLSX, ainda nao normalizado
+  PRONTO // normalizado e validado, pode entrar em campanha
+  EM_CAMPANHA // sequencia em andamento
+  AGUARDANDO_RESPOSTA // mensagem enviada, esperando o lead responder
+  AGENDADO // lead pediu para falar depois (snooze ativo)
+  ATENCAO_NECESSARIA // precisa de intervencao humana
+  ENCERRADO // sequencia terminada sem conversao
+  OPORTUNIDADE // negociacao em andamento
+  CLIENTE // fechou
+}
+
+/// Quao perto o lead esta de comprar. Muda para cima E para baixo.
+enum Temperatura {
+  FRIO
+  MORNO
+  QUENTE
+}
+
+/// Resultado da analise do website do lead.
+/// A regra de negocio "tem site proprio?" e apenas: status == SITE_PROPRIO.
+enum WebsiteStatus {
+  NAO_INFORMADO // campo vazio/null no import — SEM SITE PROPRIO
+  REDE_SOCIAL // instagram.com, facebook.com etc — SEM SITE PROPRIO
+  SITE_PROPRIO // dominio proprio — TEM SITE
+  INVALIDO // string presente mas nao e uma URL parseavel
+  NAO_VERIFICADO // ainda nao passou pela verificacao
+}
+
+/// Categorias de classificacao de resposta, em ORDEM DE PRECEDENCIA.
+/// A ordem numerica aqui e apenas documental — a precedencia real e
+/// configuravel na tabela Setting (chave: `regras.precedencia`).
+enum RespostaCategoria {
+  OPT_OUT // 1 — "pare", "remova meu contato". Sempre vence.
+  NEGATIVO // 2 — "nao tenho interesse"
+  FALAR_DEPOIS // 3 — "agora nao posso", "me chama amanha"
+  PRECO // 4 — "quanto custa" (mais especifico que DUVIDA)
+  DUVIDA // 5 — "como funciona"
+  POSITIVO // 6 — "sim", "pode mandar"
+  INTERESSE // 7 — sinal fraco
+  DESCONHECIDO // 8 — nada casou. NUNCA avanca sozinho.
+}
+
+/// Como o texto da palavra-chave e comparado com a resposta normalizada.
+enum MatchTipo {
+  EXATO // a resposta inteira e exatamente igual ao termo
+  CONTEM // a resposta contem o termo em qualquer posicao
+  PALAVRA // o termo aparece como palavra isolada (respeita limites)
+  INICIA_COM // a resposta comeca com o termo
+  REGEX // expressao regular (uso avancado)
+}
+
+/// O que a campanha faz quando uma categoria de resposta e detectada.
+enum StepAction {
+  AVANCAR // vai para a proxima etapa (respeitando o delay)
+  IR_PARA_ETAPA // pula para uma etapa especifica
+  PARAR // encerra a sequencia para este lead
+  SNOOZE // adia a retomada para daqui a X (falar depois)
+  AGUARDAR_INTERVENCAO // congela e espera acao humana no CRM
+  NENHUMA // nao faz nada alem dos efeitos colaterais configurados
+}
+
+/// Unidade usada para calcular o prazo de um snooze.
+enum SnoozeUnidade {
+  HORAS
+  DIAS
+  DATA_ESPECIFICA
+}
+
+enum CampaignStatus {
+  RASCUNHO
+  ATIVA
+  PAUSADA
+  CONCLUIDA
+  ARQUIVADA
+}
+
+/// Estado do lead DENTRO de uma campanha especifica.
+/// Um lead pode ter passado por varias campanhas ao longo do tempo.
+enum LeadCampaignStatus {
+  PENDENTE // na fila, primeira mensagem ainda nao saiu
+  EM_ANDAMENTO
+  AGUARDANDO_RESPOSTA
+  AGUARDANDO_INTERVENCAO
+  AGENDADO // snooze ativo
+  CONCLUIDO // chegou ao fim da sequencia
+  PARADO // interrompido por regra ou manualmente
+  OPT_OUT // lead pediu para nao receber mais
+}
+
+enum MessageDirection {
+  ENVIADA
+  RECEBIDA
+}
+
+/// Ciclo de vida de uma mensagem.
+/// IMPORTANTE: SIMULADA e um estado terminal proprio do modo dry-run e
+/// NAO conta para o limite diario de envios.
+enum MessageStatus {
+  PENDENTE
+  ENVIANDO
+  ENVIADA
+  ENTREGUE
+  LIDA
+  FALHOU
+  SIMULADA // dry-run: nunca saiu de verdade
+  CANCELADA
+}
+
+enum TaskStatus {
+  ABERTA
+  EM_ANDAMENTO
+  CONCLUIDA
+  CANCELADA
+}
+
+enum TaskPriority {
+  BAIXA
+  MEDIA
+  ALTA
+  URGENTE
+}
+
+enum TaskType {
+  CRIAR_PREVIEW
+  RESPONDER_CLIENTE
+  ENVIAR_PROPOSTA
+  FOLLOW_UP
+  VERIFICAR_LEAD
+  RESPOSTA_NAO_RECONHECIDA
+  REVISAR_VARIAVEL_FALTANDO
+  OUTRO
+}
+
+enum NotificationLevel {
+  INFO
+  SUCESSO
+  ALERTA
+  ERRO
+}
+
+enum NotificationType {
+  LEAD_QUENTE
+  ATENCAO_NECESSARIA
+  RESPOSTA_RECEBIDA
+  PEDIDO_PREVIEW
+  PEDIDO_PRECO
+  OPT_OUT
+  CAMPANHA_INICIADA
+  CAMPANHA_PAUSADA
+  CAMPANHA_CONCLUIDA
+  WHATSAPP_CONECTADO
+  WHATSAPP_DESCONECTADO
+  IMPORTACAO_CONCLUIDA
+  IMPORTACAO_FALHOU
+  ENVIO_FALHOU
+  LIMITE_DIARIO_ATINGIDO
+  SISTEMA
+}
+
+enum JobStatus {
+  PENDENTE
+  AGENDADO
+  EXECUTANDO
+  CONCLUIDO
+  FALHOU
+  CANCELADO
+}
+
+enum ImportStatus {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDO
+  FALHOU
+  CANCELADO
+}
+
+enum ImportRowStatus {
+  PENDENTE
+  IMPORTADO
+  DUPLICADO
+  INVALIDO
+  IGNORADO
+}
+
+/// Qual criterio identificou a duplicidade (prioridade 1, 2 ou 3).
+enum DedupeCriterio {
+  TELEFONE // prioridade 1
+  NOME_ENDERECO // prioridade 2
+  NOME_CIDADE // prioridade 3
+}
+
+/// Tudo que pode acontecer com um lead. Alimenta o historico do CRM.
+enum LeadEventType {
+  CRIADO
+  IMPORTADO
+  NORMALIZADO
+  DUPLICADO_DETECTADO
+  WEBSITE_VERIFICADO
+  STATUS_ALTERADO
+  TEMPERATURA_ALTERADA
+  ENTROU_EM_CAMPANHA
+  SAIU_DA_CAMPANHA
+  MENSAGEM_ENVIADA
+  MENSAGEM_SIMULADA
+  MENSAGEM_FALHOU
+  MENSAGEM_RECEBIDA
+  RESPOSTA_CLASSIFICADA
+  RESPOSTA_NAO_RECONHECIDA
+  ETAPA_AVANCADA
+  SNOOZE_AGENDADO
+  SNOOZE_CANCELADO
+  OPT_OUT_REGISTRADO
+  TAREFA_CRIADA
+  TAREFA_CONCLUIDA
+  LIBERADO_MANUALMENTE
+  OBSERVACAO_ADICIONADA
+  EDITADO_MANUALMENTE
+}
+
+// =============================================================================
+// 1. USUARIOS E SESSAO
+// =============================================================================
+
+/// Sistema monousuario no MVP, mas modelado como tabela para nao travar
+/// um segundo operador no futuro.
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  nome         String
+  /// Hash Argon2id. NUNCA a senha em texto puro.
+  senhaHash    String   @map("senha_hash")
+  ativo        Boolean  @default(true)
+  ultimoLogin  DateTime? @map("ultimo_login")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  sessions      Session[]
+  tasks         Task[]
+  notifications Notification[]
+  imports       Import[]
+  captureSessions CaptureSession[]
+
+  @@map("users")
+}
+
+/// Sessao de login. Guardamos apenas o HASH do token; o valor real so
+/// existe no cookie httpOnly do navegador.
+model Session {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  tokenHash  String   @unique @map("token_hash")
+  expiresAt  DateTime @map("expires_at")
+  userAgent  String?  @map("user_agent")
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// =============================================================================
+// 2. CONFIGURACOES
+// =============================================================================
+
+/// Chave/valor JSON. Aqui moram: dominios sociais, precedencia das
+/// categorias, delays, limite diario, modo dry-run.
+/// NADA disso pode estar hardcoded no codigo.
+model Setting {
+  id          String   @id @default(uuid())
+  chave       String   @unique
+  valor       Json
+  descricao   String?
+  /// Agrupa as chaves na tela de configuracoes.
+  categoria   String   @default("geral")
+  /// Configuracoes de sistema nao podem ser apagadas pelo painel.
+  sistema     Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([categoria])
+  @@map("settings")
+}
+
+/// Dominios que NAO contam como site proprio (instagram.com, facebook.com...).
+/// Tabela propria em vez de JSON solto para permitir CRUD direto no painel.
+/// REGRA: um dominio desconhecido NUNCA e classificado como social
+/// automaticamente. So entra aqui por acao explicita do usuario.
+model SocialDomain {
+  id        String   @id @default(uuid())
+  /// Dominio normalizado, sem protocolo e sem "www." (ex: "instagram.com")
+  dominio   String   @unique
+  rotulo    String?
+  ativo     Boolean  @default(true)
+  /// Marcados como padrao vem do seed e nao devem ser apagados sem aviso.
+  padrao    Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ativo])
+  @@map("social_domains")
+}
+
+/// Dicionario de palavras/expressoes do motor de regras.
+/// Editavel pelo painel: adicionar, remover, ativar, desativar.
+///
+/// Escopo:
+///   campaignStepId == null  -> regra GLOBAL, vale para todas as campanhas
+///   campaignStepId != null  -> regra especifica daquela etapa (tem prioridade)
+model ResponseKeyword {
+  id             String            @id @default(uuid())
+  categoria      RespostaCategoria
+  /// Texto ja normalizado (minusculo, sem acento, sem pontuacao).
+  termo          String
+  matchTipo      MatchTipo         @default(CONTEM) @map("match_tipo")
+  ativo          Boolean           @default(true)
+  /// Desempate quando dois termos da MESMA categoria casam. Maior vence.
+  peso           Int               @default(0)
+  padrao         Boolean           @default(false)
+  campaignStepId String?           @map("campaign_step_id")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  campaignStep CampaignStep? @relation(fields: [campaignStepId], references: [id], onDelete: Cascade)
+
+  /// Impede cadastrar o mesmo termo duas vezes no mesmo escopo/categoria.
+  @@unique([categoria, termo, campaignStepId])
+  @@index([categoria, ativo])
+  @@index([campaignStepId])
+  @@map("response_keywords")
+}
+
+// =============================================================================
+// 3. CAPTURA E IMPORTACAO
+// =============================================================================
+
+/// Uma rodada de captura: "Psicologos / Campinas / SP".
+/// Agrupa o que veio junto e da rastreabilidade a origem do lead.
+model CaptureSession {
+  id         String   @id @default(uuid())
+  nicho      String
+  cidade     String
+  estado     String?
+  observacao String?
+  userId     String?  @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  imports Import[]
+  leads   Lead[]
+
+  @@index([nicho, cidade])
+  @@map("capture_sessions")
+}
+
+/// Um arquivo CSV/XLSX enviado. Guarda o mapeamento de colunas usado e o
+/// resumo do processamento.
+model Import {
+  id               String       @id @default(uuid())
+  nomeArquivo      String       @map("nome_arquivo")
+  caminhoArquivo   String?      @map("caminho_arquivo")
+  tamanhoBytes     Int?         @map("tamanho_bytes")
+  /// "csv" | "xlsx"
+  formato          String
+  status           ImportStatus @default(PENDENTE)
+  /// De -> Para. Ex: { "Nome": "nomeOriginal", "Telefone": "telefoneOriginal" }
+  mapeamentoColunas Json?       @map("mapeamento_colunas")
+  /// Cabecalhos crus encontrados no arquivo.
+  colunasDetectadas Json?       @map("colunas_detectadas")
+
+  totalLinhas      Int @default(0) @map("total_linhas")
+  totalImportados  Int @default(0) @map("total_importados")
+  totalDuplicados  Int @default(0) @map("total_duplicados")
+  totalInvalidos   Int @default(0) @map("total_invalidos")
+  totalIgnorados   Int @default(0) @map("total_ignorados")
+
+  erro             String?
+  iniciadoEm       DateTime? @map("iniciado_em")
+  concluidoEm      DateTime? @map("concluido_em")
+  captureSessionId String?   @map("capture_session_id")
+  userId           String?   @map("user_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  captureSession CaptureSession? @relation(fields: [captureSessionId], references: [id], onDelete: SetNull)
+  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  rows           ImportRow[]
+  leads          Lead[]
+
+  @@index([status])
+  @@index([captureSessionId])
+  @@map("imports")
+}
+
+/// Uma linha do arquivo, preservada CRUA. E o que permite mostrar na tela
+/// exatamente o que falhou e por que — sem adivinhar nada.
+model ImportRow {
+  id             String          @id @default(uuid())
+  importId       String          @map("import_id")
+  /// Numero da linha no arquivo original (1-based, sem contar cabecalho).
+  numeroLinha    Int             @map("numero_linha")
+  /// A linha inteira como veio, sem nenhum tratamento.
+  dadosOriginais Json            @map("dados_originais")
+  /// Resultado da normalizacao. NULL enquanto nao processada.
+  dadosNormalizados Json?        @map("dados_normalizados")
+  status         ImportRowStatus @default(PENDENTE)
+  /// Preenchido quando status == INVALIDO.
+  motivoErro     String?         @map("motivo_erro")
+  /// Preenchido quando status == DUPLICADO.
+  dedupeCriterio DedupeCriterio? @map("dedupe_criterio")
+  /// Lead ja existente que causou a duplicidade.
+  leadDuplicadoId String?        @map("lead_duplicado_id")
+  /// Lead criado a partir desta linha, quando status == IMPORTADO.
+  leadId         String?         @map("lead_id")
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([importId, numeroLinha])
+  @@index([importId, status])
+  @@map("import_rows")
+}
+
+// =============================================================================
+// 4. LEAD
+// =============================================================================
+
+/// O registro central do CRM.
+///
+/// REGRA DE OURO: campos `*Original` guardam exatamente o que veio da
+/// planilha. Os demais sao o resultado da normalizacao. Se a normalizacao
+/// nao conseguir determinar um valor com seguranca (bairro, por exemplo),
+/// o campo fica NULL. O sistema NUNCA inventa.
+model Lead {
+  id String @id @default(uuid())
+
+  // ---- Dados originais (preservados como vieram) ----
+  nomeOriginal     String? @map("nome_original")
+  telefoneOriginal String? @map("telefone_original")
+  enderecoOriginal String? @map("endereco_original")
+  websiteOriginal  String? @map("website_original")
+
+  // ---- Identificacao normalizada ----
+  nomeCompleto String? @map("nome_completo")
+  /// Usado em {{primeiro_nome}}. NULL se nao for possivel extrair.
+  primeiroNome String? @map("primeiro_nome")
+  /// Nome da empresa/estabelecimento — usado em {{empresa}}.
+  empresa      String?
+  /// Nome da pessoa de contato, quando o arquivo trouxer separado.
+  nomeContato  String? @map("nome_contato")
+  categoria    String?
+
+  // ---- Contato ----
+  telefone           String?
+  /// Formato E.164 (ex: 5519999998888). Chave de deduplicacao prioridade 1.
+  telefoneNormalizado String? @unique @map("telefone_normalizado")
+  email              String?
+
+  // ---- Endereco ----
+  logradouro String?
+  numero     String?
+  /// NULL quando nao for possivel determinar com seguranca. Nunca deduzir.
+  bairro     String?
+  cidade     String?
+  estado     String?
+  cep        String?
+
+  // ---- Presenca digital ----
+  websiteUrl    String?       @map("website_url")
+  websiteStatus WebsiteStatus @default(NAO_VERIFICADO) @map("website_status")
+  instagramUrl  String?       @map("instagram_url")
+  facebookUrl   String?       @map("facebook_url")
+
+  // ---- Classificacao (STATUS e TEMPERATURA sao independentes) ----
+  status      LeadStatus  @default(NOVO)
+  temperatura Temperatura @default(FRIO)
+
+  // ---- Campanha ativa (atalho de leitura; a verdade esta em LeadCampaign) ----
+  campaignId String? @map("campaign_id")
+
+  // ---- Opt-out ----
+  optOut   Boolean   @default(false) @map("opt_out")
+  optOutEm DateTime? @map("opt_out_em")
+
+  // ---- Rastreabilidade ----
+  origem           String? // "importacao" | "manual" | "api"
+  captureSessionId String? @map("capture_session_id")
+  importId         String? @map("import_id")
+  capturadoEm      DateTime? @map("capturado_em")
+
+  // ---- Atividade ----
+  ultimaInteracaoEm DateTime? @map("ultima_interacao_em")
+  ultimaMensagemEm  DateTime? @map("ultima_mensagem_em")
+
+  observacoes String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  captureSession CaptureSession? @relation(fields: [captureSessionId], references: [id], onDelete: SetNull)
+  import         Import?         @relation(fields: [importId], references: [id], onDelete: SetNull)
+  campaign       Campaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  leadCampaigns LeadCampaign[]
+  conversations Conversation[]
+  messages      Message[]
+  events        LeadEvent[]
+  tasks         Task[]
+  notifications Notification[]
+  websiteChecks WebsiteCheck[]
+  importRows    ImportRow[]
+
+  @@index([status])
+  @@index([temperatura])
+  @@index([websiteStatus])
+  @@index([cidade])
+  @@index([bairro])
+  @@index([categoria])
+  @@index([campaignId])
+  @@index([optOut])
+  @@index([ultimaInteracaoEm])
+  /// Suporta a dedupe de prioridade 2 e 3 sem varredura completa.
+  @@index([nomeCompleto, cidade])
+  @@map("leads")
+}
+
+/// Historico das verificacoes de website. Separado de Lead.websiteStatus,
+/// que guarda apenas o resultado corrente.
+model WebsiteCheck {
+  id            String        @id @default(uuid())
+  leadId        String        @map("lead_id")
+  urlVerificada String?       @map("url_verificada")
+  status        WebsiteStatus
+  /// Dominio extraido da URL (sem www.), quando aplicavel.
+  dominio       String?
+  /// Qual SocialDomain casou, quando status == REDE_SOCIAL.
+  dominioSocial String?       @map("dominio_social")
+  detalhe       String?
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@map("website_checks")
+}
+
+/// Log append-only de tudo que aconteceu com o lead.
+/// Nunca sofre UPDATE nem DELETE — e a base do historico e da auditoria,
+/// inclusive das mudancas de temperatura (requisito 11 e 27).
+model LeadEvent {
+  id        String        @id @default(uuid())
+  leadId    String        @map("lead_id")
+  tipo      LeadEventType
+  descricao String
+  /// Contexto livre: { de: "FRIO", para: "QUENTE", motivo: "regra MSG2" }
+  dados     Json?
+  /// "sistema" | "usuario" | "worker"
+  origem    String        @default("sistema")
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt])
+  @@index([tipo])
+  @@map("lead_events")
+}
+
+// =============================================================================
+// 5. CAMPANHAS
+// =============================================================================
+
+model Campaign {
+  id        String         @id @default(uuid())
+  nome      String
+  descricao String?
+  nicho     String?
+  cidade    String?
+  estado    String?
+  status    CampaignStatus @default(RASCUNHO)
+
+  // ---- Delays entre MENSAGENS da sequencia (padrao: 3 a 4 minutos) ----
+  /// Sorteado aleatoriamente no intervalo [min, max] a cada transicao.
+  delayMinSegundos Int @default(180) @map("delay_min_segundos")
+  delayMaxSegundos Int @default(240) @map("delay_max_segundos")
+
+  // ---- Delays entre LEADS (espalha o primeiro disparo no tempo) ----
+  delayEntreLeadsMinSegundos Int @default(60) @map("delay_entre_leads_min_segundos")
+  delayEntreLeadsMaxSegundos Int @default(180) @map("delay_entre_leads_max_segundos")
+
+  /// Teto de mensagens REAIS por dia nesta campanha.
+  /// Envios simulados (dry-run) e falhas nao contam.
+  limiteDiarioEnvios Int @default(50) @map("limite_diario_envios")
+
+  iniciadaEm  DateTime? @map("iniciada_em")
+  pausadaEm   DateTime? @map("pausada_em")
+  concluidaEm DateTime? @map("concluida_em")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  steps         CampaignStep[]
+  leadCampaigns LeadCampaign[]
+  leads         Lead[]
+  conversations Conversation[]
+  messages      Message[]
+
+  @@index([status])
+  @@map("campaigns")
+}
+
+/// Uma etapa da sequencia (MSG 1, MSG 2, ...).
+/// O TEXTO DA MENSAGEM VIVE AQUI, NUNCA NO CODIGO.
+model CampaignStep {
+  id         String  @id @default(uuid())
+  campaignId String  @map("campaign_id")
+  /// Posicao na sequencia, 1-based.
+  ordem      Int
+  nome       String?
+  /// Corpo da mensagem, com variaveis {{primeiro_nome}}, {{bairro}} etc.
+  texto      String
+
+  /// false = so sai quando o usuario liberar manualmente no CRM
+  /// (usado na MSG 3, que depende do preview ficar pronto).
+  enviarAutomaticamente Boolean @default(true) @map("enviar_automaticamente")
+
+  /// true = a sequencia congela ate o lead responder.
+  aguardarResposta Boolean @default(true) @map("aguardar_resposta")
+
+  /// Sobrescreve o delay da campanha, se preenchido.
+  delayMinSegundos Int? @map("delay_min_segundos")
+  delayMaxSegundos Int? @map("delay_max_segundos")
+
+  /// Aplicado quando NENHUMA regra casa com a resposta.
+  /// Padrao seguro: congela e chama um humano. Nunca avanca sozinho.
+  acaoPadraoDesconhecido StepAction @default(AGUARDAR_INTERVENCAO) @map("acao_padrao_desconhecido")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  campaign Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  rules    CampaignStepRule[]
+  keywords ResponseKeyword[]
+  messages Message[]
+  leadCampaigns LeadCampaign[]
+
+  @@unique([campaignId, ordem])
+  @@index([campaignId])
+  @@map("campaign_steps")
+}
+
+/// O que fazer quando a resposta a esta etapa cair em uma categoria.
+/// Uma regra por categoria por etapa.
+model CampaignStepRule {
+  id             String            @id @default(uuid())
+  campaignStepId String            @map("campaign_step_id")
+  categoria      RespostaCategoria
+
+  // ---- Acao principal ----
+  acao StepAction @default(NENHUMA)
+  /// Destino quando acao == IR_PARA_ETAPA.
+  proximaEtapaId String? @map("proxima_etapa_id")
+
+  // ---- Efeitos colaterais (todos opcionais e combinaveis) ----
+  /// NULL = nao mexe na temperatura do lead.
+  novaTemperatura Temperatura? @map("nova_temperatura")
+  /// NULL = nao mexe no status.
+  novoStatus      LeadStatus?  @map("novo_status")
+
+  criarTarefa      Boolean       @default(false) @map("criar_tarefa")
+  tarefaTipo       TaskType?     @map("tarefa_tipo")
+  tarefaTitulo     String?       @map("tarefa_titulo")
+  tarefaDescricao  String?       @map("tarefa_descricao")
+  tarefaPrioridade TaskPriority? @map("tarefa_prioridade")
+
+  notificar          Boolean            @default(false)
+  notificacaoTipo    NotificationType?  @map("notificacao_tipo")
+  notificacaoTitulo  String?            @map("notificacao_titulo")
+  notificacaoMensagem String?           @map("notificacao_mensagem")
+  notificacaoNivel   NotificationLevel? @map("notificacao_nivel")
+
+  /// Marca opt-out definitivo no lead. Usado na categoria OPT_OUT.
+  registrarOptOut Boolean @default(false) @map("registrar_opt_out")
+
+  // ---- Snooze (usado quando acao == SNOOZE) ----
+  snoozeUnidade SnoozeUnidade? @map("snooze_unidade")
+  /// Quantidade de horas/dias. Ignorado se unidade == DATA_ESPECIFICA.
+  snoozeValor   Int?           @map("snooze_valor")
+
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  campaignStep CampaignStep @relation(fields: [campaignStepId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignStepId, categoria])
+  @@index([campaignStepId])
+  @@map("campaign_step_rules")
+}
+
+/// Vinculo lead <-> campanha. Guarda a ETAPA ATUAL — que fica aqui, e nao
+/// no Lead, porque um lead pode passar por varias campanhas e o historico
+/// de cada passagem precisa sobreviver.
+model LeadCampaign {
+  id         String             @id @default(uuid())
+  leadId     String             @map("lead_id")
+  campaignId String             @map("campaign_id")
+  status     LeadCampaignStatus @default(PENDENTE)
+
+  /// Etapa em que o lead esta agora.
+  etapaAtualId String? @map("etapa_atual_id")
+  etapaAtualOrdem Int?  @map("etapa_atual_ordem")
+
+  /// Quando o proximo envio automatico esta liberado. O worker so dispara
+  /// depois deste horario. E aqui que o delay aleatorio vira uma data.
+  proximoEnvioEm DateTime? @map("proximo_envio_em")
+
+  /// Snooze ativo ("falar depois"). Cancelado se o lead responder antes.
+  snoozeAte DateTime? @map("snooze_ate")
+
+  /// true = a sequencia so continua com liberacao manual do usuario.
+  aguardandoLiberacao Boolean @default(false) @map("aguardando_liberacao")
+
+  totalEnviadas  Int @default(0) @map("total_enviadas")
+  totalRecebidas Int @default(0) @map("total_recebidas")
+
+  iniciadoEm  DateTime? @map("iniciado_em")
+  concluidoEm DateTime? @map("concluido_em")
+  motivoParada String?  @map("motivo_parada")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  lead       Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign   Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  etapaAtual CampaignStep? @relation(fields: [etapaAtualId], references: [id], onDelete: SetNull)
+
+  /// Um lead nao pode entrar duas vezes na mesma campanha.
+  @@unique([leadId, campaignId])
+  @@index([status])
+  @@index([proximoEnvioEm])
+  @@index([snoozeAte])
+  @@map("lead_campaigns")
+}
+
+// =============================================================================
+// 6. CONVERSAS E MENSAGENS
+// =============================================================================
+
+/// Uma thread de WhatsApp com um lead.
+model Conversation {
+  id         String  @id @default(uuid())
+  leadId     String  @map("lead_id")
+  campaignId String? @map("campaign_id")
+  /// Identificador do chat no WhatsApp (ex: "5519999998888@c.us").
+  chatId     String? @map("chat_id")
+
+  naoLidas          Int       @default(0) @map("nao_lidas")
+  ultimaMensagemEm  DateTime? @map("ultima_mensagem_em")
+  ultimaMensagemTexto String? @map("ultima_mensagem_texto")
+  arquivada         Boolean   @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@index([leadId])
+  @@index([ultimaMensagemEm])
+  @@map("conversations")
+}
+
+/// Mensagem enviada ou recebida.
+///
+/// IDEMPOTENCIA: `idempotencyKey` e UNIQUE. O worker grava a chave ANTES
+/// de chamar o WhatsApp; se um retry rodar a mesma unidade de trabalho, o
+/// INSERT falha e o envio e abortado. E isso que garante "nunca enviar a
+/// mesma mensagem duas vezes" no nivel do banco, nao da aplicacao.
+model Message {
+  id             String           @id @default(uuid())
+  conversationId String           @map("conversation_id")
+  leadId         String           @map("lead_id")
+  campaignId     String?          @map("campaign_id")
+  campaignStepId String?          @map("campaign_step_id")
+
+  direcao MessageDirection
+  status  MessageStatus    @default(PENDENTE)
+
+  /// Texto final, com as variaveis ja substituidas.
+  texto        String
+  /// Template cru antes da substituicao. Guardado para auditoria.
+  textoOriginal String? @map("texto_original")
+  /// Valores usados: { "primeiro_nome": "Maria", "bairro": "Cambui" }
+  variaveisUsadas Json? @map("variaveis_usadas")
+
+  /// Chave de idempotencia do envio. UNIQUE.
+  idempotencyKey String? @unique @map("idempotency_key")
+  /// ID retornado pelo WhatsApp. UNIQUE — protege contra processar a mesma
+  /// mensagem recebida duas vezes.
+  whatsappMessageId String? @unique @map("whatsapp_message_id")
+
+  /// true quando a mensagem foi apenas simulada (dry-run).
+  simulada Boolean @default(false)
+
+  // ---- Classificacao (apenas para direcao == RECEBIDA) ----
+  categoria RespostaCategoria?
+  /// Todas as categorias que casaram, antes da precedencia decidir.
+  categoriasDetectadas Json? @map("categorias_detectadas")
+  /// Quais termos do dicionario dispararam a classificacao.
+  termosCasados Json? @map("termos_casados")
+  /// Texto apos lowercase/remocao de acentos/pontuacao.
+  textoNormalizado String? @map("texto_normalizado")
+
+  erro          String?
+  tentativas    Int       @default(0)
+  enviadaEm     DateTime? @map("enviada_em")
+  entregueEm    DateTime? @map("entregue_em")
+  lidaEm        DateTime? @map("lida_em")
+  recebidaEm    DateTime? @map("recebida_em")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign     Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignStep CampaignStep? @relation(fields: [campaignStepId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([leadId])
+  @@index([status])
+  @@index([direcao])
+  /// Suporta a contagem do limite diario de envios REAIS.
+  @@index([enviadaEm])
+  @@map("messages")
+}
+
+// =============================================================================
+// 7. TAREFAS E NOTIFICACOES
+// =============================================================================
+
+model Task {
+  id          String       @id @default(uuid())
+  leadId      String?      @map("lead_id")
+  userId      String?      @map("user_id")
+  tipo        TaskType
+  titulo      String
+  descricao   String?
+  prioridade  TaskPriority @default(MEDIA)
+  status      TaskStatus   @default(ABERTA)
+  /// Prazo. Usado para destacar tarefas atrasadas no dashboard.
+  prazo       DateTime?
+  concluidaEm DateTime?    @map("concluida_em")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, prioridade])
+  @@index([leadId])
+  @@index([prazo])
+  @@map("tasks")
+}
+
+model Notification {
+  id       String            @id @default(uuid())
+  userId   String?           @map("user_id")
+  leadId   String?           @map("lead_id")
+  tipo     NotificationType
+  nivel    NotificationLevel @default(INFO)
+  titulo   String
+  mensagem String
+  /// Deep link para a tela relevante (ex: "/conversas/{leadId}").
+  link     String?
+  lida     Boolean           @default(false)
+  lidaEm   DateTime?         @map("lida_em")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([lida, createdAt])
+  @@index([leadId])
+  @@map("notifications")
+}
+
+// =============================================================================
+// 8. JOBS
+// =============================================================================
+
+/// Espelho em Postgres dos jobs do BullMQ.
+///
+/// Por que duplicar? O Redis e a fila de EXECUCAO; o Postgres e o
+/// HISTORICO auditavel. Se o Redis for limpo, perdemos a fila mas nao a
+/// memoria do que foi feito — e a chave de idempotencia sobrevive.
+model Job {
+  id             String    @id @default(uuid())
+  /// Nome da fila BullMQ (ex: "send_message").
+  fila           String
+  /// ID do job dentro do BullMQ.
+  bullJobId      String?   @map("bull_job_id")
+  /// UNIQUE. Duas tentativas de enfileirar o mesmo trabalho colidem aqui.
+  idempotencyKey String?   @unique @map("idempotency_key")
+  status         JobStatus @default(PENDENTE)
+  payload        Json
+  resultado      Json?
+  erro           String?
+  tentativas     Int       @default(0)
+  maxTentativas  Int       @default(3) @map("max_tentativas")
+  /// Preenchido quando o job tem delay (ex: os 3-4 minutos, ou um snooze).
+  agendadoPara   DateTime? @map("agendado_para")
+  iniciadoEm     DateTime? @map("iniciado_em")
+  concluidoEm    DateTime? @map("concluido_em")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([fila, status])
+  @@index([agendadoPara])
+  @@map("jobs")
+}

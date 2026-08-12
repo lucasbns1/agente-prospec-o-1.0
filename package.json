@@ -1,0 +1,43 @@
+{
+  "name": "prospector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema local de prospeccao comercial + CRM + automacao de WhatsApp",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:api": "pnpm --filter @prospector/api dev",
+    "dev:worker": "pnpm --filter @prospector/worker dev",
+    "dev:web": "pnpm --filter @prospector/web dev",
+    "build": "pnpm --recursive --filter \"./packages/*\" build && pnpm --recursive --filter \"./apps/*\" build",
+    "typecheck": "pnpm --recursive typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:generate": "pnpm --filter @prospector/database generate",
+    "db:migrate": "pnpm --filter @prospector/database migrate",
+    "db:migrate:deploy": "pnpm --filter @prospector/database migrate:deploy",
+    "db:seed": "pnpm --filter @prospector/database seed",
+    "db:studio": "pnpm --filter @prospector/database studio",
+    "db:reset": "pnpm --filter @prospector/database reset",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "setup": "pnpm install && pnpm db:generate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "playwright": "^1.62.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

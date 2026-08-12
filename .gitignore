@@ -1,0 +1,52 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# Ambiente — NUNCA commitar
+.env
+.env.local
+.env.*.local
+
+# Sessao do WhatsApp — contem credenciais da conta. NUNCA commitar.
+.wwebjs_auth/
+.wwebjs_cache/
+whatsapp-session/
+data/whatsapp/
+
+# Uploads de importacao (CSV/XLSX com dados de leads)
+uploads/
+data/imports/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testes
+coverage/
+playwright-report/
+test-results/
+.playwright/
+
+# Editores / SO
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Prisma
+packages/database/prisma/*.db
+packages/database/prisma/*.db-journal
+
+# Vite
+apps/web/dist/
+.vite/
