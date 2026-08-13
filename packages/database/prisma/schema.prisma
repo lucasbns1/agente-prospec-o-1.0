@@ -224,6 +224,52 @@ enum ImportRowStatus {
   IGNORADO
 }
 
+/// Resultado da qualificacao de um lead para prospeccao.
+/// Sempre acompanhado de um motivo legivel.
+enum Qualificacao {
+  NAO_AVALIADO
+  QUALIFICADO // atende aos criterios e pode entrar em campanha
+  NAO_QUALIFICADO // nao atende (ex: ja tem site proprio)
+  BLOQUEADO // NUNCA pode ser contatado (opt-out, sem telefone)
+  REVISAR // precisa de olhar humano antes de decidir
+}
+
+/// Estado de uma mensagem na fila de saida.
+///
+/// Separado de `MessageStatus` de proposito: aquele descreve uma
+/// mensagem que EXISTE na conversa; este descreve uma que ainda vai (ou
+/// nao vai) existir.
+enum OutboundStatus {
+  PENDENTE // criada, aguardando agendamento
+  AGENDADA // tem scheduledAt no futuro
+  PROCESSANDO
+  SIMULADA // dry-run: renderizada e registrada, nao enviada
+  ENVIADA // saiu de verdade
+  BLOQUEADA // uma validacao impediu; ver motivoBloqueio
+  FALHOU
+  CANCELADA
+}
+
+/// Por que uma mensagem foi bloqueada antes de entrar na fila.
+enum MotivoBloqueio {
+  LEAD_OPT_OUT
+  LEAD_SEM_TELEFONE
+  TELEFONE_INVALIDO
+  LEAD_BLOQUEADO
+  LEAD_AGUARDANDO_INTERVENCAO
+  CAMPANHA_PAUSADA
+  ETAPA_DESATIVADA
+  TEMPLATE_INEXISTENTE
+  VARIAVEL_OBRIGATORIA_AUSENTE
+  MENSAGEM_VAZIA
+  MENSAGEM_MUITO_LONGA
+  JA_EXISTE_PENDENTE
+  LIMITE_DIARIO_ATINGIDO
+  LIMITE_HORARIO_ATINGIDO
+  FORA_DA_JANELA
+  LEAD_EM_SNOOZE
+}
+
 /// Qual criterio identificou a duplicidade (prioridade 1, 2 ou 3).
 enum DedupeCriterio {
   TELEFONE // prioridade 1
@@ -424,6 +470,8 @@ model ResponseTemplate {
   updatedAt DateTime          @updatedAt @map("updated_at")
 
   campaignStep CampaignStep? @relation(fields: [campaignStepId], references: [id], onDelete: Cascade)
+  /// Etapas que usam este template como corpo da mensagem.
+  etapas       CampaignStep[] @relation("EtapaUsaTemplate")
 
   @@index([categoria, ativo])
   @@index([campaignStepId])
@@ -590,6 +638,18 @@ model Lead {
   status      LeadStatus  @default(NOVO)
   temperatura Temperatura @default(FRIO)
 
+  // ---- Qualificacao para prospeccao ----
+  /// Recalculada na importacao e ao entrar em campanha.
+  /// Denormalizada de proposito: contar "quantos qualificados" na tela
+  /// de campanhas precisa ser uma query, nao um loop em memoria.
+  qualificacao       Qualificacao @default(NAO_AVALIADO)
+  /// Sempre preenchido junto com a qualificacao. Ex: "Sem site + telefone valido".
+  motivoQualificacao String?      @map("motivo_qualificacao")
+  qualificadoEm      DateTime?    @map("qualificado_em")
+
+  /// Etiquetas livres para segmentacao.
+  tags String[] @default([])
+
   // ---- Campanha ativa (atalho de leitura; a verdade esta em LeadCampaign) ----
   campaignId String? @map("campaign_id")
 
@@ -647,6 +707,7 @@ model Lead {
   tasks         Task[]
   notifications Notification[]
   websiteChecks WebsiteCheck[]
+  outbound      OutboundMessage[]
   importRows    ImportRow[] @relation("LinhaGerouLead")
   duplicouLinhas ImportRow[] @relation("LinhaDuplicouLead")
 
@@ -658,6 +719,8 @@ model Lead {
   @@index([categoria])
   @@index([campaignId])
   @@index([optOut])
+  @@index([qualificacao])
+  @@index([tags])
   @@index([ultimaInteracaoEm])
   /// Suporta a contagem de "negativos" e "interessados" no dashboard.
   @@index([ultimaCategoria])
@@ -734,6 +797,34 @@ model Campaign {
   /// Teto de mensagens REAIS por dia nesta campanha.
   /// Envios simulados (dry-run) e falhas nao contam.
   limiteDiarioEnvios Int @default(50) @map("limite_diario_envios")
+  /// Teto por hora. Protege contra rajada dentro do limite diario:
+  /// 50 mensagens em 10 minutos e o padrao que mais chama atencao dos
+  /// sistemas antispam.
+  limiteHorarioEnvios Int @default(10) @map("limite_horario_envios")
+
+  // ---- Janela de envio (sobrepoe o padrao global de `settings`) ----
+  /// "HH:MM". Nada e enviado antes deste horario.
+  horarioInicio String @default("08:00") @map("horario_inicio")
+  /// "HH:MM". Nada e enviado depois deste horario.
+  horarioFim    String @default("20:00") @map("horario_fim")
+  /// Dias permitidos: 0=domingo ... 6=sabado. Padrao: dias uteis.
+  diasPermitidos Int[] @default([1, 2, 3, 4, 5]) @map("dias_permitidos")
+
+  /// Teto de leads que entram nesta campanha. 0 = sem limite.
+  maxLeads Int @default(0) @map("max_leads")
+
+  /// Dry-run POR CAMPANHA.
+  ///
+  /// Nao substitui o WHATSAPP_MODE global — soma-se a ele. O envio real
+  /// exige que os DOIS estejam liberados. Assim, colocar o sistema em
+  /// modo live nao liga o envio de campanhas antigas por acidente.
+  dryRun Boolean @default(true) @map("dry_run")
+
+  /// Filtros de segmentacao usados para montar a lista de leads.
+  /// Guardado como JSON validado por Zod (`filtrosCampanhaSchema`):
+  /// o conjunto de filtros muda com frequencia e nao vale uma coluna
+  /// por criterio.
+  filtros Json?
 
   iniciadaEm  DateTime? @map("iniciada_em")
   pausadaEm   DateTime? @map("pausada_em")
@@ -742,6 +833,7 @@ model Campaign {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   steps         CampaignStep[]
+  outbound      OutboundMessage[]
   leadCampaigns LeadCampaign[]
   leads         Lead[]
   conversations Conversation[]
@@ -760,7 +852,18 @@ model CampaignStep {
   ordem      Int
   nome       String?
   /// Corpo da mensagem, com variaveis {{primeiro_nome}}, {{bairro}} etc.
+  ///
+  /// Usado quando `templateId` esta vazio. Continua existindo para
+  /// permitir escrever um texto direto na etapa, sem criar template.
   texto      String
+
+  /// Template reutilizavel. Quando preenchido, o texto vem de la e o
+  /// campo `texto` acima e ignorado.
+  templateId String? @map("template_id")
+
+  /// Etapa desativada nao entra na sequencia, mas continua no historico
+  /// e mantem a numeracao das demais.
+  ativo      Boolean @default(true)
 
   /// false = so sai quando o usuario liberar manualmente no CRM
   /// (usado na MSG 3, que depende do preview ficar pronto).
@@ -781,11 +884,13 @@ model CampaignStep {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   campaign  Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  template  ResponseTemplate?  @relation("EtapaUsaTemplate", fields: [templateId], references: [id], onDelete: SetNull)
   rules     CampaignStepRule[]
   keywords  ResponseKeyword[]
   templates ResponseTemplate[]
   messages  Message[]
   leadCampaigns LeadCampaign[]
+  outbound  OutboundMessage[]
 
   @@unique([campaignId, ordem])
   @@index([campaignId])
@@ -1044,7 +1149,84 @@ model Notification {
 }
 
 // =============================================================================
-// 8. JOBS
+// 8. FILA DE SAIDA
+// =============================================================================
+
+/// Uma mensagem que o sistema pretende enviar.
+///
+/// POR QUE UMA TABELA PROPRIA (e nao `Job` com payload JSON):
+/// as perguntas que a tela de campanhas faz — "quantas mensagens estao
+/// agendadas para esta campanha?", "quantas bloqueadas e por que?",
+/// "quantas saem hoje?" — sao consultas por coluna. Com o payload em
+/// JSON cada uma viraria varredura de tabela.
+///
+/// IDEMPOTENCIA: `idempotencyKey` e UNIQUE. Quem cria a mensagem tenta
+/// o INSERT direto e trata a colisao P2002 como "ja existe". Nao ha
+/// SELECT-depois-INSERT: esse par nao e atomico e ja causou um bug real
+/// na auditoria da Fase 1.
+///
+/// A chave e deterministica: leadId + campaignId + campaignStepId +
+/// tentativa. Cem jobs para o mesmo lead na mesma etapa colidem na
+/// mesma chave e resultam em UMA linha.
+model OutboundMessage {
+  id String @id @default(uuid())
+
+  leadId         String  @map("lead_id")
+  campaignId     String  @map("campaign_id")
+  campaignStepId String  @map("campaign_step_id")
+
+  /// UNIQUE. A garantia de "uma mensagem logica por lead/etapa".
+  idempotencyKey String @unique @map("idempotency_key")
+
+  status         OutboundStatus  @default(PENDENTE)
+  motivoBloqueio MotivoBloqueio? @map("motivo_bloqueio")
+  /// Texto legivel do bloqueio, para a tela de preview.
+  detalheBloqueio String?        @map("detalhe_bloqueio")
+
+  /// Telefone de destino em E.164, congelado no momento do enfileiramento.
+  /// Se o lead trocar de numero depois, esta mensagem nao muda de destino.
+  telefoneDestino String? @map("telefone_destino")
+
+  /// Mensagem JA RENDERIZADA. Congelada: o que foi (ou seria) enviado
+  /// nao pode mudar depois porque alguem editou o template.
+  textoRenderizado String? @map("texto_renderizado")
+  /// Template cru usado, para auditoria.
+  textoTemplate    String? @map("texto_template")
+  /// Valores aplicados: { "empresa": "Clinica X", "cidade": "Campinas" }
+  variaveisUsadas  Json?   @map("variaveis_usadas")
+
+  /// Quando deve sair. Indexado: o worker varre por este campo.
+  scheduledAt DateTime? @map("scheduled_at")
+  processedAt DateTime? @map("processed_at")
+
+  tentativas    Int @default(0)
+  maxTentativas Int @default(3) @map("max_tentativas")
+  erro          String?
+
+  /// true quando a mensagem foi apenas simulada.
+  dryRun Boolean @default(true) @map("dry_run")
+
+  /// Mensagem criada na conversa, quando o envio (ou a simulacao) ocorre.
+  messageId String? @map("message_id")
+  /// ID do job no BullMQ, para rastrear a execucao.
+  bullJobId String? @map("bull_job_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign     Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignStep CampaignStep @relation(fields: [campaignStepId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+  @@index([status, scheduledAt])
+  @@index([leadId])
+  @@index([scheduledAt])
+  @@map("outbound_messages")
+}
+
+// =============================================================================
+// 9. JOBS
 // =============================================================================
 
 /// Espelho em Postgres dos jobs do BullMQ.

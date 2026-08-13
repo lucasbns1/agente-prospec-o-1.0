@@ -147,6 +147,7 @@ export type WhatsAppStatus = (typeof WHATSAPP_STATUS)[number];
 /** Nomes das filas BullMQ. Uma unica fonte para API e worker. */
 export const QUEUES = {
   SEND_MESSAGE: 'send_message',
+  OUTBOUND_SEND: 'outbound_send',
   PROCESS_INCOMING_MESSAGE: 'process_incoming_message',
   ADVANCE_CAMPAIGN: 'advance_campaign',
   CREATE_NOTIFICATION: 'create_notification',

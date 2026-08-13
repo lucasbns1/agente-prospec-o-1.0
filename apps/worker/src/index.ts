@@ -16,6 +16,7 @@ import { disconnectPrisma, checkDatabaseConnection } from '@prospector/database'
 import pino from 'pino';
 import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
 import { criarWorkerHealth } from './workers/health.js';
+import { criarWorkerOutbound } from './workers/outbound.js';
 import { fecharPublicador } from './redis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
   }
 
   // --- Workers ---
-  const workers = [criarWorkerHealth(log)];
+  const workers = [criarWorkerHealth(log), criarWorkerOutbound(log, adapter)];
 
   for (const w of workers) {
     w.on('failed', (job, err) => {

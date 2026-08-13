@@ -1,0 +1,478 @@
+/**
+ * Rotas de campanhas.
+ *
+ * NENHUMA rota aqui envia mensagem. A mais "perigosa" e
+ * `POST /:id/enfileirar`, que cria linhas em `outbound_messages` com
+ * `dryRun: true`. O envio depende do worker, que esta em simulacao.
+ */
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { prisma, Prisma } from '@prospector/database';
+import { exigirAutenticacao } from '../plugins/auth.js';
+import { AppError } from '../lib/errors.js';
+import { eventsBus } from '../lib/events-bus.js';
+import {
+  previewCampanha,
+  enfileirarCampanha,
+  requalificarLeads,
+  montarWhere,
+  type FiltrosCampanha,
+} from '../services/campaign-service.js';
+
+const filtrosSchema = z
+  .object({
+    exigirTelefone: z.boolean().optional(),
+    exigirSemSite: z.boolean().optional(),
+    exigirComSite: z.boolean().optional(),
+    exigirSemInstagram: z.boolean().optional(),
+    exigirComInstagram: z.boolean().optional(),
+    avaliacaoMinima: z.number().min(0).max(5).optional(),
+    totalAvaliacoesMinimo: z.number().int().min(0).optional(),
+    cidades: z.array(z.string().trim().min(1)).optional(),
+    estados: z.array(z.string().trim().length(2)).optional(),
+    categorias: z.array(z.string().trim().min(1)).optional(),
+    tags: z.array(z.string().trim().min(1)).optional(),
+    apenasNuncaContatados: z.boolean().optional(),
+    status: z.array(z.string()).optional(),
+    origem: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const horarioSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use o formato HH:MM');
+
+// O objeto base fica separado dos `.refine()` porque `.partial()` nao
+// existe em ZodEffects — e a rota de edicao precisa de campos parciais.
+const campanhaBase = z
+  .object({
+    nome: z.string().trim().min(1).max(200),
+    descricao: z.string().trim().max(2000).nullable().optional(),
+    nicho: z.string().trim().max(120).nullable().optional(),
+    cidade: z.string().trim().max(120).nullable().optional(),
+    estado: z.string().trim().max(2).nullable().optional(),
+    delayMinSegundos: z.number().int().min(0).max(86400).default(180),
+    delayMaxSegundos: z.number().int().min(0).max(86400).default(240),
+    delayEntreLeadsMinSegundos: z.number().int().min(0).max(86400).default(60),
+    delayEntreLeadsMaxSegundos: z.number().int().min(0).max(86400).default(180),
+    limiteDiarioEnvios: z.number().int().min(1).max(1000).default(50),
+    limiteHorarioEnvios: z.number().int().min(1).max(500).default(10),
+    horarioInicio: horarioSchema.default('08:00'),
+    horarioFim: horarioSchema.default('20:00'),
+    diasPermitidos: z.array(z.number().int().min(0).max(6)).default([1, 2, 3, 4, 5]),
+    maxLeads: z.number().int().min(0).max(100000).default(0),
+    filtros: filtrosSchema.default({}),
+  });
+
+const campanhaSchema = campanhaBase
+  .refine((d) => d.delayMaxSegundos >= d.delayMinSegundos, {
+    message: 'O delay maximo precisa ser >= ao minimo',
+    path: ['delayMaxSegundos'],
+  })
+  .refine((d) => d.horarioFim > d.horarioInicio, {
+    message: 'O horario final precisa ser depois do inicial',
+    path: ['horarioFim'],
+  });
+
+/** Versao parcial para PATCH, com as mesmas validacoes cruzadas. */
+const campanhaPatchSchema = campanhaBase
+  .partial()
+  .refine(
+    (d) =>
+      d.delayMinSegundos === undefined ||
+      d.delayMaxSegundos === undefined ||
+      d.delayMaxSegundos >= d.delayMinSegundos,
+    { message: 'O delay maximo precisa ser >= ao minimo', path: ['delayMaxSegundos'] }
+  )
+  .refine(
+    (d) =>
+      d.horarioInicio === undefined ||
+      d.horarioFim === undefined ||
+      d.horarioFim > d.horarioInicio,
+    { message: 'O horario final precisa ser depois do inicial', path: ['horarioFim'] }
+  );
+
+const etapaSchema = z.object({
+  ordem: z.number().int().min(1),
+  nome: z.string().trim().max(120).nullable().optional(),
+  texto: z.string().trim().max(4000).default(''),
+  templateId: z.string().uuid().nullable().optional(),
+  ativo: z.boolean().default(true),
+  enviarAutomaticamente: z.boolean().default(true),
+  aguardarResposta: z.boolean().default(true),
+  delayMinSegundos: z.number().int().min(0).max(2592000).nullable().optional(),
+  delayMaxSegundos: z.number().int().min(0).max(2592000).nullable().optional(),
+});
+
+const idSchema = z.object({ id: z.string().uuid() });
+
+export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
+  // -------------------------------------------------------------- lista
+  app.get('/api/campaigns', { preHandler: exigirAutenticacao }, async () => {
+    const campanhas = await prisma.campaign.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { steps: true, outbound: true, leadCampaigns: true } },
+      },
+    });
+
+    // Contadores da fila por campanha, numa consulta agregada em vez de
+    // uma por campanha.
+    const porStatus = await prisma.outboundMessage.groupBy({
+      by: ['campaignId', 'status'],
+      _count: true,
+    });
+
+    const resumo = new Map<string, Record<string, number>>();
+    for (const r of porStatus) {
+      const atual = resumo.get(r.campaignId) ?? {};
+      atual[r.status] = r._count;
+      resumo.set(r.campaignId, atual);
+    }
+
+    const respostas = await prisma.message.groupBy({
+      by: ['campaignId'],
+      where: { direcao: 'RECEBIDA', campaignId: { not: null } },
+      _count: true,
+    });
+    const porRespostas = new Map(
+      respostas.map((r) => [r.campaignId!, r._count] as const)
+    );
+
+    return {
+      campanhas: campanhas.map((c) => {
+        const fila = resumo.get(c.id) ?? {};
+        return {
+          ...c,
+          totalEtapas: c._count.steps,
+          totalNaFila: c._count.outbound,
+          agendadas: fila['AGENDADA'] ?? 0,
+          bloqueadas: fila['BLOQUEADA'] ?? 0,
+          simuladas: fila['SIMULADA'] ?? 0,
+          enviadas: fila['ENVIADA'] ?? 0,
+          respostas: porRespostas.get(c.id) ?? 0,
+        };
+      }),
+    };
+  });
+
+  // -------------------------------------------------------------- criar
+  app.post('/api/campaigns', { preHandler: exigirAutenticacao }, async (request, reply) => {
+    const dados = campanhaSchema.parse(request.body);
+
+    const campanha = await prisma.campaign.create({
+      data: {
+        ...dados,
+        filtros: dados.filtros as Prisma.InputJsonValue,
+        // Toda campanha nasce em RASCUNHO e em dry-run. Ativar exige
+        // um ato explicito depois.
+        status: 'RASCUNHO',
+        dryRun: true,
+      },
+    });
+
+    request.log.info({ campaignId: campanha.id }, 'Campanha criada');
+    return reply.status(201).send({ campanha });
+  });
+
+  // ------------------------------------------------------------ detalhe
+  app.get<{ Params: { id: string } }>(
+    '/api/campaigns/:id',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const campanha = await prisma.campaign.findUnique({
+        where: { id },
+        include: {
+          steps: {
+            orderBy: { ordem: 'asc' },
+            include: { template: true, rules: true },
+          },
+        },
+      });
+      if (!campanha) throw new AppError('Campanha nao encontrada', 404, 'NAO_ENCONTRADO');
+      return { campanha };
+    }
+  );
+
+  // ------------------------------------------------------------ editar
+  app.patch<{ Params: { id: string } }>(
+    '/api/campaigns/:id',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const dados = campanhaPatchSchema.parse(request.body);
+
+      const existente = await prisma.campaign.findUnique({ where: { id } });
+      if (!existente) throw new AppError('Campanha nao encontrada', 404, 'NAO_ENCONTRADO');
+
+      const campanha = await prisma.campaign.update({
+        where: { id },
+        data: {
+          ...dados,
+          ...(dados.filtros
+            ? { filtros: dados.filtros as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+      return { campanha };
+    }
+  );
+
+  // ------------------------------------------------------- mudar status
+  app.post<{ Params: { id: string } }>(
+    '/api/campaigns/:id/status',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { status } = z
+        .object({
+          status: z.enum(['RASCUNHO', 'ATIVA', 'PAUSADA', 'CONCLUIDA', 'ARQUIVADA']),
+        })
+        .parse(request.body);
+
+      const campanha = await prisma.campaign.findUnique({
+        where: { id },
+        include: { steps: { where: { ativo: true } } },
+      });
+      if (!campanha) throw new AppError('Campanha nao encontrada', 404, 'NAO_ENCONTRADO');
+
+      // Nao deixa ativar campanha sem etapa: ela ficaria "ativa" sem
+      // conseguir enfileirar nada, e o erro so apareceria depois.
+      if (status === 'ATIVA' && campanha.steps.length === 0) {
+        throw new AppError(
+          'A campanha precisa de pelo menos uma etapa ativa antes de ser ativada',
+          422,
+          'CAMPANHA_SEM_ETAPA'
+        );
+      }
+
+      const atualizada = await prisma.campaign.update({
+        where: { id },
+        data: {
+          status,
+          ...(status === 'ATIVA' ? { iniciadaEm: new Date() } : {}),
+          ...(status === 'PAUSADA' ? { pausadaEm: new Date() } : {}),
+          ...(status === 'CONCLUIDA' ? { concluidaEm: new Date() } : {}),
+        },
+      });
+
+      // Pausar cancela o que ainda nao saiu. Sem isso, "pausar" seria
+      // apenas cosmetico e o worker continuaria processando a fila.
+      if (status === 'PAUSADA' || status === 'ARQUIVADA') {
+        const canceladas = await prisma.outboundMessage.updateMany({
+          where: { campaignId: id, status: { in: ['PENDENTE', 'AGENDADA'] } },
+          data: { status: 'CANCELADA', erro: `Campanha ${status.toLowerCase()}` },
+        });
+        request.log.info(
+          { campaignId: id, canceladas: canceladas.count },
+          'Fila cancelada pela mudanca de status'
+        );
+      }
+
+      eventsBus.publicar(
+        status === 'ATIVA' ? 'campanha.iniciada' : 'campanha.pausada',
+        { campaignId: id }
+      );
+
+      return { campanha: atualizada };
+    }
+  );
+
+  // ------------------------------------------------------------- etapas
+  app.put<{ Params: { id: string } }>(
+    '/api/campaigns/:id/steps',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { etapas } = z.object({ etapas: z.array(etapaSchema) }).parse(request.body);
+
+      const campanha = await prisma.campaign.findUnique({ where: { id } });
+      if (!campanha) throw new AppError('Campanha nao encontrada', 404, 'NAO_ENCONTRADO');
+
+      const ordens = etapas.map((e) => e.ordem);
+      if (new Set(ordens).size !== ordens.length) {
+        throw new AppError('Ha etapas com a mesma ordem', 422, 'ORDEM_DUPLICADA');
+      }
+      for (const e of etapas) {
+        if (!e.templateId && e.texto.trim() === '') {
+          throw new AppError(
+            `Etapa ${e.ordem} precisa de um texto ou de um template`,
+            422,
+            'ETAPA_SEM_TEXTO'
+          );
+        }
+      }
+
+      // Substitui o conjunto inteiro numa transacao: uma atualizacao
+      // parcial poderia deixar duas etapas com a mesma ordem no meio do
+      // caminho e violar a constraint.
+      await prisma.$transaction(async (tx) => {
+        await tx.campaignStep.deleteMany({ where: { campaignId: id } });
+        for (const e of etapas) {
+          await tx.campaignStep.create({
+            data: {
+              campaignId: id,
+              ordem: e.ordem,
+              nome: e.nome ?? null,
+              texto: e.texto,
+              templateId: e.templateId ?? null,
+              ativo: e.ativo,
+              enviarAutomaticamente: e.enviarAutomaticamente,
+              aguardarResposta: e.aguardarResposta,
+              delayMinSegundos: e.delayMinSegundos ?? null,
+              delayMaxSegundos: e.delayMaxSegundos ?? null,
+            },
+          });
+        }
+      });
+
+      const atualizadas = await prisma.campaignStep.findMany({
+        where: { campaignId: id },
+        orderBy: { ordem: 'asc' },
+        include: { template: true },
+      });
+      return { etapas: atualizadas };
+    }
+  );
+
+  // ------------------------------------------------------------ preview
+  app.get<{ Params: { id: string } }>(
+    '/api/campaigns/:id/preview',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { limite } = z
+        .object({ limite: z.coerce.number().int().min(1).max(500).default(100) })
+        .parse(request.query);
+
+      try {
+        return await previewCampanha(id, limite);
+      } catch (err) {
+        throw new AppError(
+          err instanceof Error ? err.message : 'Falha ao gerar a previa',
+          404,
+          'PREVIEW_FALHOU'
+        );
+      }
+    }
+  );
+
+  // ------------------------------------------- preview de um lead so
+  app.get<{ Params: { id: string; leadId: string } }>(
+    '/api/campaigns/:id/preview/:leadId',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id, leadId } = z
+        .object({ id: z.string().uuid(), leadId: z.string().uuid() })
+        .parse(request.params);
+
+      const preview = await previewCampanha(id, 500);
+      const linha = preview.linhas.find((l) => l.leadId === leadId);
+      if (!linha) {
+        throw new AppError(
+          'Este lead nao esta entre os selecionados pelos filtros da campanha',
+          404,
+          'LEAD_FORA_DO_FILTRO'
+        );
+      }
+
+      const lead = await prisma.lead.findUnique({
+        where: { id: leadId },
+        select: {
+          id: true, nomeCompleto: true, empresa: true, categoria: true,
+          telefone: true, cidade: true, bairro: true, estado: true,
+          websiteUrl: true, websiteStatus: true, instagramUrl: true,
+          avaliacao: true, totalAvaliacoes: true, status: true,
+          qualificacao: true, motivoQualificacao: true, tags: true,
+        },
+      });
+
+      return { lead, preview: linha, templateUsado: preview.templateUsado };
+    }
+  );
+
+  // --------------------------------------------------------- enfileirar
+  app.post<{ Params: { id: string } }>(
+    '/api/campaigns/:id/enfileirar',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { limite } = z
+        .object({ limite: z.coerce.number().int().min(1).max(5000).optional() })
+        .parse(request.body ?? {});
+
+      try {
+        const r = await enfileirarCampanha(id, limite ? { limite } : {});
+        request.log.info({ campaignId: id, ...r }, 'Campanha enfileirada (dry-run)');
+        eventsBus.publicar('dashboard.atualizar');
+        return r;
+      } catch (err) {
+        throw new AppError(
+          err instanceof Error ? err.message : 'Falha ao enfileirar',
+          422,
+          'ENFILEIRAMENTO_FALHOU'
+        );
+      }
+    }
+  );
+
+  // ---------------------------------------------------------- ver a fila
+  app.get<{ Params: { id: string } }>(
+    '/api/campaigns/:id/fila',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { status, limite } = z
+        .object({
+          status: z.string().optional(),
+          limite: z.coerce.number().int().min(1).max(500).default(100),
+        })
+        .parse(request.query);
+
+      const mensagens = await prisma.outboundMessage.findMany({
+        where: { campaignId: id, ...(status ? { status: status as never } : {}) },
+        orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
+        take: limite,
+        include: {
+          lead: { select: { id: true, nomeCompleto: true, empresa: true, cidade: true } },
+        },
+      });
+
+      const contagem = await prisma.outboundMessage.groupBy({
+        by: ['status'],
+        where: { campaignId: id },
+        _count: true,
+      });
+
+      return {
+        mensagens,
+        contagem: Object.fromEntries(contagem.map((c) => [c.status, c._count])),
+      };
+    }
+  );
+
+  // ------------------------------------------------------- qualificacao
+  app.post(
+    '/api/campaigns/requalificar',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const filtros = filtrosSchema.parse(request.body ?? {}) as FiltrosCampanha;
+      const r = await requalificarLeads(filtros);
+      request.log.info(r, 'Leads requalificados');
+      eventsBus.publicar('dashboard.atualizar');
+      return r;
+    }
+  );
+
+  // ---------------------------------------- quantos leads o filtro pega
+  app.post(
+    '/api/campaigns/contar-leads',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const filtros = filtrosSchema.parse(request.body ?? {}) as FiltrosCampanha;
+      const total = await prisma.lead.count({ where: montarWhere(filtros) });
+      return { total };
+    }
+  );
+}

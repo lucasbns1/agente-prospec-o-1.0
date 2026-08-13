@@ -25,5 +25,9 @@ export * from './rules/normalizar-resposta.js';
 export * from './rules/motor.js';
 export * from './rules/decisao.js';
 export * from './rules/dicionario-padrao.js';
+// --- Campanhas (Fase 4) ---
+export * from './campaign/qualificacao.js';
+export * from './campaign/template.js';
+export * from './campaign/agendamento.js';
 export * from './campaign/contracts.js';
 export * from './template/contracts.js';
