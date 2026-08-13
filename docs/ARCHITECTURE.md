@@ -272,8 +272,13 @@ preview sozinho.
 | Frontend | ✅ login, dashboard, 12 métricas, funil, configurações |
 | Testes | ✅ 32 passando |
 
-**Ainda não existe:** integração real com o WhatsApp e automação
-completa das conversas. São as Fases 6 a 12.
+**Ainda não existe:** o **envio real** de mensagens e a automação
+completa das conversas.
+
+A Fase 6A integrou o WhatsApp Web para **conectar e receber**; o envio
+segue travado no código (`FASE_PERMITE_ENVIO_REAL = false`), e ligá-lo é
+uma fase separada, ainda não autorizada. Ver
+[WHATSAPP.md](WHATSAPP.md) e [CONVERSAS.md](CONVERSAS.md).
 
 As Fases 2 a 5 acrescentaram: importação e CRM; motor de regras
 determinístico; campanhas, qualificação, mensagem personalizada e fila

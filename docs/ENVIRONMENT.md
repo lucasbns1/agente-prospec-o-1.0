@@ -74,9 +74,10 @@ Se o usuário já existir, o seed **não** altera a senha.
 
 | Variável | Padrão | Descrição |
 |---|---|---|
+| `WHATSAPP_CANAL` | `simulado` | `simulado` não conecta; `whatsapp-web` conecta e recebe |
 | `WHATSAPP_MODE` | `dry-run` | `dry-run` simula, `live` envia de verdade |
 | `WHATSAPP_SESSION_PATH` | `./data/whatsapp` | Onde a sessão fica salva |
-| `CHROME_PATH` | vazio | Caminho do Chrome. Vazio = detecção automática |
+| `CHROME_PATH` | vazio | Caminho do Chrome. **Obrigatório** quando `WHATSAPP_CANAL=whatsapp-web` |
 
 ### Sobre o `WHATSAPP_MODE`
 
@@ -89,9 +90,18 @@ Em `dry-run`, cada envio produz uma linha de log
 status `SIMULADA` no banco, que **não conta** no limite diário — senão
 testar a campanha queimaria a cota do dia.
 
-`WHATSAPP_MODE` é só **uma** das três barreiras. As outras duas são
-`Campaign.dryRun` e `OutboundMessage.dryRun`, e basta uma levantada para
-nada sair. Ver [FILA.md](FILA.md).
+### Conectar e enviar são chaves diferentes
+
+`WHATSAPP_CANAL` decide se o sistema **conecta**; `WHATSAPP_MODE` decide
+se ele **envia**. A combinação `whatsapp-web` + `dry-run` é justamente a
+que permite receber mensagens reais sem enviar nenhuma.
+
+### `WHATSAPP_MODE` não é a única trava
+
+Ele é uma de **quatro** barreiras. Acima de todas está
+`FASE_PERMITE_ENVIO_REAL`, no código, que não depende de configuração
+alguma — mudá-la exige um commit. Ver
+[WHATSAPP.md](WHATSAPP.md) e [FILA.md](FILA.md).
 
 `live` só funciona a partir da Fase 8. Antes disso, o sistema lança um erro
 explícito em vez de simular em silêncio.

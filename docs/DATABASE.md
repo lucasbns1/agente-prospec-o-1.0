@@ -14,11 +14,13 @@ PostgreSQL 16 + Prisma 6. O banco é a fonte de verdade do sistema.
 
 ## Contagem de tabelas
 
-**São 22 tabelas.** Contagem verificada no banco, não no schema.
+**São 23 tabelas.** Contagem verificada no banco, não no schema.
 
 Histórico: a Fase 1 entregou 20 (o relatório dizia 19 — eu contei
 errado). A Fase 3 acrescentou `response_templates` e a Fase 4
-acrescentou `outbound_messages`.
+acrescentou `outbound_messages`. A Fase 6A acrescentou
+`unknown_contacts` e duas colunas em `messages` (`confianca`,
+`subtipo`).
 
 Você listou 17 entidades no documento original (`users`, `leads`,
 `campaigns`, `campaign_steps`, `campaign_step_rules`, `lead_campaigns`,
@@ -85,7 +87,7 @@ limite diário** — só `ENVIADA`, `ENTREGUE` e `LIDA` contam.
 
 ---
 
-## As 22 tabelas
+## As 23 tabelas
 
 ### Autenticação
 | Tabela | Papel |
@@ -127,6 +129,7 @@ limite diário** — só `ENVIADA`, `ENTREGUE` e `LIDA` contam.
 | Tabela | Papel |
 |---|---|
 | `conversations` | Thread de WhatsApp com um lead. |
+| `unknown_contacts` | Mensagem de quem **não** é lead. `provider_message_id` UNIQUE. Existe para a mensagem não sumir sem rastro nem virar um lead que você nunca prospectou. |
 | `messages` | Cada mensagem enviada ou recebida. |
 
 ### Operação

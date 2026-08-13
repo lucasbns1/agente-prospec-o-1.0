@@ -5,12 +5,14 @@ Sistema local de prospecção comercial + CRM + automação de WhatsApp.
 Roda inteiramente no seu computador. **Sem IA, sem serviços pagos, sem API key,
 sem servidor externo.**
 
-> **Status: Fase 5 concluída.**
-> Importação, CRM, motor de interpretação de respostas, campanhas,
-> qualificação, mensagem personalizada, fila de envio, dashboard,
-> tarefas e intervenção manual funcionando. A integração com o WhatsApp
-> entra numa fase seguinte — **nenhuma mensagem é enviada ainda**.
-> Veja [Roadmap](#roadmap).
+> **Status: Fase 6A concluída.**
+> Importação, CRM, motor de respostas, campanhas, fila, dashboard,
+> tarefas, intervenção manual e **integração com o WhatsApp Web**
+> (conexão + recebimento) funcionando.
+>
+> **Nenhuma mensagem é enviada.** O envio real está travado no código
+> (`FASE_PERMITE_ENVIO_REAL = false`), não numa variável de ambiente —
+> ver [docs/WHATSAPP.md](docs/WHATSAPP.md). Veja [Roadmap](#roadmap).
 
 ---
 
@@ -25,7 +27,8 @@ sem servidor externo.**
 5. Cria uma campanha com várias mensagens configuráveis.
 6. O sistema monta a mensagem de cada lead com os dados dele, agenda o
    envio dentro da janela permitida e **aguarda a resposta**.
-7. Classifica a resposta por **regras determinísticas** (nunca por IA).
+7. Recebe a resposta pelo WhatsApp Web e classifica por **regras
+   determinísticas** (nunca por IA).
 8. Espera um delay aleatório de 3 a 4 minutos e envia a próxima mensagem.
 9. Marca o lead como FRIO, MORNO ou QUENTE conforme a conversa evolui.
 10. Cria tarefas e notificações quando você precisa intervir, e mostra
@@ -87,7 +90,7 @@ um typo no `.env` não pode virar mensagem enviada por acidente.
 |---|---|
 | `pnpm dev` | Sobe API, worker e frontend juntos |
 | `pnpm dev:api` / `dev:worker` / `dev:web` | Sobe um de cada vez |
-| `pnpm test` | Testes unitários e de API (Vitest) — 815 testes |
+| `pnpm test` | Testes unitários e de API (Vitest) — 868 testes |
 | `pnpm test:e2e` | Testes E2E (Playwright) |
 | `pnpm typecheck` | Verifica os tipos de todos os pacotes |
 | `pnpm build` | Build de produção |
@@ -144,6 +147,8 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | [docs/QUALIFICACAO.md](docs/QUALIFICACAO.md) | Bloqueado vs. não qualificado, critérios e motivos |
 | [docs/DASHBOARD.md](docs/DASHBOARD.md) | "Precisa da sua atenção", métricas, tarefas e notificações |
 | [docs/INTERVENCAO.md](docs/INTERVENCAO.md) | Assumir a conversa, mudar status, opt-out e o rastro de auditoria |
+| [docs/WHATSAPP.md](docs/WHATSAPP.md) | Conexão, QR, os sete estados e as quatro barreiras contra envio real |
+| [docs/CONVERSAS.md](docs/CONVERSAS.md) | Recebimento, identificação do lead, classificação e a caixa de entrada |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Cada variável do `.env` explicada |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | O que fazer quando algo não sobe |
 
@@ -158,7 +163,8 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | 3 | Motor de interpretação de respostas | ✅ concluída |
 | 4 | Campanhas + qualificação + mensagem personalizada + fila | ✅ concluída |
 | 5 | Dashboard + notificações + tarefas + intervenção manual | ✅ concluída |
-| 6 | Integração WhatsApp Web | pendente |
+| 6A | Integração WhatsApp Web: conexão + recebimento (sem envio) | ✅ concluída |
+| 6B | Envio real — **não autorizado** | pendente |
 | 7 | Automação completa das conversas | pendente |
 | 8 | Automação completa das conversas | pendente |
 | 9 | Dry-run completo | pendente |

@@ -184,12 +184,47 @@ gravar.
 
 ## WhatsApp
 
-### `WHATSAPP_MODE=live ainda não está disponível`
+### Configurei tudo e mesmo assim nada é enviado
 
-Correto — a integração real entra na **Fase 8**. Use `dry-run`.
+É o esperado. O envio real está travado no **código**, não no `.env`:
 
-O sistema lança esse erro de propósito em vez de cair silenciosamente em
-simulação: você acharia que enviou mensagens que nunca saíram.
+```ts
+// packages/integrations/src/whatsapp/guarda-envio.ts
+export const FASE_PERMITE_ENVIO_REAL = false;
+```
+
+Nem `WHATSAPP_MODE=live` destrava. Isso é deliberado: uma variável de
+ambiente cai com um `export` errado; uma constante no código exige um
+commit. Ver [WHATSAPP.md](WHATSAPP.md).
+
+### O canal não conecta / fica em INICIALIZANDO
+
+1. **O worker está rodando?** É ele que abre o navegador, não a API.
+2. **`WHATSAPP_CANAL=whatsapp-web`?** O padrão é `simulado`, que não
+   conecta em lugar nenhum de propósito.
+3. **`CHROME_PATH` aponta para um Chrome existente?** Este projeto
+   **não** baixa Chromium (são ~300 MB), então o caminho é obrigatório.
+
+### O QR não aparece
+
+O QR só existe enquanto o estado é `AGUARDANDO_QR`, vale ~60 segundos e
+só é carregado quando você clica em "Mostrar QR Code" — ele é uma
+credencial de acesso, não fica sendo buscado em segundo plano.
+
+Se expirou, clique em **Atualizar**.
+
+### O dashboard diz "conectado" mas nada chega
+
+Não deveria acontecer: se o worker parar de publicar estado por mais de
+90 segundos, a API passa a responder `DESCONECTADO` em vez de repetir o
+último retrato. Se você vê "conectado" e nada chega, confira em
+`/api/canal/saude` o campo `seconds_since_last_event`.
+
+### Mandei a mesma mensagem de teste e ela não foi processada
+
+A idempotência está funcionando. Jobs concluídos ficam retidos 24h no
+Redis, e o `jobId` deriva do `provider_message_id` — reusar um id de
+ontem faz a mensagem ser descartada como duplicata. Use um id novo.
 
 ### Como testo o fluxo sem enviar nada?
 

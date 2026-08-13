@@ -106,5 +106,16 @@ test('o dashboard reflete os leads importados', async ({ page }) => {
 test('nenhuma mensagem pode ser enviada nesta fase', async ({ page }) => {
   // O indicador de dry-run precisa estar sempre visível.
   await expect(page.getByText('MODO SIMULAÇÃO — nada é enviado')).toBeVisible();
-  await expect(page.getByText('WhatsApp desconectado')).toBeVisible();
+
+  // ATUALIZADO NA FASE 6A.
+  //
+  // Este teste afirmava "WhatsApp desconectado", o que era verdade
+  // quando a barra lia um valor fixo. Agora o canal conecta de verdade
+  // (simulado ou WhatsApp Web) e a barra reflete o estado real — estar
+  // conectado deixou de ser um defeito.
+  //
+  // O que continua valendo, e e o que importa, e que conectar NAO
+  // libera envio: a trava esta no codigo, nao no estado da conexao.
+  await page.getByRole('link', { name: 'WhatsApp', exact: true }).click();
+  await expect(page.getByText('Envio real bloqueado nesta fase')).toBeVisible();
 });
