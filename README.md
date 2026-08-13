@@ -5,9 +5,9 @@ Sistema local de prospecção comercial + CRM + automação de WhatsApp.
 Roda inteiramente no seu computador. **Sem IA, sem serviços pagos, sem API key,
 sem servidor externo.**
 
-> **Status: Fase 2 concluída.**
-> Importação de CSV/XLSX e CRM de leads funcionando. Campanhas, motor de
-> regras e envio entram nas fases seguintes — **nenhuma mensagem é
+> **Status: Fase 3 concluída.**
+> Importação, CRM e o motor de interpretação de respostas funcionando.
+> Campanhas e envio entram nas fases seguintes — **nenhuma mensagem é
 > enviada ainda**. Veja [Roadmap](#roadmap).
 
 ---
@@ -83,7 +83,7 @@ um typo no `.env` não pode virar mensagem enviada por acidente.
 |---|---|
 | `pnpm dev` | Sobe API, worker e frontend juntos |
 | `pnpm dev:api` / `dev:worker` / `dev:web` | Sobe um de cada vez |
-| `pnpm test` | Testes unitários e de API (Vitest) — 217 testes |
+| `pnpm test` | Testes unitários e de API (Vitest) — 658 testes |
 | `pnpm test:e2e` | Testes E2E (Playwright) |
 | `pnpm typecheck` | Verifica os tipos de todos os pacotes |
 | `pnpm build` | Build de produção |
@@ -133,6 +133,7 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Camadas, decisões técnicas e o porquê de cada uma |
 | [docs/DATABASE.md](docs/DATABASE.md) | As 20 tabelas, campos, índices e constraints |
 | [docs/IMPORTACAO.md](docs/IMPORTACAO.md) | Regra de site, deduplicação, normalização e mapeamento de colunas |
+| [docs/MOTOR-REGRAS.md](docs/MOTOR-REGRAS.md) | Categorias, precedência, negação, confiança e as garantias de segurança |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Cada variável do `.env` explicada |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | O que fazer quando algo não sobe |
 
@@ -144,11 +145,11 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 |---|---|---|
 | 1 | Monorepo, banco, API, worker, filas, auth, SSE, dry-run | ✅ concluída |
 | 2 | Importação CSV/XLSX + CRM de leads | ✅ concluída |
-| 3 | Normalização avançada + regra de site (refino) | pendente |
-| 4 | Motor de regras e classificação | pendente |
-| 5 | Campanhas + etapas + agendamento | pendente |
-| 6 | Dashboard + notificações + intervenção manual | pendente |
-| 7 | Integração WhatsApp Web | pendente |
+| 3 | Motor de interpretação de respostas | ✅ concluída |
+| 4 | Campanhas + etapas + agendamento | pendente |
+| 5 | Dashboard + notificações + intervenção manual | pendente |
+| 6 | Integração WhatsApp Web | pendente |
+| 7 | Automação completa das conversas | pendente |
 | 8 | Automação completa das conversas | pendente |
 | 9 | Dry-run completo | pendente |
 | 10 | Testes de integração | pendente |

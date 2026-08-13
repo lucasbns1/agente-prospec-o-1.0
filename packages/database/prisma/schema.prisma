@@ -366,6 +366,18 @@ model ResponseKeyword {
   /// Texto ja normalizado (minusculo, sem acento, sem pontuacao).
   termo          String
   matchTipo      MatchTipo         @default(CONTEM) @map("match_tipo")
+  /// Detalhamento interno da categoria: "preco_direto", "desconto",
+  /// "forma_pagamento", "opt_out_agressivo"...
+  ///
+  /// NAO substitui a categoria e NAO participa da precedencia. Serve
+  /// para relatorio e para configurar templates mais especificos
+  /// futuramente. As 8 categorias continuam sendo as unicas que
+  /// decidem acao.
+  subtipo        String?
+  /// Reservado para multi-idioma. Hoje sempre "pt-BR".
+  idioma         String            @default("pt-BR")
+  /// Anotacao livre de quem cadastrou o termo.
+  observacao     String?
   ativo          Boolean           @default(true)
   /// Desempate quando dois termos da MESMA categoria casam. Maior vence.
   peso           Int               @default(0)
@@ -380,7 +392,42 @@ model ResponseKeyword {
   @@unique([categoria, termo, campaignStepId])
   @@index([categoria, ativo])
   @@index([campaignStepId])
+  @@index([subtipo])
   @@map("response_keywords")
+}
+
+/// Texto de resposta associado a uma categoria.
+///
+/// REGRA DE OURO (requisitos 49 a 52): o motor de regras NUNCA escreve
+/// uma resposta. Ele devolve, no maximo, `{ acao: 'RESPONDER',
+/// templateId }`. O texto vive AQUI, editavel por voce.
+///
+/// E se a categoria nao tiver template ativo? O sistema NAO improvisa:
+/// registra `missing_template`, cria intervencao e nao envia nada.
+/// Na duvida entre responder e nao responder, nao responder sempre vence.
+model ResponseTemplate {
+  id        String            @id @default(uuid())
+  /// Identificador estavel usado nas regras. Ex: "template_preco_01".
+  templateId String           @unique @map("template_id")
+  categoria RespostaCategoria
+  /// Subtipo opcional: permite um template so para "desconto", por
+  /// exemplo, sem afetar os demais casos de PRECO.
+  subtipo   String?
+  /// NULL = vale para qualquer etapa da campanha.
+  campaignStepId String?      @map("campaign_step_id")
+  nome      String
+  /// O texto. Aceita as mesmas variaveis das mensagens de campanha.
+  texto     String
+  ativo     Boolean           @default(true)
+  padrao    Boolean           @default(false)
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  campaignStep CampaignStep? @relation(fields: [campaignStepId], references: [id], onDelete: Cascade)
+
+  @@index([categoria, ativo])
+  @@index([campaignStepId])
+  @@map("response_templates")
 }
 
 // =============================================================================
@@ -733,10 +780,11 @@ model CampaignStep {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  campaign Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  rules    CampaignStepRule[]
-  keywords ResponseKeyword[]
-  messages Message[]
+  campaign  Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  rules     CampaignStepRule[]
+  keywords  ResponseKeyword[]
+  templates ResponseTemplate[]
+  messages  Message[]
   leadCampaigns LeadCampaign[]
 
   @@unique([campaignId, ordem])

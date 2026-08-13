@@ -20,6 +20,10 @@ export * from './normalization/dedupe.js';
 export * from './normalization/lead.js';
 
 // --- Contratos das proximas fases ---
-export * from './rules/contracts.js';
+// --- Motor de regras (Fase 3) ---
+export * from './rules/normalizar-resposta.js';
+export * from './rules/motor.js';
+export * from './rules/decisao.js';
+export * from './rules/dicionario-padrao.js';
 export * from './campaign/contracts.js';
 export * from './template/contracts.js';

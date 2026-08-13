@@ -15,6 +15,7 @@ import hash from 'argon2';
 // O cliente gerado do Prisma e CommonJS. Em ESM, os enums nao aparecem
 // como named exports estaticos — e preciso desestruturar do default.
 import prismaPkg from '@prisma/client';
+import { DICIONARIO_PADRAO } from '@prospector/domain';
 const { PrismaClient, MatchTipo, RespostaCategoria } = prismaPkg;
 type MatchTipo = prismaPkg.MatchTipo;
 type RespostaCategoria = prismaPkg.RespostaCategoria;
@@ -178,140 +179,46 @@ const SOCIAL_DOMAINS: Array<{ dominio: string; rotulo: string }> = [
 // Estes sao os termos INICIAIS. Voce pode adicionar, remover, desativar e
 // mudar o tipo de comparacao de cada um pelo painel de configuracoes.
 // -----------------------------------------------------------------------------
-const KEYWORDS: Array<{
-  categoria: RespostaCategoria;
-  termos: Array<[string, MatchTipo, number?]>;
+// O dicionario vem de `@prospector/domain` — a MESMA fonte que os
+// testes exercitam. Assim nao existe divergencia entre o que e testado
+// e o que vai para o banco.
+const KEYWORDS = DICIONARIO_PADRAO;
+
+// -----------------------------------------------------------------------------
+// 4. TEMPLATES DE RESPOSTA
+//
+// Textos INICIAIS, editaveis pelo painel. O motor de regras nunca
+// escreve resposta: ele so devolve o templateId, e o texto sai daqui.
+// -----------------------------------------------------------------------------
+const TEMPLATES: Array<{
+  templateId: string;
+  categoria: string;
+  subtipo: string | null;
+  nome: string;
+  texto: string;
 }> = [
   {
-    categoria: RespostaCategoria.OPT_OUT,
-    termos: [
-      ['pare', MatchTipo.PALAVRA, 10],
-      ['para de mandar', MatchTipo.CONTEM, 10],
-      ['nao me mande mais', MatchTipo.CONTEM, 10],
-      ['nao me mande mensagem', MatchTipo.CONTEM, 10],
-      ['nao quero receber mensagens', MatchTipo.CONTEM, 10],
-      ['nao quero receber mais', MatchTipo.CONTEM, 10],
-      ['remova meu contato', MatchTipo.CONTEM, 10],
-      ['remove meu contato', MatchTipo.CONTEM, 10],
-      ['me remove', MatchTipo.CONTEM, 10],
-      ['me tira da lista', MatchTipo.CONTEM, 10],
-      ['descadastrar', MatchTipo.CONTEM, 10],
-      ['nao perturbe', MatchTipo.CONTEM, 10],
-      ['vou denunciar', MatchTipo.CONTEM, 10],
-      ['spam', MatchTipo.PALAVRA, 5],
-    ],
+    templateId: 'template_preco_01',
+    categoria: 'PRECO',
+    subtipo: null,
+    nome: 'Resposta padrao de preco',
+    texto:
+      'Boa pergunta! O valor depende do que voce precisa. ' +
+      'Posso te passar os detalhes agora?',
   },
   {
-    categoria: RespostaCategoria.NEGATIVO,
-    termos: [
-      ['nao', MatchTipo.EXATO, 5],
-      ['nao obrigado', MatchTipo.CONTEM, 8],
-      ['nao obrigada', MatchTipo.CONTEM, 8],
-      ['nao quero', MatchTipo.CONTEM, 8],
-      ['nao tenho interesse', MatchTipo.CONTEM, 9],
-      ['sem interesse', MatchTipo.CONTEM, 9],
-      ['nao preciso', MatchTipo.CONTEM, 8],
-      ['ja tenho', MatchTipo.CONTEM, 7],
-      ['nao me interessa', MatchTipo.CONTEM, 9],
-      ['agradeco mas nao', MatchTipo.CONTEM, 9],
-      ['no momento nao', MatchTipo.CONTEM, 7],
-    ],
+    templateId: 'template_duvida_01',
+    categoria: 'DUVIDA',
+    subtipo: null,
+    nome: 'Resposta padrao de duvida',
+    texto: 'Claro, posso explicar. O que exatamente voce gostaria de entender melhor?',
   },
   {
-    categoria: RespostaCategoria.FALAR_DEPOIS,
-    termos: [
-      ['depois', MatchTipo.PALAVRA, 4],
-      ['mais tarde', MatchTipo.CONTEM, 6],
-      ['agora nao posso', MatchTipo.CONTEM, 8],
-      ['agora estou ocupado', MatchTipo.CONTEM, 8],
-      ['agora estou ocupada', MatchTipo.CONTEM, 8],
-      ['me chama depois', MatchTipo.CONTEM, 8],
-      ['me chama amanha', MatchTipo.CONTEM, 8],
-      ['fala comigo amanha', MatchTipo.CONTEM, 8],
-      ['semana que vem', MatchTipo.CONTEM, 7],
-      ['outro dia', MatchTipo.CONTEM, 6],
-      ['estou em atendimento', MatchTipo.CONTEM, 7],
-      ['to ocupado', MatchTipo.CONTEM, 7],
-      ['to ocupada', MatchTipo.CONTEM, 7],
-    ],
-  },
-  {
-    categoria: RespostaCategoria.PRECO,
-    termos: [
-      ['quanto', MatchTipo.PALAVRA, 6],
-      ['quanto custa', MatchTipo.CONTEM, 9],
-      ['quanto fica', MatchTipo.CONTEM, 9],
-      ['quanto sai', MatchTipo.CONTEM, 9],
-      ['qual o valor', MatchTipo.CONTEM, 9],
-      ['qual valor', MatchTipo.CONTEM, 9],
-      ['qual o preco', MatchTipo.CONTEM, 9],
-      ['preco', MatchTipo.PALAVRA, 7],
-      ['valores', MatchTipo.PALAVRA, 6],
-      ['orcamento', MatchTipo.PALAVRA, 7],
-      ['investimento', MatchTipo.PALAVRA, 5],
-      ['e caro', MatchTipo.CONTEM, 6],
-    ],
-  },
-  {
-    categoria: RespostaCategoria.DUVIDA,
-    termos: [
-      ['como funciona', MatchTipo.CONTEM, 8],
-      ['me explica', MatchTipo.CONTEM, 7],
-      ['explica melhor', MatchTipo.CONTEM, 7],
-      ['nao entendi', MatchTipo.CONTEM, 8],
-      ['o que e', MatchTipo.CONTEM, 5],
-      ['quem e voce', MatchTipo.CONTEM, 7],
-      ['quem fala', MatchTipo.CONTEM, 6],
-      ['de onde voce e', MatchTipo.CONTEM, 6],
-      ['que empresa', MatchTipo.CONTEM, 6],
-      ['do que se trata', MatchTipo.CONTEM, 7],
-      ['como assim', MatchTipo.CONTEM, 6],
-    ],
-  },
-  {
-    categoria: RespostaCategoria.POSITIVO,
-    termos: [
-      ['sim', MatchTipo.EXATO, 8],
-      ['s', MatchTipo.EXATO, 3],
-      ['sou eu', MatchTipo.CONTEM, 7],
-      ['sim sou eu', MatchTipo.CONTEM, 9],
-      ['pode', MatchTipo.EXATO, 6],
-      ['pode sim', MatchTipo.CONTEM, 9],
-      ['pode mandar', MatchTipo.CONTEM, 9],
-      ['pode mostrar', MatchTipo.CONTEM, 9],
-      ['pode me mostrar', MatchTipo.CONTEM, 9],
-      ['pode falar', MatchTipo.CONTEM, 8],
-      ['claro', MatchTipo.PALAVRA, 7],
-      ['manda', MatchTipo.PALAVRA, 7],
-      ['manda ai', MatchTipo.CONTEM, 9],
-      ['quero ver', MatchTipo.CONTEM, 9],
-      ['quero sim', MatchTipo.CONTEM, 9],
-      ['gostaria de ver', MatchTipo.CONTEM, 8],
-      ['bora', MatchTipo.PALAVRA, 6],
-      ['vamos', MatchTipo.PALAVRA, 5],
-      ['ok', MatchTipo.EXATO, 5],
-      ['isso', MatchTipo.EXATO, 5],
-      ['exato', MatchTipo.EXATO, 5],
-      ['positivo', MatchTipo.EXATO, 5],
-      ['bom dia', MatchTipo.CONTEM, 2],
-      ['boa tarde', MatchTipo.CONTEM, 2],
-    ],
-  },
-  {
-    categoria: RespostaCategoria.INTERESSE,
-    termos: [
-      ['interessante', MatchTipo.PALAVRA, 5],
-      ['legal', MatchTipo.PALAVRA, 4],
-      ['bacana', MatchTipo.PALAVRA, 4],
-      ['gostei', MatchTipo.PALAVRA, 6],
-      ['ficou bom', MatchTipo.CONTEM, 6],
-      ['ficou otimo', MatchTipo.CONTEM, 6],
-      ['muito bom', MatchTipo.CONTEM, 5],
-      ['adorei', MatchTipo.PALAVRA, 6],
-      ['top', MatchTipo.EXATO, 4],
-      ['show', MatchTipo.EXATO, 4],
-      ['massa', MatchTipo.EXATO, 4],
-    ],
+    templateId: 'template_interesse_01',
+    categoria: 'INTERESSE',
+    subtipo: null,
+    nome: 'Resposta padrao de interesse',
+    texto: 'Que bom que achou interessante! Quer que eu te mostre com mais detalhes?',
   },
 ];
 
@@ -355,35 +262,48 @@ async function main(): Promise<void> {
 
   // --- Dicionario de regras ---
   let totalTermos = 0;
-  for (const grupo of KEYWORDS) {
-    for (const [texto, matchTipo, peso] of grupo.termos) {
-      const termo = normalizarTermo(texto);
+  {
+    for (const item of KEYWORDS) {
+      const { categoria, matchTipo, peso, subtipo } = item;
+      const termo = normalizarTermo(item.termo);
       // Nao da para usar upsert aqui: o unique composto inclui
       // campaignStepId, que e NULL nos termos globais, e o Prisma nao
       // aceita NULL dentro de um `where` de chave composta.
       const existente = await prisma.responseKeyword.findFirst({
-        where: { categoria: grupo.categoria, termo, campaignStepId: null },
+        where: { categoria, termo, campaignStepId: null },
       });
       if (existente) {
         await prisma.responseKeyword.update({
           where: { id: existente.id },
-          data: { matchTipo, peso: peso ?? 0 },
+          data: { matchTipo, peso, subtipo },
         });
       } else {
         await prisma.responseKeyword.create({
-          data: {
-            categoria: grupo.categoria,
-            termo,
-            matchTipo,
-            peso: peso ?? 0,
-            padrao: true,
-          },
+          data: { categoria, termo, matchTipo, peso, subtipo, padrao: true },
         });
       }
       totalTermos++;
     }
   }
-  console.log(`  [ok] ${totalTermos} termos do motor de regras em ${KEYWORDS.length} categorias`);
+  const categorias = new Set(KEYWORDS.map((k) => k.categoria)).size;
+  console.log(`  [ok] ${totalTermos} termos do motor de regras em ${categorias} categorias`);
+
+  // --- Templates de resposta ---
+  for (const tpl of TEMPLATES) {
+    await prisma.responseTemplate.upsert({
+      where: { templateId: tpl.templateId },
+      update: { nome: tpl.nome },
+      create: {
+        templateId: tpl.templateId,
+        categoria: tpl.categoria as never,
+        subtipo: tpl.subtipo,
+        nome: tpl.nome,
+        texto: tpl.texto,
+        padrao: true,
+      },
+    });
+  }
+  console.log(`  [ok] ${TEMPLATES.length} templates de resposta`);
 
   // --- Usuario inicial ---
   const email = process.env.SEED_USER_EMAIL ?? 'admin@local';
