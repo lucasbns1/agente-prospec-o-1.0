@@ -9,6 +9,8 @@ import { Leads } from '@/pages/Leads';
 import { Importar } from '@/pages/Importar';
 import { Campanhas } from '@/pages/Campanhas';
 import { CampanhaDetalhe } from '@/pages/CampanhaDetalhe';
+import { EstadoCampanhas } from '@/pages/EstadoCampanhas';
+import { QuadroCampanha } from '@/pages/QuadroCampanha';
 import { Tarefas } from '@/pages/Tarefas';
 import { Notificacoes } from '@/pages/Notificacoes';
 import { Conversas } from '@/pages/Conversas';
@@ -49,6 +51,8 @@ function AppAutenticado({
                 <Route path="/canal" element={<Canal />} />
                 <Route path="/campanhas" element={<Campanhas />} />
                 <Route path="/campanhas/:id" element={<CampanhaDetalhe />} />
+                <Route path="/estado" element={<EstadoCampanhas />} />
+                <Route path="/estado/:id" element={<QuadroCampanha />} />
                 <Route path="/tarefas" element={<Tarefas />} />
                 <Route path="/notificacoes" element={<Notificacoes />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />

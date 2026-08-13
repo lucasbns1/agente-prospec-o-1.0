@@ -8,6 +8,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma, Prisma } from '@prospector/database';
+import {
+  montarColunas,
+  posicaoNoQuadro,
+  chaveDaColuna,
+  STATUS_ENCERRADOS,
+  STATUS_ESPERANDO_VOCE,
+} from '@prospector/domain';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 import { eventsBus } from '../lib/events-bus.js';
@@ -448,6 +455,124 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
       return {
         mensagens,
         contagem: Object.fromEntries(contagem.map((c) => [c.status, c._count])),
+      };
+    }
+  );
+
+  // ------------------------------------------------------------- quadro
+  /**
+   * O quadro da campanha: quem esta em qual mensagem.
+   *
+   * Uma consulta por coluna, com teto de cartoes, em vez de trazer todos
+   * os leads e agrupar na memoria — uma campanha com milhares de leads
+   * derrubaria a tela e o servidor junto.
+   *
+   * As contagens vem de um `groupBy` separado e sao EXATAS, mesmo quando
+   * a coluna mostra so os primeiros cartoes. O numero no topo da coluna
+   * e a verdade; os cartoes sao uma amostra dela.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/api/campaigns/:id/quadro',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { porColuna } = z
+        .object({
+          porColuna: z.coerce.number().int().min(1).max(100).default(20),
+        })
+        .parse(request.query);
+
+      const campanha = await prisma.campaign.findUnique({
+        where: { id },
+        select: {
+          id: true, nome: true, status: true, dryRun: true,
+          steps: {
+            where: { ativo: true },
+            select: { id: true, ordem: true, nome: true },
+            orderBy: { ordem: 'asc' },
+          },
+        },
+      });
+      if (!campanha) throw new AppError('Campanha nao encontrada', 404, 'NAO_ENCONTRADO');
+
+      const colunas = montarColunas(campanha.steps);
+
+      // Status que NAO estao numa coluna fixa. Definido por exclusao, e
+      // nao por lista propria: assim um status novo aparece na etapa em
+      // vez de sumir do quadro.
+      const forasDaSequencia = [...STATUS_ENCERRADOS, ...STATUS_ESPERANDO_VOCE];
+
+      const whereDaColuna = (c: (typeof colunas)[number]): Prisma.LeadCampaignWhereInput => {
+        if (c.tipo === 'ENCERRADO') {
+          return { campaignId: id, status: { in: STATUS_ENCERRADOS as never } };
+        }
+        if (c.tipo === 'PRECISA_DE_VOCE') {
+          return { campaignId: id, status: { in: STATUS_ESPERANDO_VOCE as never } };
+        }
+        return {
+          campaignId: id,
+          status: { notIn: forasDaSequencia as never },
+          etapaAtualId: c.tipo === 'NA_FILA' ? null : c.etapaId,
+        };
+      };
+
+      const [contagens, ...amostras] = await Promise.all([
+        prisma.leadCampaign.groupBy({
+          by: ['status', 'etapaAtualId'],
+          where: { campaignId: id },
+          _count: true,
+        }),
+        ...colunas.map((c) =>
+          prisma.leadCampaign.findMany({
+            where: whereDaColuna(c),
+            // Mais recente primeiro: o que mexeu agora e o que voce quer ver.
+            orderBy: { updatedAt: 'desc' },
+            take: porColuna,
+            select: {
+              id: true,
+              status: true,
+              proximoEnvioEm: true,
+              aguardandoLiberacao: true,
+              totalEnviadas: true,
+              totalRecebidas: true,
+              updatedAt: true,
+              lead: {
+                select: {
+                  id: true, nomeCompleto: true, empresa: true,
+                  telefone: true, cidade: true, temperatura: true,
+                  status: true, optOut: true,
+                },
+              },
+            },
+          })
+        ),
+      ]);
+
+      // As contagens saem do mesmo criterio da tela — `posicaoNoQuadro`
+      // aplicado a cada combinacao (status, etapa) que o banco devolveu.
+      const totalPorChave = new Map<string, number>();
+      for (const c of contagens) {
+        const chave = chaveDaColuna(
+          posicaoNoQuadro({ status: c.status, etapaAtualId: c.etapaAtualId })
+        );
+        totalPorChave.set(chave, (totalPorChave.get(chave) ?? 0) + c._count);
+      }
+
+      const totalGeral = contagens.reduce((s, c) => s + c._count, 0);
+
+      return {
+        campanha: {
+          id: campanha.id,
+          nome: campanha.nome,
+          status: campanha.status,
+          dryRun: campanha.dryRun,
+        },
+        totalLeads: totalGeral,
+        colunas: colunas.map((c, i) => ({
+          ...c,
+          total: totalPorChave.get(c.chave) ?? 0,
+          leads: amostras[i],
+        })),
       };
     }
   );

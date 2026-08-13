@@ -10,6 +10,7 @@ import {
   Settings,
   Radar,
   QrCode,
+  KanbanSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +19,7 @@ const NAVEGACAO = [
   { para: '/leads', rotulo: 'Leads', icone: Users },
   { para: '/importar', rotulo: 'Importar', icone: Download },
   { para: '/campanhas', rotulo: 'Campanhas', icone: Rocket },
+  { para: '/estado', rotulo: 'Estado das campanhas', icone: KanbanSquare },
   { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
   { para: '/tarefas', rotulo: 'Tarefas', icone: CheckSquare },
   { para: '/notificacoes', rotulo: 'Notificações', icone: Bell },
