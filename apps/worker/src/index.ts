@@ -17,6 +17,7 @@ import pino from 'pino';
 import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
 import { criarWorkerHealth } from './workers/health.js';
 import { criarWorkerOutbound } from './workers/outbound.js';
+import { iniciarDespachante } from './workers/despachante.js';
 import { fecharPublicador } from './redis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,6 +87,10 @@ async function main(): Promise<void> {
     });
   }
 
+  // O despachante e quem transforma "esta na hora" em job. Sem ele as
+  // mensagens agendadas ficariam paradas no banco para sempre.
+  const pararDespachante = iniciarDespachante(log);
+
   log.info('Worker pronto. Aguardando jobs.');
 
   // --- Shutdown ---
@@ -95,6 +100,9 @@ async function main(): Promise<void> {
     encerrando = true;
     log.info({ sinal }, 'Encerrando worker...');
     try {
+      // Para de despachar antes de fechar os workers, senao a ultima
+      // varredura criaria jobs que ninguem vai consumir.
+      pararDespachante();
       // Fecha os workers primeiro: eles terminam o job em andamento antes
       // de parar, para nao deixar trabalho pela metade.
       await Promise.allSettled(workers.map((w) => w.close()));

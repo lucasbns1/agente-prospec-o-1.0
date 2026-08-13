@@ -1,0 +1,231 @@
+/**
+ * Despachante da fila de envio (Fase G/H).
+ *
+ * ============================================================
+ * POR QUE ISSO EXISTE
+ * ============================================================
+ * O enfileiramento da campanha grava linhas em `outbound_messages` com
+ * um `scheduledAt`. Sozinhas, essas linhas nao fazem nada — alguem
+ * precisa transformar "esta na hora" em um job do BullMQ.
+ *
+ * POR QUE UM POLLER, E NAO UM JOB COM `delay` NA HORA DO ENFILEIRAMENTO:
+ *  - uma campanha pode agendar para daqui a varios dias; segurar isso
+ *    dentro do Redis por dias e fragil (o Redis aqui roda sem
+ *    persistencia);
+ *  - se o worker estiver parado no momento do enfileiramento, os jobs
+ *    simplesmente nao existiriam;
+ *  - o banco vira a unica fonte da verdade sobre o que falta enviar, e
+ *    o Redis vira so o transporte. Reiniciar o Redis nao perde trabalho.
+ *
+ * ============================================================
+ * ESTE MODULO NAO ENVIA NADA
+ * ============================================================
+ * Ele so decide QUANDO uma mensagem pode virar job. Quem processa e o
+ * worker de outbound — que continua em dry-run.
+ */
+import { prisma } from '@prospector/database';
+import { dentroDaJanela } from '@prospector/domain';
+import { QUEUES } from '@prospector/shared';
+import type { Logger } from 'pino';
+import { getFila, OPCOES_JOB_PADRAO } from '../queues.js';
+import type { OutboundJobData } from './outbound.js';
+
+/** De quanto em quanto tempo o despachante olha o banco. */
+export const INTERVALO_VARREDURA_MS = 15_000;
+
+/**
+ * Teto por varredura.
+ *
+ * Sem isso, uma campanha de 5000 leads viraria 5000 jobs de uma vez e o
+ * espacamento entre envios — que e a protecao anti-ban — seria decidido
+ * so pelo `scheduledAt`. Com o teto, a fila do Redis fica curta e o
+ * banco continua mandando no ritmo.
+ */
+export const MAX_POR_VARREDURA = 50;
+
+export interface ResultadoVarredura {
+  despachadas: number;
+  bloqueadas: number;
+  adiadas: number;
+}
+
+/**
+ * Quantas mensagens REAIS ja sairam desta campanha na janela informada.
+ *
+ * SIMULADA fica de fora de proposito: dry-run nao consome cota. Se
+ * contasse, testar a campanha gastaria o limite diario do dia seguinte.
+ */
+function contarEnviosReais(campaignId: string, desde: Date): Promise<number> {
+  return prisma.outboundMessage.count({
+    where: {
+      campaignId,
+      status: { in: ['ENVIADA'] },
+      processedAt: { gte: desde },
+    },
+  });
+}
+
+/**
+ * Uma passada: pega o que venceu, valida e despacha.
+ *
+ * Exportada para poder ser chamada direto no teste, sem depender de
+ * timer.
+ */
+export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredura> {
+  const vencidas = await prisma.outboundMessage.findMany({
+    where: {
+      status: { in: ['PENDENTE', 'AGENDADA'] },
+      OR: [{ scheduledAt: null }, { scheduledAt: { lte: agora } }],
+    },
+    orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
+    take: MAX_POR_VARREDURA,
+    include: {
+      campaign: {
+        select: {
+          id: true, nome: true, status: true,
+          horarioInicio: true, horarioFim: true, diasPermitidos: true,
+          limiteDiarioEnvios: true, limiteHorarioEnvios: true,
+        },
+      },
+    },
+  });
+
+  const resultado: ResultadoVarredura = { despachadas: 0, bloqueadas: 0, adiadas: 0 };
+  if (vencidas.length === 0) return resultado;
+
+  const fila = getFila(QUEUES.OUTBOUND_SEND);
+
+  // Cache por campanha: varias mensagens da mesma campanha compartilham
+  // a mesma contagem, e recontar por mensagem seria uma consulta a mais
+  // para cada linha.
+  const cota = new Map<string, { hoje: number; hora: number }>();
+
+  const inicioDoDia = new Date(agora);
+  inicioDoDia.setHours(0, 0, 0, 0);
+  const umaHoraAtras = new Date(agora.getTime() - 3600_000);
+
+  for (const m of vencidas) {
+    const c = m.campaign;
+
+    // --- Campanha precisa estar ATIVA ---
+    if (c.status !== 'ATIVA') {
+      await prisma.outboundMessage.update({
+        where: { id: m.id },
+        data: {
+          status: 'BLOQUEADA',
+          motivoBloqueio: 'CAMPANHA_PAUSADA',
+          detalheBloqueio: `Campanha esta ${c.status}`,
+          processedAt: agora,
+        },
+      });
+      resultado.bloqueadas += 1;
+      continue;
+    }
+
+    // --- Janela de horario ---
+    //
+    // Fora da janela a mensagem NAO e bloqueada: ela e adiada. Bloquear
+    // aqui perderia o lead so porque a fila virou a noite.
+    if (
+      !dentroDaJanela(agora, {
+        horarioInicio: c.horarioInicio,
+        horarioFim: c.horarioFim,
+        diasPermitidos: c.diasPermitidos,
+      })
+    ) {
+      await prisma.outboundMessage.update({
+        where: { id: m.id },
+        data: { scheduledAt: new Date(agora.getTime() + 15 * 60_000) },
+      });
+      resultado.adiadas += 1;
+      continue;
+    }
+
+    // --- Limites diario e horario ---
+    let contagem = cota.get(c.id);
+    if (!contagem) {
+      contagem = {
+        hoje: await contarEnviosReais(c.id, inicioDoDia),
+        hora: await contarEnviosReais(c.id, umaHoraAtras),
+      };
+      cota.set(c.id, contagem);
+    }
+
+    if (contagem.hoje >= c.limiteDiarioEnvios) {
+      // Amanha, no inicio da janela. O limite diario nao e motivo para
+      // desistir do lead.
+      const amanha = new Date(inicioDoDia.getTime() + 24 * 3600_000);
+      await prisma.outboundMessage.update({
+        where: { id: m.id },
+        data: { scheduledAt: amanha },
+      });
+      resultado.adiadas += 1;
+      continue;
+    }
+
+    if (contagem.hora >= c.limiteHorarioEnvios) {
+      await prisma.outboundMessage.update({
+        where: { id: m.id },
+        data: { scheduledAt: new Date(agora.getTime() + 60 * 60_000) },
+      });
+      resultado.adiadas += 1;
+      continue;
+    }
+
+    // --- Despacha ---
+    //
+    // `jobId` fixo no id da mensagem: se a varredura rodar duas vezes
+    // antes do worker pegar o job, o BullMQ descarta o duplicado. Nao
+    // substitui a idempotencia do banco — soma com ela.
+    //
+    // O separador e "-" e nao ":": o BullMQ recusa dois-pontos em id
+    // customizado (ele usa ":" nas proprias chaves do Redis).
+    await fila.add(
+      'enviar',
+      { outboundMessageId: m.id } satisfies OutboundJobData,
+      { ...OPCOES_JOB_PADRAO, jobId: `outbound-${m.id}` }
+    );
+
+    // Reservado de forma otimista para a proxima varredura nao contar de
+    // novo a mesma mensagem. Quem confirma o consumo e o worker.
+    contagem.hora += 1;
+    contagem.hoje += 1;
+    resultado.despachadas += 1;
+  }
+
+  return resultado;
+}
+
+/**
+ * Liga o laco de varredura. Devolve a funcao que o desliga.
+ */
+export function iniciarDespachante(log: Logger): () => void {
+  let rodando = false;
+
+  const tick = async (): Promise<void> => {
+    // Uma varredura lenta nao pode se sobrepor a proxima: duas passadas
+    // simultaneas leriam as mesmas linhas.
+    if (rodando) return;
+    rodando = true;
+    try {
+      const r = await varrer();
+      if (r.despachadas > 0 || r.bloqueadas > 0 || r.adiadas > 0) {
+        log.info(r, 'Varredura da fila de envio');
+      }
+    } catch (err) {
+      log.error({ err }, 'Falha na varredura da fila de envio');
+    } finally {
+      rodando = false;
+    }
+  };
+
+  const timer = setInterval(() => void tick(), INTERVALO_VARREDURA_MS);
+  void tick();
+
+  log.info(
+    { intervaloMs: INTERVALO_VARREDURA_MS, maxPorVarredura: MAX_POR_VARREDURA },
+    'Despachante da fila de envio iniciado'
+  );
+
+  return () => clearInterval(timer);
+}
