@@ -143,7 +143,8 @@ e-mail e a senha do `.env`.
 Você deve ver:
 - 🔴 WhatsApp desconectado (esperado — a conexão real é a Fase 8)
 - 🧪 **MODO SIMULAÇÃO — nada é enviado**
-- 13 cards de métricas, todos zerados
+- A seção "Precisa da sua atenção" vazia
+- 21 cards de métricas, todos zerados
 - O funil vazio
 
 Para parar: `Ctrl+C`.

@@ -237,6 +237,8 @@ WORKER: process_incoming_message
    Motor de regras classifica (determinístico, sem IA)
         |
         +-- DESCONHECIDO --> NÃO avança. Cria tarefa + notifica + ATENÇÃO.
+        |                    A conversa fica travada até VOCÊ resolver
+        |                    (ver docs/INTERVENCAO.md).
         +-- OPT_OUT      --> para tudo, marca opt-out definitivo
         +-- FALAR_DEPOIS --> snooze (3 dias), status AGENDADO
         +-- POSITIVO     --> aplica a regra da etapa
@@ -270,11 +272,12 @@ preview sozinho.
 | Frontend | ✅ login, dashboard, 12 métricas, funil, configurações |
 | Testes | ✅ 32 passando |
 
-**Ainda não existe:** integração real com o WhatsApp, automação completa
-das conversas, dashboard de intervenção. São as Fases 5 a 12.
+**Ainda não existe:** integração real com o WhatsApp e automação
+completa das conversas. São as Fases 6 a 12.
 
-As Fases 2, 3 e 4 acrescentaram, respectivamente: importação e CRM;
-motor de regras determinístico; e campanhas, qualificação, mensagem
-personalizada e fila de envio — esta última documentada em
+As Fases 2 a 5 acrescentaram: importação e CRM; motor de regras
+determinístico; campanhas, qualificação, mensagem personalizada e fila
+de envio; e dashboard, tarefas e intervenção manual. Documentadas em
 [CAMPANHAS.md](CAMPANHAS.md), [MENSAGENS.md](MENSAGENS.md),
-[FILA.md](FILA.md) e [QUALIFICACAO.md](QUALIFICACAO.md).
+[FILA.md](FILA.md), [QUALIFICACAO.md](QUALIFICACAO.md),
+[DASHBOARD.md](DASHBOARD.md) e [INTERVENCAO.md](INTERVENCAO.md).

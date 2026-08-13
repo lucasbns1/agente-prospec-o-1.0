@@ -223,11 +223,29 @@ Confira, nesta ordem:
 4. **O limite diário estourou?** Elas são adiadas para o dia seguinte.
 5. **A campanha continua `ATIVA`?** Pausar cancela o que não saiu.
 
+### Um lead ficou travado e não sai do lugar
+
+Provavelmente está em `AGUARDANDO_INTERVENCAO`: o sistema parou de
+propósito e **não vai retomar sozinho**. Ele aparece no topo do
+dashboard, em "Precisa da sua atenção".
+
+Abra o lead e use o bloco **Aguardando você** para registrar o que
+aconteceu e escolher o próximo status. Detalhes em
+[INTERVENCAO.md](INTERVENCAO.md).
+
+### Marquei opt-out sem querer
+
+Dá para reverter, mas exige confirmação e justificativa, e o motivo
+fica registrado no histórico do lead. O lead volta como `PAUSADO`, nunca
+direto para a campanha — retomar o envio automático é um segundo ato
+consciente.
+
 ### Os testes apagaram meus leads
 
-Sim, e isso é esperado: `tests/api.test.ts` e `tests/campanhas-api.test.ts`
-rodam contra o banco apontado por `DATABASE_URL` e limpam leads e
-campanhas entre os testes. Os specs E2E fazem o mesmo.
+Sim, e isso é esperado: `tests/api.test.ts`, `tests/campanhas-api.test.ts`
+e `tests/intervencao-api.test.ts` rodam contra o banco apontado por
+`DATABASE_URL` e limpam leads, campanhas e tarefas entre os testes. Os
+specs E2E fazem o mesmo.
 
 Usuário, sessões, templates, dicionário e configurações **não** são
 apagados — o login e o motor de regras continuam valendo.

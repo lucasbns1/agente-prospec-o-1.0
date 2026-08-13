@@ -5,11 +5,12 @@ Sistema local de prospecção comercial + CRM + automação de WhatsApp.
 Roda inteiramente no seu computador. **Sem IA, sem serviços pagos, sem API key,
 sem servidor externo.**
 
-> **Status: Fase 4 concluída.**
+> **Status: Fase 5 concluída.**
 > Importação, CRM, motor de interpretação de respostas, campanhas,
-> qualificação, mensagem personalizada e fila de envio funcionando.
-> A integração com o WhatsApp entra numa fase seguinte — **nenhuma
-> mensagem é enviada ainda**. Veja [Roadmap](#roadmap).
+> qualificação, mensagem personalizada, fila de envio, dashboard,
+> tarefas e intervenção manual funcionando. A integração com o WhatsApp
+> entra numa fase seguinte — **nenhuma mensagem é enviada ainda**.
+> Veja [Roadmap](#roadmap).
 
 ---
 
@@ -27,7 +28,8 @@ sem servidor externo.**
 7. Classifica a resposta por **regras determinísticas** (nunca por IA).
 8. Espera um delay aleatório de 3 a 4 minutos e envia a próxima mensagem.
 9. Marca o lead como FRIO, MORNO ou QUENTE conforme a conversa evolui.
-10. Cria tarefas e notificações quando você precisa intervir.
+10. Cria tarefas e notificações quando você precisa intervir, e mostra
+    tudo isso no topo do dashboard — em ordem de urgência.
 
 ---
 
@@ -85,7 +87,7 @@ um typo no `.env` não pode virar mensagem enviada por acidente.
 |---|---|
 | `pnpm dev` | Sobe API, worker e frontend juntos |
 | `pnpm dev:api` / `dev:worker` / `dev:web` | Sobe um de cada vez |
-| `pnpm test` | Testes unitários e de API (Vitest) — 775 testes |
+| `pnpm test` | Testes unitários e de API (Vitest) — 815 testes |
 | `pnpm test:e2e` | Testes E2E (Playwright) |
 | `pnpm typecheck` | Verifica os tipos de todos os pacotes |
 | `pnpm build` | Build de produção |
@@ -140,6 +142,8 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | [docs/MENSAGENS.md](docs/MENSAGENS.md) | Variáveis, fallbacks e a regra de nunca inventar |
 | [docs/FILA.md](docs/FILA.md) | Despachante, agendamento, limites e as barreiras de dry-run |
 | [docs/QUALIFICACAO.md](docs/QUALIFICACAO.md) | Bloqueado vs. não qualificado, critérios e motivos |
+| [docs/DASHBOARD.md](docs/DASHBOARD.md) | "Precisa da sua atenção", métricas, tarefas e notificações |
+| [docs/INTERVENCAO.md](docs/INTERVENCAO.md) | Assumir a conversa, mudar status, opt-out e o rastro de auditoria |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Cada variável do `.env` explicada |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | O que fazer quando algo não sobe |
 
@@ -153,7 +157,7 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | 2 | Importação CSV/XLSX + CRM de leads | ✅ concluída |
 | 3 | Motor de interpretação de respostas | ✅ concluída |
 | 4 | Campanhas + qualificação + mensagem personalizada + fila | ✅ concluída |
-| 5 | Dashboard + notificações + intervenção manual | pendente |
+| 5 | Dashboard + notificações + tarefas + intervenção manual | ✅ concluída |
 | 6 | Integração WhatsApp Web | pendente |
 | 7 | Automação completa das conversas | pendente |
 | 8 | Automação completa das conversas | pendente |
