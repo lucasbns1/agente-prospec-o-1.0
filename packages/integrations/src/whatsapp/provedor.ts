@@ -37,7 +37,19 @@ export type EventoProvedor =
 /** Mensagem crua, no formato que a biblioteca entrega. */
 export interface MensagemProvedor {
   id: string;
+  /**
+   * Endereco da conversa: `...@c.us` (numero) ou `...@lid` (identificador
+   * de privacidade). Serve para RESPONDER — nao e telefone.
+   */
   from: string;
+  /**
+   * Telefone de quem enviou, so digitos. `null` quando o provedor nao
+   * expos o numero. NUNCA contem o LID: melhor ficar sem numero do que
+   * ter um valor que nao e telefone e nao casa com lead nenhum.
+   */
+  telefone?: string | null;
+  /** De qual campo o telefone saiu. Diagnostico, so para o log. */
+  fonteTelefone?: string;
   to: string;
   body: string;
   /** Segundos desde a epoca — o formato do whatsapp-web.js. */

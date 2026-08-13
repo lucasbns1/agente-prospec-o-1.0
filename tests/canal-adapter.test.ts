@@ -197,6 +197,57 @@ describe('recebimento no adapter', () => {
     expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(false);
   });
 
+  // ---- Conversas LID (defeito achado na validação com WhatsApp real) ----
+
+  it('NÃO usa o LID como telefone', async () => {
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    // Foi exatamente isto que chegou no teste real: o WhatsApp entregou
+    // "75866486894727@lid" e o sistema gravou esses dígitos como
+    // telefone. Nenhum lead casava, e toda resposta virava
+    // "contato desconhecido".
+    provedor.receber({ from: '75866486894727@lid', body: 'oi' });
+
+    const m = eventos.find((e) => e.tipo === 'canal.mensagem_recebida')?.mensagem;
+    expect(m?.telefone).toBe('');
+    expect(m?.telefone).not.toContain('75866486894727');
+    // A mensagem NÃO se perde: sem telefone ela cai em "desconhecido",
+    // que é onde você decide o que fazer com ela.
+    expect(m?.texto).toBe('oi');
+  });
+
+  it('usa o telefone que o provedor resolveu numa conversa LID', async () => {
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    provedor.receber({
+      from: '75866486894727@lid',
+      body: 'oi',
+      telefone: '5519999991111',
+      fonteTelefone: 'senderPn',
+    });
+
+    const m = eventos.find((e) => e.tipo === 'canal.mensagem_recebida')?.mensagem;
+    expect(m?.telefone).toBe('5519999991111');
+  });
+
+  it('o chatId continua sendo o endereço da conversa, não o telefone', async () => {
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    provedor.receber({
+      from: '75866486894727@lid',
+      body: 'oi',
+      telefone: '5519999991111',
+    });
+
+    // Responder exige o endereço original. Trocá-lo pelo telefone faria
+    // a resposta ir para uma conversa que não existe.
+    const m = eventos.find((e) => e.tipo === 'canal.mensagem_recebida')?.mensagem;
+    expect(m?.chatId).toBe('75866486894727@lid');
+  });
+
   it('marca mídia sem perder a mensagem', async () => {
     const { adapter, provedor, eventos } = montar();
     await adapter.connect();

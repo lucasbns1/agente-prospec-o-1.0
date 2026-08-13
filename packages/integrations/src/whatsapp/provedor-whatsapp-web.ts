@@ -23,6 +23,7 @@ import type {
   MensagemProvedor,
 } from './provedor.js';
 import { exigirPermissaoDeEnvioReal } from './guarda-envio.js';
+import { resolverTelefoneDaMensagem } from './telefone-da-mensagem.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -73,7 +74,30 @@ export async function criarProvedorWhatsAppWeb(
       // A traducao dos nomes acontece no adapter; aqui so repassamos, com
       // a mensagem ja normalizada para nao vazar o objeto da biblioteca.
       if (evento === 'message') {
-        cliente.on('message', (m: any) => handler(traduzirMensagem(m)));
+        // Assincrono porque resolver o telefone pode exigir consultar o
+        // contato. O try/catch e obrigatorio: uma excecao escapando de um
+        // listener do whatsapp-web.js derruba a sessao inteira.
+        cliente.on('message', (m: any) => {
+          void (async () => {
+            try {
+              const { telefone, fonte, ehLid } = await resolverTelefoneDaMensagem(m);
+
+              if (ehLid) {
+                // O numero NAO vai para o log — e dado do lead. So a
+                // fonte, que e o que se precisa saber quando a
+                // biblioteca muda de comportamento.
+                log(
+                  `Conversa LID — telefone resolvido por: ${fonte}` +
+                    (telefone ? '' : ' (nenhum numero disponivel)')
+                );
+              }
+
+              handler({ ...traduzirMensagem(m), telefone, fonteTelefone: fonte });
+            } catch (err) {
+              log(`Falha ao tratar mensagem recebida: ${String(err)}`);
+            }
+          })();
+        });
         return;
       }
       if (evento === 'message_ack') {

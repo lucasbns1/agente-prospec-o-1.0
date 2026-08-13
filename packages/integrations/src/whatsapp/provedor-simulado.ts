@@ -120,6 +120,10 @@ export class ProvedorSimulado implements ProvedorWhatsApp {
       type: parcial.type ?? 'chat',
       hasMedia: parcial.hasMedia ?? false,
       notifyName: parcial.notifyName ?? null,
+      // Repassados como vieram: quando o teste nao informa, o adapter
+      // exercita o mesmo caminho de fallback do provedor real.
+      telefone: parcial.telefone,
+      fonteTelefone: parcial.fonteTelefone,
     };
     this.emitir('message', m);
   }

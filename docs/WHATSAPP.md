@@ -243,6 +243,65 @@ idempotência.
 
 ---
 
+## De quem é a mensagem — o problema do `@lid`
+
+Toda conversa individual chegava assim:
+
+```
+5519999998888@c.us     ← o número está antes do "@"
+```
+
+O WhatsApp passou a usar também o **LID** (*Linked ID*), um identificador
+de privacidade no lugar do número:
+
+```
+75866486894727@lid     ← isto NÃO é um telefone
+```
+
+Cortar no `@` funciona no primeiro caso e falha no segundo — devolve 14
+dígitos que não são telefone nenhum. Como o sistema identifica o lead
+pelo telefone normalizado, o efeito é grave: **nenhum lead é
+reconhecido, toda resposta vira "contato desconhecido" e a campanha
+nunca avança de etapa**.
+
+> Encontrado na validação com WhatsApp real, não em teste. É o tipo de
+> defeito que só aparece com o aparelho na mão.
+
+### Como o número é resolvido
+
+O número real existe — só não fica sempre no mesmo campo. A versão da
+biblioteca, a do WhatsApp Web e as configurações de privacidade de quem
+escreve mudam onde ele aparece. Em vez de apostar num campo, tentamos
+vários, em ordem de confiança:
+
+| # | Fonte | Quando serve |
+|---|---|---|
+| 1 | `from` com `@c.us` | conversa sem LID |
+| 2 | `_data.senderPn` | o número que o WhatsApp anexa em conversas LID |
+| 3 | `author` com `@c.us` | alguns formatos de mensagem |
+| 4 | `getContact().number` | consulta à agenda da sessão |
+| 5 | `getContact().id` | o JID do contato, se for `@c.us` |
+
+A fonte que resolveu vai para o log — **nunca o número**, que é dado do
+lead. Saber que veio de `senderPn` e não de `contato` é o que permite
+entender o que mudou quando a biblioteca quebrar.
+
+### Nenhum número é melhor que o número errado
+
+Se nada resolver, o telefone fica vazio e a mensagem cai em **contato
+desconhecido**, esperando sua decisão. Associá-la ao lead errado seria
+muito pior: você responderia a pessoa errada achando que acertou.
+
+O LID nunca é aceito como telefone, nem quando aparece num campo que
+deveria trazer número. A verificação compara com o LID em mãos, e não
+pelo tamanho: um LID de 14 dígitos cabe no limite de 15 do E.164.
+
+> `chatId` continua sendo o endereço original — é ele que serve para
+> **responder**. Telefone e endereço de conversa deixaram de ser a
+> mesma coisa.
+
+---
+
 ## Confirmação de entrega (`message_ack`)
 
 Três coisas diferentes que é fácil confundir:

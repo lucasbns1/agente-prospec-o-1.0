@@ -13,6 +13,7 @@ export * from './whatsapp/provedor.js';
 export * from './whatsapp/provedor-simulado.js';
 export * from './whatsapp/whatsapp-web-adapter.js';
 export * from './whatsapp/qr-imagem.js';
+export * from './whatsapp/telefone-da-mensagem.js';
 
 // --- Importacao (Fase 2) ---
 export * from './import/parser.js';

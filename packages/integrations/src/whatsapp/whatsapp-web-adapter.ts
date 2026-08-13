@@ -177,7 +177,14 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
       const entrada: MensagemEntrada = {
         providerMessageId: m.id,
         chatId: m.from,
-        telefone: chatIdParaTelefone(m.from),
+        // Quem resolve o telefone e o provedor — e ele que conhece os
+        // campos da biblioteca. Cortar o chatId fica como ultimo recurso,
+        // e NUNCA em conversa LID: ali o que vem antes do "@" e um
+        // identificador de privacidade, nao um numero. Usa-lo faria toda
+        // resposta cair em "contato desconhecido".
+        telefone:
+          m.telefone ??
+          (m.from.endsWith('@lid') ? '' : chatIdParaTelefone(m.from)),
         texto: m.body ?? '',
         nomeContato: m.notifyName ?? null,
         recebidaEm: new Date(m.timestamp * 1000),
