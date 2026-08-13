@@ -5,3 +5,7 @@ export * from './whatsapp/factory.js';
 // --- Importacao (Fase 2) ---
 export * from './import/parser.js';
 export * from './import/column-mapping.js';
+
+// --- Fontes de lead (Fase P) ---
+export * from './sources/lead-source.js';
+export * from './sources/arquivo-lead-source.js';
