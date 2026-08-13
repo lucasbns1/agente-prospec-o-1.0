@@ -7,6 +7,8 @@ import { EmBreve } from '@/pages/EmBreve';
 import { Configuracoes } from '@/pages/Configuracoes';
 import { Leads } from '@/pages/Leads';
 import { Importar } from '@/pages/Importar';
+import { Campanhas } from '@/pages/Campanhas';
+import { CampanhaDetalhe } from '@/pages/CampanhaDetalhe';
 import { useUsuario } from '@/hooks/useAuth';
 import { useEvents } from '@/hooks/useEvents';
 
@@ -48,16 +50,8 @@ function AppAutenticado({
                     />
                   }
                 />
-                <Route
-                  path="/campanhas"
-                  element={
-                    <EmBreve
-                      titulo="Campanhas"
-                      fase="Fase 5"
-                      descricao="Editor visual de etapas, mensagens e regras."
-                    />
-                  }
-                />
+                <Route path="/campanhas" element={<Campanhas />} />
+                <Route path="/campanhas/:id" element={<CampanhaDetalhe />} />
                 <Route
                   path="/tarefas"
                   element={

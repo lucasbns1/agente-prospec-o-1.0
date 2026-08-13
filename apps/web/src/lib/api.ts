@@ -58,6 +58,12 @@ export const post = <T>(caminho: string, corpo?: unknown): Promise<T> =>
     ...(corpo !== undefined ? { body: JSON.stringify(corpo) } : {}),
   });
 
+export const put = <T>(caminho: string, corpo?: unknown): Promise<T> =>
+  api<T>(caminho, {
+    method: 'PUT',
+    ...(corpo !== undefined ? { body: JSON.stringify(corpo) } : {}),
+  });
+
 export const patch = <T>(caminho: string, corpo?: unknown): Promise<T> =>
   api<T>(caminho, {
     method: 'PATCH',

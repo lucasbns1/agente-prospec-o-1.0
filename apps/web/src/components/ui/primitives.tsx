@@ -172,3 +172,59 @@ export function Label({
     />
   );
 }
+
+// -------------------------------------------------------------- Textarea
+export const Textarea = React.forwardRef<
+  HTMLTextAreaElement,
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+>(({ className, ...props }, ref) => (
+  <textarea
+    ref={ref}
+    className={cn(
+      'w-full rounded-lg border border-[var(--color-borda-forte)] bg-white px-3 py-2 text-sm leading-relaxed',
+      'placeholder:text-[var(--color-texto-fraco)]',
+      'disabled:cursor-not-allowed disabled:opacity-50',
+      className
+    )}
+    {...props}
+  />
+));
+Textarea.displayName = 'Textarea';
+
+// ---------------------------------------------------------------- Select
+export const Select = React.forwardRef<
+  HTMLSelectElement,
+  React.SelectHTMLAttributes<HTMLSelectElement>
+>(({ className, ...props }, ref) => (
+  <select
+    ref={ref}
+    className={cn(
+      'h-10 w-full rounded-lg border border-[var(--color-borda-forte)] bg-white px-3 text-sm',
+      'disabled:cursor-not-allowed disabled:opacity-50',
+      className
+    )}
+    {...props}
+  />
+));
+Select.displayName = 'Select';
+
+// -------------------------------------------------------------- Checkbox
+export function Checkbox({
+  rotulo,
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { rotulo: string }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-texto)]">
+      <input
+        type="checkbox"
+        className={cn(
+          'h-4 w-4 shrink-0 rounded border-[var(--color-borda-forte)] accent-[var(--color-marca)]',
+          className
+        )}
+        {...props}
+      />
+      {rotulo}
+    </label>
+  );
+}
