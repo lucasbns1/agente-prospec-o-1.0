@@ -31,7 +31,9 @@ export function criarLogger(nivel: string, desenvolvimento: boolean) {
             target: 'pino-pretty',
             options: {
               colorize: true,
-              translateTime: 'HH:MM:ss',
+              // `SYS:` = fuso da maquina. Sem o prefixo o pino-pretty
+              // imprime em UTC, e o log deixa de bater com a tela.
+              translateTime: 'SYS:HH:MM:ss',
               ignore: 'pid,hostname',
             },
           },

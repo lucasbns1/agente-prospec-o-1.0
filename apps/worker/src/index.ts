@@ -39,7 +39,15 @@ async function main(): Promise<void> {
       ? {
           transport: {
             target: 'pino-pretty',
-            options: { colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
+            options: {
+              colorize: true,
+              // O prefixo `SYS:` e o que faz o pino-pretty usar o fuso da
+              // maquina. Sem ele o horario sai em UTC — e um log tres horas
+              // adiantado em relacao a tela faz voce procurar o evento errado
+              // quando estiver comparando os dois.
+              translateTime: 'SYS:HH:MM:ss',
+              ignore: 'pid,hostname',
+            },
           },
         }
       : {}),

@@ -100,7 +100,8 @@ export function Canal() {
     refetch: recarregarQr,
   } = useQuery({
     queryKey: ['canal-qr'],
-    queryFn: () => get<{ qr: string; expiraEmSegundos: number }>('/api/canal/qr'),
+    // `imagem` e um data: URL PNG. A API desenha o codigo; a tela so exibe.
+    queryFn: () => get<{ imagem: string; expiraEmSegundos: number }>('/api/canal/qr'),
     enabled: mostrarQr,
     refetchInterval: mostrarQr ? 10_000 : false,
     retry: false,
@@ -258,13 +259,18 @@ export function Canal() {
 
                     {qr && (
                       <>
-                        {/* O valor cru do QR, para o usuário gerar a imagem
-                            com o app de preferência. Renderizar a imagem no
-                            servidor exigiria uma dependência a mais só para
-                            desenhar um quadrado. */}
-                        <pre className="max-h-40 overflow-auto rounded-lg bg-[var(--color-fundo)] p-2 font-mono text-[9px] leading-tight">
-                          {qr.qr}
-                        </pre>
+                        {/* Fundo branco fixo, e não a cor do tema: no tema
+                            escuro um QR sobre fundo escuro não é lido pela
+                            câmera. */}
+                        <div className="flex justify-center rounded-lg bg-white p-3">
+                          <img
+                            src={qr.imagem}
+                            alt="QR Code para conectar o WhatsApp"
+                            width={280}
+                            height={280}
+                            className="h-auto w-full max-w-[280px]"
+                          />
+                        </div>
                         <p className="text-xs text-[var(--color-texto-suave)]">
                           Expira em {qr.expiraEmSegundos}s. No celular: WhatsApp →
                           Aparelhos conectados → Conectar aparelho.

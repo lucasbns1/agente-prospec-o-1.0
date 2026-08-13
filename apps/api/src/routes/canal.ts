@@ -25,7 +25,7 @@ import {
   estadoEstaVelho,
   type EstadoCanal,
 } from '@prospector/shared';
-import { resolverModo } from '@prospector/integrations';
+import { resolverModo, renderizarQrComoImagem } from '@prospector/integrations';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 
@@ -93,11 +93,17 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * O QR, servido separadamente.
+   * O QR, servido separadamente — já como imagem.
    *
    * Devolve 404 quando não há QR — o que também acontece quando a sessão
    * já autenticou. "Não há QR" e "ainda não gerou" são a mesma resposta
    * de propósito: a tela só precisa saber se tem algo a mostrar.
+   *
+   * O que sai daqui é a FIGURA, não o texto. O `whatsapp-web.js` entrega
+   * uma string, e mostrar essa string na tela não conecta ninguém: não se
+   * escaneia texto com a câmera. O texto cru deliberadamente não é mais
+   * devolvido — ele é uma credencial, e uma credencial que a tela não usa
+   * não tem por que trafegar.
    */
   app.get('/api/canal/qr', { preHandler: exigirAutenticacao }, async (request) => {
     try {
@@ -111,7 +117,10 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
       }
       // O QR nunca vai para o log — ele é uma credencial de acesso.
       request.log.info('QR Code entregue à tela de configuração');
-      return { qr, expiraEmSegundos: await getLeitor().ttl(CHAVE_QR_CANAL) };
+      return {
+        imagem: await renderizarQrComoImagem(qr),
+        expiraEmSegundos: await getLeitor().ttl(CHAVE_QR_CANAL),
+      };
     } catch (err) {
       if (err instanceof AppError) throw err;
       throw new AppError('Não foi possível ler o QR Code', 503, 'CANAL_INDISPONIVEL');
