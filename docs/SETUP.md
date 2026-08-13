@@ -148,6 +148,25 @@ Você deve ver:
 
 Para parar: `Ctrl+C`.
 
+> **O worker não é opcional.** É ele que carrega o despachante da fila.
+> Sem ele as mensagens ficam `AGENDADA` no banco e nada acontece. O
+> `pnpm dev` sobe os três processos; se rodar separado, não esqueça o
+> `pnpm dev:worker`.
+
+---
+
+## 8. Rodar os testes (opcional)
+
+```powershell
+pnpm test        # unitários e de API
+pnpm test:e2e    # ponta a ponta, exige o `pnpm dev` rodando
+```
+
+> **Atenção:** os testes rodam contra o banco de `DATABASE_URL` e
+> **apagam leads e campanhas**. Usuário, configurações, templates e
+> dicionário são preservados. Se tiver dados de trabalho no banco,
+> aponte `DATABASE_URL` para outro banco antes de testar.
+
 ---
 
 ## Problemas comuns no Windows

@@ -172,8 +172,13 @@ investigação.
 Não acontece. Cada envio grava uma `idempotencyKey` `UNIQUE` no Postgres
 **antes** de chamar o WhatsApp. Um retry colide na constraint e aborta.
 
-Isso foi testado na Fase 1: 3 jobs com a mesma chave produziram 1 execução
-e 1 linha no banco.
+Testado na Fase 1 (3 jobs com a mesma chave → 1 execução) e de novo na
+Fase 4, com 10 enfileiramentos concorrentes da mesma campanha → 1 linha.
+
+A gravação é `INSERT` direto com captura de `P2002`, **nunca**
+`findUnique` seguido de `create`: esse par não é atômico e, sob
+concorrência, as duas chamadas leem "não existe" antes de qualquer uma
+gravar.
 
 ---
 
@@ -192,6 +197,43 @@ simulação: você acharia que enviou mensagens que nunca saíram.
 percorre campanhas, delays, regras, tarefas e notificações inteiras —
 apenas registrando `SIMULAÇÃO — mensagem seria enviada para <telefone>` em
 vez de enviar.
+
+Para conferir que nada saiu:
+
+```sql
+SELECT status, dry_run, COUNT(*)
+FROM outbound_messages
+GROUP BY status, dry_run;
+```
+
+Nesta fase o esperado é `SIMULADA | true | N`. Qualquer `ENVIADA` seria
+sinal de alarme. Detalhes em [FILA.md](FILA.md).
+
+### A campanha está ativa mas a fila não anda
+
+Confira, nesta ordem:
+
+1. **O worker está rodando?** É ele que tem o despachante. Sem `pnpm
+   dev:worker` as mensagens ficam `AGENDADA` para sempre.
+2. **Já chegou o horário?** A coluna `scheduled_at` manda. O despachante
+   varre a cada 15 segundos.
+3. **Está dentro da janela?** Fora de `horarioInicio`–`horarioFim` ou
+   num dia não permitido, as mensagens são **adiadas** em 15 minutos —
+   o log do worker mostra `adiadas: N`.
+4. **O limite diário estourou?** Elas são adiadas para o dia seguinte.
+5. **A campanha continua `ATIVA`?** Pausar cancela o que não saiu.
+
+### Os testes apagaram meus leads
+
+Sim, e isso é esperado: `tests/api.test.ts` e `tests/campanhas-api.test.ts`
+rodam contra o banco apontado por `DATABASE_URL` e limpam leads e
+campanhas entre os testes. Os specs E2E fazem o mesmo.
+
+Usuário, sessões, templates, dicionário e configurações **não** são
+apagados — o login e o motor de regras continuam valendo.
+
+Se quiser preservar dados de trabalho, aponte `DATABASE_URL` para um
+banco separado antes de rodar `pnpm test`.
 
 ### (Fase 8) Pede QR Code toda vez
 

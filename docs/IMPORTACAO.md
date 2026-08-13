@@ -188,12 +188,33 @@ XLSX: lê a primeira planilha e **avisa** qual usou quando há mais de uma.
 
 ---
 
+## De onde os leads podem vir
+
+A leitura fica atrás da interface `ILeadSource`
+(`packages/integrations/src/sources/`). Hoje há duas implementações:
+`CsvLeadSource` e `XlsxLeadSource`. Quem consome recebe sempre a mesma
+forma de resultado e não precisa saber o formato de origem.
+
+**Não existe fonte de scraping do Google Maps**, e não deve existir sem
+autorização explícita: isso tem custo jurídico e operacional próprio
+(termos de uso, bloqueio de IP, navegador headless) e é decisão de
+produto, não detalhe técnico. Há um teste que falha se alguém adicionar
+uma fonte dessas.
+
+Nenhuma fonte inventa dado: campo ausente vira `null`. Normalização,
+dedução e deduplicação acontecem depois, no domínio, onde são testáveis.
+
+---
+
 ## Testar
 
 ```bash
-pnpm test                    # 217 testes, inclui import e dedupe
+pnpm test                    # inclui import, dedupe e fontes de lead
 pnpm exec playwright test    # E2E do fluxo completo
 ```
+
+> Os testes **apagam leads e campanhas** do banco apontado por
+> `DATABASE_URL`.
 
 As fixtures em `tests/fixtures/` cobrem de propósito: Instagram,
 Facebook, site próprio, sem site, duplicado por telefone, duplicado por

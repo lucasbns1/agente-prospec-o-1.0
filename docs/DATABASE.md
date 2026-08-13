@@ -14,8 +14,11 @@ PostgreSQL 16 + Prisma 6. O banco é a fonte de verdade do sistema.
 
 ## Contagem de tabelas
 
-**São 20 tabelas, não 19.** O relatório da Fase 1 dizia 19 — eu contei
-errado. A contagem verificada no banco está abaixo.
+**São 22 tabelas.** Contagem verificada no banco, não no schema.
+
+Histórico: a Fase 1 entregou 20 (o relatório dizia 19 — eu contei
+errado). A Fase 3 acrescentou `response_templates` e a Fase 4
+acrescentou `outbound_messages`.
 
 Você listou 17 entidades no documento original (`users`, `leads`,
 `campaigns`, `campaign_steps`, `campaign_step_rules`, `lead_campaigns`,
@@ -82,7 +85,7 @@ limite diário** — só `ENVIADA`, `ENTREGUE` e `LIDA` contam.
 
 ---
 
-## As 20 tabelas
+## As 22 tabelas
 
 ### Autenticação
 | Tabela | Papel |
@@ -114,10 +117,11 @@ limite diário** — só `ENVIADA`, `ENTREGUE` e `LIDA` contam.
 ### Campanhas
 | Tabela | Papel |
 |---|---|
-| `campaigns` | Nome, nicho, cidade, delays, limite diário. |
+| `campaigns` | Nome, nicho, cidade, delays, limites, janela de envio, filtros e `dryRun`. |
 | `campaign_steps` | **O texto de cada mensagem.** Nunca no código. |
 | `campaign_step_rules` | O que fazer para cada categoria de resposta. |
 | `lead_campaigns` | Vínculo lead ↔ campanha. **Guarda a etapa atual.** |
+| `outbound_messages` | **A fila de envio.** Uma linha por mensagem a sair, com `idempotency_key` UNIQUE, `scheduled_at`, motivo de bloqueio tipado e `dry_run`. |
 
 ### Conversas
 | Tabela | Papel |

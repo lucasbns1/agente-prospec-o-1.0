@@ -86,7 +86,12 @@ virar 76 mensagens disparadas por acidente.
 
 Em `dry-run`, cada envio produz uma linha de log
 `SIMULAÇÃO — mensagem seria enviada para <telefone>` e uma mensagem com
-status `SIMULADA` no banco, que **não conta** no limite diário.
+status `SIMULADA` no banco, que **não conta** no limite diário — senão
+testar a campanha queimaria a cota do dia.
+
+`WHATSAPP_MODE` é só **uma** das três barreiras. As outras duas são
+`Campaign.dryRun` e `OutboundMessage.dryRun`, e basta uma levantada para
+nada sair. Ver [FILA.md](FILA.md).
 
 `live` só funciona a partir da Fase 8. Antes disso, o sistema lança um erro
 explícito em vez de simular em silêncio.

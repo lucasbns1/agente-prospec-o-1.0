@@ -178,24 +178,43 @@ os envios agendados.
 
 ---
 
-## Fluxo de uma campanha (Fases 5–8)
+## Fluxo de uma campanha
+
+O trecho até a fila **já existe** (Fase 4). Do "lead responde" em diante
+entra nas fases seguintes.
 
 ```
-Você clica INICIAR CAMPANHA
+Você ativa a campanha e clica ENFILEIRAR
         |
         v
-API cria LeadCampaign por lead (status PENDENTE)
+API: filtros (SQL) -> qualificação -> render -> agendamento
+        |
+        +-- bloqueado? --> linha BLOQUEADA com motivo tipado. Não vira job.
         |
         v
-Para cada lead: job send_message com delay_entre_leads (60-180s)
-        |                              [espalha o disparo inicial]
+   INSERT em outbound_messages com idempotency_key UNIQUE
+        |                          <-- a garantia de não duplicar
         v
-WORKER: renderiza o template
-        |
-        +-- variável faltando? --> NÃO ENVIA. Cria tarefa de revisão.
+   ... a linha espera o horário dela ...
         |
         v
-   grava idempotencyKey  <-- a garantia de não duplicar
+DESPACHANTE (worker, a cada 15s): "está na hora?"
+        |
+        +-- campanha pausada?   --> BLOQUEADA
+        +-- fora da janela?     --> ADIA 15 min (nunca bloqueia)
+        +-- limite atingido?    --> ADIA
+        |
+        v
+   vira job na fila outbound_send
+        |
+        v
+WORKER: reserva por UPDATE condicional (o banco decide quem pega)
+        |
+        v
+   REVALIDA todos os bloqueios AGORA
+        |    (a mensagem pode ter sido enfileirada horas atrás)
+        |
+        +-- lead pediu opt-out no meio? --> BLOQUEADA
         |
         v
    WhatsAppAdapter.sendMessage()
@@ -241,7 +260,7 @@ preview sozinho.
 | Componente | Estado |
 |---|---|
 | Monorepo pnpm | ✅ funcionando |
-| PostgreSQL + Prisma, 20 tabelas | ✅ migration aplicada e testada |
+| PostgreSQL + Prisma, 22 tabelas | ✅ migration aplicada e testada |
 | Redis + BullMQ, 8 filas | ✅ registradas, esteira testada |
 | API Fastify | ✅ health, auth, SSE, dashboard, settings |
 | Autenticação Argon2 + cookie | ✅ testada (login, 401, sessão) |
@@ -251,5 +270,11 @@ preview sozinho.
 | Frontend | ✅ login, dashboard, 12 métricas, funil, configurações |
 | Testes | ✅ 32 passando |
 
-**Ainda não existe:** importação, CRUD de leads, campanhas, motor de regras,
-envio real. São as Fases 2 a 12.
+**Ainda não existe:** integração real com o WhatsApp, automação completa
+das conversas, dashboard de intervenção. São as Fases 5 a 12.
+
+As Fases 2, 3 e 4 acrescentaram, respectivamente: importação e CRM;
+motor de regras determinístico; e campanhas, qualificação, mensagem
+personalizada e fila de envio — esta última documentada em
+[CAMPANHAS.md](CAMPANHAS.md), [MENSAGENS.md](MENSAGENS.md),
+[FILA.md](FILA.md) e [QUALIFICACAO.md](QUALIFICACAO.md).
