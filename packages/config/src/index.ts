@@ -32,6 +32,20 @@ const envSchema = z.object({
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
 
+  /**
+   * Qual canal usar para CONECTAR.
+   *
+   * - `simulado`: nao abre navegador, nao conecta em lugar nenhum. E o
+   *   padrao e o que roda em teste e em CI.
+   * - `whatsapp-web`: conecta de verdade no WhatsApp Web, pede QR e
+   *   RECEBE mensagens reais.
+   *
+   * Conectar e enviar sao coisas separadas: mesmo com
+   * `whatsapp-web`, o envio continua bloqueado pela guarda de fase
+   * (ver packages/integrations/src/whatsapp/guarda-envio.ts).
+   */
+  WHATSAPP_CANAL: z.enum(['simulado', 'whatsapp-web']).default('simulado'),
+
   // Qualquer valor diferente de "live" cai em dry-run. Ver factory.ts.
   WHATSAPP_MODE: z.string().default('dry-run'),
   WHATSAPP_SESSION_PATH: z.string().default('./data/whatsapp'),

@@ -1067,6 +1067,17 @@ model Message {
   campaignStepRuleId String? @map("campaign_step_rule_id")
   /// Texto apos lowercase/remocao de acentos/pontuacao.
   textoNormalizado String? @map("texto_normalizado")
+  /// Subtipo da categoria, quando o motor consegue detalhar.
+  /// Ex: categoria PRECO, subtipo "quanto_custa".
+  subtipo   String?
+  /// Confianca da classificacao, 0-100.
+  ///
+  /// Guardada porque a tela precisa mostrar POR QUE o sistema agiu (ou
+  /// nao agiu). "Classificou como POSITIVO" sem a confianca esconde a
+  /// diferenca entre uma certeza e um chute que ficou abaixo do limiar
+  /// de acao. O motor ja calculava esse numero; ate agora ele era
+  /// descartado.
+  confianca Int?
 
   erro          String?
   tentativas    Int       @default(0)
@@ -1092,6 +1103,46 @@ model Message {
   /// Suporta a contagem do limite diario de envios REAIS.
   @@index([enviadaEm])
   @@map("messages")
+}
+
+/// Mensagem recebida de um numero que NAO corresponde a nenhum lead.
+///
+/// POR QUE UMA TABELA SEPARADA:
+/// `messages` exige `leadId`. Um desconhecido nao tem lead — e forcar a
+/// criacao de um lead para cada numero que escreve encheria o CRM de
+/// registros que voce nunca prospectou.
+///
+/// Descartar tambem nao serve: se alguem responde de um segundo numero,
+/// ou se o telefone do lead esta cadastrado errado, a mensagem some sem
+/// deixar rastro. Aqui ela fica visivel e voce decide o que fazer.
+model UnknownContact {
+  id String @id @default(uuid())
+
+  /// E.164 sem "+", ex: "5519999998888".
+  telefone     String
+  nomeContato  String? @map("nome_contato")
+  chatId       String? @map("chat_id")
+  texto        String
+  /// ID da mensagem no provedor. UNIQUE: o mesmo evento chegando duas
+  /// vezes nao pode virar duas linhas.
+  providerMessageId String @unique @map("provider_message_id")
+  canal        String  @default("whatsapp")
+
+  /// Preenchido quando o telefone casa com MAIS DE UM lead. Nesse caso o
+  /// sistema nao adivinha: registra os candidatos e pede revisao.
+  leadsCandidatos Json?   @map("leads_candidatos")
+  motivo          String
+  resolvido       Boolean @default(false)
+  /// Lead escolhido por voce ao resolver.
+  resolvidoLeadId String?   @map("resolvido_lead_id")
+  resolvidoEm     DateTime? @map("resolvido_em")
+
+  recebidaEm DateTime @map("recebida_em")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([resolvido, recebidaEm])
+  @@index([telefone])
+  @@map("unknown_contacts")
 }
 
 // =============================================================================

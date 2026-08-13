@@ -98,10 +98,32 @@ describe('criarWhatsAppAdapter', () => {
     expect(adapter.modo).toBe('dry-run');
   });
 
-  it('falha alto no modo live em vez de simular em silencio', async () => {
-    // Cair em simulacao silenciosamente seria pior: o usuario acharia que
-    // enviou mensagens que nunca sairam.
-    await expect(criarWhatsAppAdapter({ modo: 'live' })).rejects.toThrow(/Fase 8/);
+  /**
+   * COMPORTAMENTO MUDOU NA FASE 6A.
+   *
+   * Antes, `modo: 'live'` derrubava a criacao do adapter — a unica
+   * protecao disponivel era recusar a construcao. Agora existe a guarda
+   * de fase, que bloqueia o ENVIO em vez do adapter, e isso e melhor:
+   * permite conectar de verdade e RECEBER mensagens sem destravar o
+   * envio junto, que e exatamente o que a Fase 6A precisa.
+   *
+   * O invariante que importa continua o mesmo, e esta testado em
+   * `canal-adapter.test.ts`: com a fase travada, nada sai.
+   */
+  it('modo live nao derruba mais a criacao — quem bloqueia e a guarda', async () => {
+    const adapter = await criarWhatsAppAdapter({ modo: 'live', canal: 'simulado' });
+
+    // O adapter simulado se declara dry-run independentemente do modo
+    // pedido: ele nao tem como enviar nada, e dizer 'live' seria mentir.
+    expect(adapter.modo).toBe('dry-run');
+
+    const r = await adapter.sendMessage('5519999998888', 'oi');
+    expect(r.simulado).toBe(true);
+  });
+
+  it('canal simulado e o padrao — nao conecta em lugar nenhum', async () => {
+    const adapter = await criarWhatsAppAdapter({});
+    expect(adapter.getStatus().status).toBe('DESCONECTADO');
   });
 });
 

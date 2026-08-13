@@ -135,14 +135,44 @@ export type TaskPriority = (typeof TASK_PRIORITY)[number];
 export const WHATSAPP_MODE = ['dry-run', 'live'] as const;
 export type WhatsAppMode = (typeof WHATSAPP_MODE)[number];
 
+/**
+ * Estados da conexao com o canal.
+ *
+ * Sao sete de proposito: colapsar "inicializando", "aguardando QR" e
+ * "autenticando" num unico "conectando" esconde exatamente a informacao
+ * que voce precisa quando a conexao nao sobe. E a diferenca entre "o
+ * Chromium ainda esta abrindo" e "o QR expirou e ninguem escaneou".
+ *
+ * NAO e enum do Prisma: o estado da conexao e efemero, vive no processo
+ * do worker e e publicado por SSE. Persistir seria guardar uma verdade
+ * que expira em segundos.
+ */
 export const WHATSAPP_STATUS = [
+  /** Sem conexao e sem tentativa em curso. */
   'DESCONECTADO',
-  'CONECTANDO',
+  /** Subindo o navegador e a biblioteca. */
+  'INICIALIZANDO',
+  /** QR gerado, esperando alguem escanear. */
   'AGUARDANDO_QR',
+  /** QR lido; validando a sessao. */
+  'AUTENTICANDO',
+  /** Pronto para receber (e, numa fase futura, enviar). */
   'CONECTADO',
-  'ERRO',
+  /** Caiu e esta tentando voltar sozinho. */
+  'RECONECTANDO',
+  /** Desistiu. Exige acao humana. */
+  'FALHOU',
 ] as const;
 export type WhatsAppStatus = (typeof WHATSAPP_STATUS)[number];
+
+/** Estados em que o canal consegue receber mensagens. */
+export const STATUS_CANAL_SAUDAVEL: readonly WhatsAppStatus[] = ['CONECTADO'];
+
+/** Estados que exigem alguem olhar. */
+export const STATUS_CANAL_PRECISA_ACAO: readonly WhatsAppStatus[] = [
+  'AGUARDANDO_QR',
+  'FALHOU',
+];
 
 /** Nomes das filas BullMQ. Uma unica fonte para API e worker. */
 export const QUEUES = {

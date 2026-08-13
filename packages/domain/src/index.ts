@@ -33,3 +33,5 @@ export * from './campaign/contracts.js';
 export * from './template/contracts.js';
 // --- Dashboard (Fase 5) ---
 export * from './dashboard/atencao.js';
+// --- Recebimento (Fase 6A) ---
+export * from './inbound/identificar-lead.js';

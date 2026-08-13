@@ -18,7 +18,11 @@ import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
 import { criarWorkerHealth } from './workers/health.js';
 import { criarWorkerOutbound } from './workers/outbound.js';
 import { iniciarDespachante } from './workers/despachante.js';
+import { criarWorkerInbound, enfileirarRecebida } from './workers/inbound.js';
 import { fecharPublicador } from './redis.js';
+import { publicarEvento } from './events.js';
+import { publicarEstadoCanal, publicarQr, limparQr } from './estado-canal.js';
+import { WhatsAppWebAdapter } from '@prospector/integrations';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.resolve(__dirname, '../../../.env') });
@@ -57,10 +61,87 @@ async function main(): Promise<void> {
   const modo = resolverModo(env.WHATSAPP_MODE);
   const adapter = await criarWhatsAppAdapter({
     modo,
+    canal: env.WHATSAPP_CANAL,
     sessionPath: env.WHATSAPP_SESSION_PATH,
     chromePath: env.CHROME_PATH,
     logger: (m, d) => log.info(d ?? {}, m),
   });
+
+  // Toda mensagem recebida vai para a fila. O canal so enfileira e volta
+  // a escutar — processar aqui seguraria o event loop do cliente do
+  // WhatsApp durante consultas ao banco.
+  adapter.onMessage(async (m) => {
+    try {
+      await enfileirarRecebida({
+        providerMessageId: m.id,
+        chatId: m.chatId,
+        telefone: m.telefone,
+        texto: m.texto,
+        nomeContato: m.nomeContato,
+        recebidaEm: m.timestamp,
+        deMim: m.deMim,
+        tipo: 'chat',
+        temMidia: false,
+      });
+    } catch (err) {
+      log.error({ err, providerMessageId: m.id }, 'Falha ao enfileirar mensagem recebida');
+    }
+  });
+
+  // O estado da conexao vai para a tela por duas vias: o Redis (retrato
+  // atual, que a tela consulta) e o SSE (aviso de que mudou). Sem isso o
+  // dashboard diria "conectado" enquanto o processo esta caido —
+  // exatamente o que nao pode acontecer.
+  const publicarEstado = async (): Promise<void> => {
+    const s = adapter.getStatus();
+    const saude =
+      adapter instanceof WhatsAppWebAdapter
+        ? adapter.saude()
+        : {
+            provider: 'simulado',
+            autenticado: s.status === 'CONECTADO',
+            conectado: s.status === 'CONECTADO',
+            ultimoEventoEm: new Date().toISOString(),
+            sessaoDesde: null,
+            envioRealPermitidoNaFase: false,
+            tentativasReconexao: 0,
+          };
+
+    await publicarEstadoCanal({
+      provider: saude.provider,
+      status: s.status,
+      autenticado: saude.autenticado,
+      conectado: saude.conectado,
+      telefone: s.telefone ?? null,
+      detalhe: s.detalhe ?? null,
+      temQr: Boolean(s.qr),
+      ultimoEventoEm: saude.ultimoEventoEm,
+      sessaoDesde: saude.sessaoDesde,
+      envioRealPermitidoNaFase: saude.envioRealPermitidoNaFase,
+      tentativasReconexao: saude.tentativasReconexao,
+      atualizadoEm: new Date().toISOString(),
+    });
+
+    // O QR NAO viaja por SSE: um evento SSE chega a todas as abas
+    // abertas. Ele fica numa chave com TTL curto, lida por uma rota
+    // autenticada.
+    if (s.qr) await publicarQr(s.qr);
+    else await limparQr();
+
+    await publicarEvento('whatsapp.status', {
+      status: s.status,
+      modo: s.modo,
+      temQr: Boolean(s.qr),
+      telefone: s.telefone ?? null,
+      detalhe: s.detalhe ?? null,
+    });
+  };
+
+  adapter.onStatusChange(() => void publicarEstado());
+
+  // Heartbeat: republica mesmo sem mudanca, para a API conseguir
+  // distinguir "conectado" de "worker morto ha 10 minutos".
+  const batimento = setInterval(() => void publicarEstado(), 30_000);
 
   adapter.onStatusChange((s) => log.info({ status: s.status }, 'Status do WhatsApp mudou'));
   await adapter.connect();
@@ -76,7 +157,11 @@ async function main(): Promise<void> {
   }
 
   // --- Workers ---
-  const workers = [criarWorkerHealth(log), criarWorkerOutbound(log, adapter)];
+  const workers = [
+    criarWorkerHealth(log),
+    criarWorkerOutbound(log, adapter),
+    criarWorkerInbound(log),
+  ];
 
   for (const w of workers) {
     w.on('failed', (job, err) => {
@@ -91,6 +176,7 @@ async function main(): Promise<void> {
   // mensagens agendadas ficariam paradas no banco para sempre.
   const pararDespachante = iniciarDespachante(log);
 
+  await publicarEstado();
   log.info('Worker pronto. Aguardando jobs.');
 
   // --- Shutdown ---
@@ -103,6 +189,7 @@ async function main(): Promise<void> {
       // Para de despachar antes de fechar os workers, senao a ultima
       // varredura criaria jobs que ninguem vai consumir.
       pararDespachante();
+      clearInterval(batimento);
       // Fecha os workers primeiro: eles terminam o job em andamento antes
       // de parar, para nao deixar trabalho pela metade.
       await Promise.allSettled(workers.map((w) => w.close()));
