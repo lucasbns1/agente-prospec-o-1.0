@@ -761,7 +761,10 @@ export function CampanhaDetalhe() {
         ))}
       </div>
 
-      {aba === 'etapas' && <EditorEtapas key={campanha.steps.length} campanha={campanha} />}
+      {/* Sem `key` derivada dos dados: o refetch depois de salvar muda
+          steps.length, o que remontaria o editor e apagaria tanto a
+          mensagem de sucesso quanto qualquer edicao ainda nao salva. */}
+      {aba === 'etapas' && <EditorEtapas campanha={campanha} />}
 
       {aba === 'publico' && (
         <Card>

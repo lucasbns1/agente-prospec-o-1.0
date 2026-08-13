@@ -28,6 +28,26 @@ export interface OutboundJobData {
   outboundMessageId: string;
 }
 
+/**
+ * Decide se o envio e simulado.
+ *
+ * Funcao pura de proposito: esta e a regra mais critica do sistema
+ * inteiro, e ela precisa poder ser testada sem banco, sem fila e sem
+ * WhatsApp.
+ *
+ * A logica e "E" para enviar de verdade e "OU" para simular: basta UMA
+ * barreira levantada para nada sair. Um typo no .env nao pode virar 76
+ * mensagens disparadas.
+ */
+export function decidirDryRun(entrada: {
+  campanhaDryRun: boolean;
+  mensagemDryRun: boolean;
+  modoGlobal: string | undefined;
+}): boolean {
+  const global = entrada.modoGlobal?.trim().toLowerCase();
+  return entrada.campanhaDryRun || entrada.mensagemDryRun || global !== 'live';
+}
+
 export interface ResultadoProcessamento {
   ignorado?: boolean;
   motivo?: string;
@@ -155,8 +175,11 @@ export function criarWorkerOutbound(
       // --- Decide dry-run ---
       //
       // Basta UMA das barreiras estar levantada para nada sair.
-      const modoGlobal = process.env.WHATSAPP_MODE?.trim().toLowerCase();
-      const dryRun = m.campaign.dryRun || m.dryRun || modoGlobal !== 'live';
+      const dryRun = decidirDryRun({
+        campanhaDryRun: m.campaign.dryRun,
+        mensagemDryRun: m.dryRun,
+        modoGlobal: process.env.WHATSAPP_MODE,
+      });
 
       // --- Cria a conversa e a mensagem no historico ---
       const conversa = await prisma.conversation.upsert({

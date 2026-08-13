@@ -8,6 +8,7 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
+import { limparLeadsECampanhas } from './helpers';
 
 // O Playwright carrega os specs como CommonJS, entao usamos __dirname
 // em vez de import.meta.url.
@@ -15,6 +16,10 @@ const FIXTURE = path.join(__dirname, '..', 'fixtures', 'leads.csv');
 
 const EMAIL = process.env.SEED_USER_EMAIL ?? 'admin@local';
 const SENHA = process.env.SEED_USER_PASSWORD ?? 'prospector123';
+
+// Este spec verifica a deduplicacao: ele PRECISA que a fixture ainda
+// nao esteja no banco, senao nao ha o que importar.
+test.beforeAll(limparLeadsECampanhas);
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
