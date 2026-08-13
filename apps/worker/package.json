@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "simular": "tsx scripts/simular-recebida.ts"
   },
   "dependencies": {
     "@prospector/config": "workspace:*",

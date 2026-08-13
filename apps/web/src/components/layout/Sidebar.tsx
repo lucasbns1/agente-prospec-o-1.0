@@ -9,6 +9,7 @@ import {
   Bell,
   Settings,
   Radar,
+  QrCode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,7 @@ const NAVEGACAO = [
   { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
   { para: '/tarefas', rotulo: 'Tarefas', icone: CheckSquare },
   { para: '/notificacoes', rotulo: 'Notificações', icone: Bell },
+  { para: '/canal', rotulo: 'WhatsApp', icone: QrCode },
 ];
 
 export function Sidebar() {

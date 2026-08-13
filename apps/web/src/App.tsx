@@ -11,6 +11,8 @@ import { Campanhas } from '@/pages/Campanhas';
 import { CampanhaDetalhe } from '@/pages/CampanhaDetalhe';
 import { Tarefas } from '@/pages/Tarefas';
 import { Notificacoes } from '@/pages/Notificacoes';
+import { Conversas } from '@/pages/Conversas';
+import { Canal } from '@/pages/Canal';
 import { useUsuario } from '@/hooks/useAuth';
 import { useEvents } from '@/hooks/useEvents';
 
@@ -42,16 +44,9 @@ function AppAutenticado({
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/leads" element={<Leads />} />
                 <Route path="/importar" element={<Importar />} />
-                <Route
-                  path="/conversas"
-                  element={
-                    <EmBreve
-                      titulo="Conversas"
-                      fase="Fase 6"
-                      descricao="Caixa de conversas com histórico completo por lead."
-                    />
-                  }
-                />
+                <Route path="/conversas" element={<Conversas />} />
+                <Route path="/conversas/:leadId" element={<Conversas />} />
+                <Route path="/canal" element={<Canal />} />
                 <Route path="/campanhas" element={<Campanhas />} />
                 <Route path="/campanhas/:id" element={<CampanhaDetalhe />} />
                 <Route path="/tarefas" element={<Tarefas />} />

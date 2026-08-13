@@ -11,29 +11,40 @@ interface StatusWhatsApp {
   status: string;
   modo: string;
   dryRun: boolean;
-  detalhe: string;
+  detalhe: string | null;
+  conectado: boolean;
 }
 
-/** 🟢 conectado | 🟡 conectando | 🔴 desconectado — requisito 23. */
+/**
+ * 🟢 conectado | 🟡 em transicao | 🔴 desconectado.
+ *
+ * Os sete estados aparecem aqui com nome proprio. Colapsar tudo em
+ * "conectando" esconderia justamente o que voce precisa saber quando a
+ * conexao nao sobe — e um indicador que diz "conectado" com o processo
+ * caido e a mentira mais cara do sistema.
+ */
 function IndicadorWhatsApp({ status }: { status: string }) {
   const mapa: Record<string, { cor: string; rotulo: string }> = {
     CONECTADO: { cor: 'bg-[var(--color-sucesso)]', rotulo: 'WhatsApp conectado' },
-    CONECTANDO: { cor: 'bg-[var(--color-morno)]', rotulo: 'Conectando' },
+    INICIALIZANDO: { cor: 'bg-[var(--color-morno)]', rotulo: 'Inicializando' },
     AGUARDANDO_QR: { cor: 'bg-[var(--color-morno)]', rotulo: 'Aguardando QR Code' },
+    AUTENTICANDO: { cor: 'bg-[var(--color-morno)]', rotulo: 'Autenticando' },
+    RECONECTANDO: { cor: 'bg-[var(--color-morno)]', rotulo: 'Reconectando' },
+    FALHOU: { cor: 'bg-[var(--color-alerta)]', rotulo: 'Falha no WhatsApp' },
     DESCONECTADO: { cor: 'bg-[var(--color-alerta)]', rotulo: 'WhatsApp desconectado' },
-    ERRO: { cor: 'bg-[var(--color-alerta)]', rotulo: 'Erro no WhatsApp' },
   };
   const item = mapa[status] ?? mapa.DESCONECTADO!;
 
   return (
-    <div
-      className="flex items-center gap-2 text-xs text-[var(--color-texto-suave)]"
+    <Link
+      to="/canal"
+      className="flex items-center gap-2 text-xs text-[var(--color-texto-suave)] hover:text-[var(--color-texto)]"
       role="status"
       aria-live="polite"
     >
       <span className={`h-2 w-2 rounded-full ${item.cor}`} aria-hidden="true" />
       {item.rotulo}
-    </div>
+    </Link>
   );
 }
 
@@ -173,10 +184,12 @@ export function Topbar({
 }) {
   const logout = useLogout();
 
+  // Le o estado REAL do canal (publicado pelo worker), nao um valor
+  // fixo. Antes esta barra dizia "desconectado" mesmo com o canal no ar.
   const { data: whatsapp } = useQuery({
-    queryKey: ['whatsapp-status'],
-    queryFn: () => get<StatusWhatsApp>('/api/whatsapp/status'),
-    refetchInterval: 30_000,
+    queryKey: ['canal-status'],
+    queryFn: () => get<StatusWhatsApp>('/api/canal/status'),
+    refetchInterval: 15_000,
   });
 
   return (
@@ -188,7 +201,7 @@ export function Topbar({
             ativo. E a diferenca entre "testei o fluxo" e "mandei mensagem
             para 76 pessoas sem querer". */}
         {whatsapp?.dryRun && (
-          <Badge variant="info" title={whatsapp.detalhe}>
+          <Badge variant="info" title={whatsapp.detalhe ?? undefined}>
             <FlaskConical className="h-3 w-3" aria-hidden="true" />
             MODO SIMULAÇÃO — nada é enviado
           </Badge>
