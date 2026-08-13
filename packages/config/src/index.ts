@@ -38,7 +38,7 @@ const envSchema = z.object({
   CHROME_PATH: z.string().optional(),
 
   LOG_LEVEL: z
-    .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
+    .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'])
     .default('info'),
 });
 

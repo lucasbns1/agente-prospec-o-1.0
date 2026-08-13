@@ -5,10 +5,10 @@ Sistema local de prospecção comercial + CRM + automação de WhatsApp.
 Roda inteiramente no seu computador. **Sem IA, sem serviços pagos, sem API key,
 sem servidor externo.**
 
-> **Status: Fase 1 (fundação) concluída.**
-> A infraestrutura está de pé e testada. As funcionalidades de negócio —
-> importação, CRM, campanhas, envio — entram nas fases seguintes.
-> Veja [Roadmap](#roadmap).
+> **Status: Fase 2 concluída.**
+> Importação de CSV/XLSX e CRM de leads funcionando. Campanhas, motor de
+> regras e envio entram nas fases seguintes — **nenhuma mensagem é
+> enviada ainda**. Veja [Roadmap](#roadmap).
 
 ---
 
@@ -83,7 +83,8 @@ um typo no `.env` não pode virar mensagem enviada por acidente.
 |---|---|
 | `pnpm dev` | Sobe API, worker e frontend juntos |
 | `pnpm dev:api` / `dev:worker` / `dev:web` | Sobe um de cada vez |
-| `pnpm test` | Testes unitários (Vitest) |
+| `pnpm test` | Testes unitários e de API (Vitest) — 217 testes |
+| `pnpm test:e2e` | Testes E2E (Playwright) |
 | `pnpm typecheck` | Verifica os tipos de todos os pacotes |
 | `pnpm build` | Build de produção |
 | `pnpm db:migrate` | Aplica migrations |
@@ -131,6 +132,7 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | [docs/SETUP.md](docs/SETUP.md) | Instalação passo a passo no Windows 11 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Camadas, decisões técnicas e o porquê de cada uma |
 | [docs/DATABASE.md](docs/DATABASE.md) | As 20 tabelas, campos, índices e constraints |
+| [docs/IMPORTACAO.md](docs/IMPORTACAO.md) | Regra de site, deduplicação, normalização e mapeamento de colunas |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Cada variável do `.env` explicada |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | O que fazer quando algo não sobe |
 
@@ -141,17 +143,17 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | Fase | Escopo | Status |
 |---|---|---|
 | 1 | Monorepo, banco, API, worker, filas, auth, SSE, dry-run | ✅ concluída |
-| 2 | CRUD de leads + CRM | pendente |
-| 3 | Importação CSV/XLSX + normalização | pendente |
-| 4 | Filtro de site próprio | pendente |
-| 5 | Campanhas e editor de mensagens | pendente |
-| 6 | Motor de regras | pendente |
-| 7 | BullMQ + delays + avanço de campanha | pendente |
-| 8 | WhatsApp real (whatsapp-web.js) | pendente |
-| 9 | Dashboard completo | pendente |
-| 10 | Conversas, tarefas e notificações | pendente |
-| 11 | Testes E2E (Playwright) | pendente |
-| 12 | Integração do fluxo de captura | pendente |
+| 2 | Importação CSV/XLSX + CRM de leads | ✅ concluída |
+| 3 | Normalização avançada + regra de site (refino) | pendente |
+| 4 | Motor de regras e classificação | pendente |
+| 5 | Campanhas + etapas + agendamento | pendente |
+| 6 | Dashboard + notificações + intervenção manual | pendente |
+| 7 | Integração WhatsApp Web | pendente |
+| 8 | Automação completa das conversas | pendente |
+| 9 | Dry-run completo | pendente |
+| 10 | Testes de integração | pendente |
+| 11 | Teste controlado real | pendente |
+| 12 | Polimento, segurança e release | pendente |
 
 ---
 

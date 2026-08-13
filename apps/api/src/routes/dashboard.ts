@@ -75,6 +75,14 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
         prisma.task.count({ where: { status: { in: ['ABERTA', 'EM_ANDAMENTO'] } } }),
       ]);
 
+      const inicioDoDia = new Date();
+      inicioDoDia.setHours(0, 0, 0, 0);
+
+      const [agendados, leadsHoje] = await Promise.all([
+        prisma.lead.count({ where: { status: 'AGENDADO' } }),
+        prisma.lead.count({ where: { createdAt: { gte: inicioDoDia } } }),
+      ]);
+
       // Campanha ativa: na Fase 1 ainda nao existe nenhuma.
       const campanha = await prisma.campaign.findFirst({
         where: { status: 'ATIVA' },
@@ -102,6 +110,8 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
           optOuts,
           clientes,
           tarefasPendentes,
+          agendados,
+          leadsHoje,
         },
         campanhaAtiva: campanha
           ? {

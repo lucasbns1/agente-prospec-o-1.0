@@ -12,6 +12,9 @@ import { rotasEvents } from './routes/events.js';
 import { rotasDashboard } from './routes/dashboard.js';
 import { rotasSettings } from './routes/settings.js';
 import { rotasWhatsApp } from './routes/whatsapp.js';
+import { rotasLeads } from './routes/leads.js';
+import { rotasImports } from './routes/imports.js';
+import { rotasNotifications } from './routes/notifications.js';
 
 export async function criarApp(envParcial?: Partial<Env>): Promise<{
   app: FastifyInstance;
@@ -57,6 +60,9 @@ export async function criarApp(envParcial?: Partial<Env>): Promise<{
   await app.register(rotasDashboard);
   await app.register(rotasSettings);
   await app.register(rotasWhatsApp);
+  await app.register(rotasLeads);
+  await app.register(rotasImports);
+  await app.register(rotasNotifications);
 
   return { app, env };
 }

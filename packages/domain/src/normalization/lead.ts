@@ -27,7 +27,11 @@ import {
   type DominioSocial,
   type WebsiteStatus,
 } from './website.js';
-import { calcularChaveDedupe, type CriterioDedupe } from './dedupe.js';
+import {
+  calcularChaveDedupe,
+  calcularChavesSecundarias,
+  type CriterioDedupe,
+} from './dedupe.js';
 
 /** Campos que o parser extrai da planilha, ja mapeados. */
 export interface LinhaBruta {
@@ -71,6 +75,12 @@ export interface LeadNormalizado {
   fonteUrl: string | null;
   chaveDedupe: string | null;
   criterioDedupe: CriterioDedupe | null;
+  /**
+   * Todas as chaves aplicaveis, nao so a de maior prioridade.
+   * Cobre o caso do mesmo estabelecimento vindo uma vez com telefone e
+   * outra sem — as chaves primarias seriam diferentes.
+   */
+  chavesSecundarias: Array<{ chave: string; criterio: CriterioDedupe }>;
 }
 
 export interface AvisoNormalizacao {
@@ -194,14 +204,18 @@ export function normalizarLead(
   const totalAvaliacoes = normalizarContagem(linha.totalAvaliacoes);
 
   // --- Dedupe ---
-  const dedupe = calcularChaveDedupe({
+  const dadosDedupe = {
     telefoneNormalizado: tel.e164,
     nomeCompleto,
     enderecoOriginal: enderecoBruto,
     logradouro: partes.logradouro,
     numero: partes.numero,
     cidade,
-  });
+  };
+  const dedupe = calcularChaveDedupe(dadosDedupe);
+  const secundarias = calcularChavesSecundarias(dadosDedupe)
+    .filter((k) => k.chave !== null)
+    .map((k) => ({ chave: k.chave!, criterio: k.criterio! }));
 
   if (dedupe.chave === null && nomeCompleto !== null) {
     avisos.push({
@@ -235,6 +249,7 @@ export function normalizarLead(
     fonteUrl: limparEspacos(linha.fonteUrl),
     chaveDedupe: dedupe.chave,
     criterioDedupe: dedupe.criterio,
+    chavesSecundarias: secundarias,
   };
 
   return {

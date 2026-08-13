@@ -15,9 +15,9 @@ import { cn } from '@/lib/utils';
 const NAVEGACAO = [
   { para: '/', rotulo: 'Dashboard', icone: LayoutDashboard, exato: true },
   { para: '/leads', rotulo: 'Leads', icone: Users },
-  { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
+  { para: '/importar', rotulo: 'Importar', icone: Download },
   { para: '/campanhas', rotulo: 'Campanhas', icone: Rocket },
-  { para: '/captura', rotulo: 'Captura', icone: Download },
+  { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
   { para: '/tarefas', rotulo: 'Tarefas', icone: CheckSquare },
   { para: '/notificacoes', rotulo: 'Notificações', icone: Bell },
 ];

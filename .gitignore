@@ -50,3 +50,6 @@ packages/database/prisma/*.db-journal
 # Vite
 apps/web/dist/
 .vite/
+
+# Playwright
+test-results/

@@ -27,6 +27,8 @@ export interface DashboardMetricas {
   optOuts: number;
   clientes: number;
   tarefasPendentes: number;
+  agendados: number;
+  leadsHoje: number;
 }
 
 export interface CampanhaAtivaResumo {
@@ -133,4 +135,6 @@ export const METRICAS_ZERADAS: DashboardMetricas = {
   optOuts: 0,
   clientes: 0,
   tarefasPendentes: 0,
+  agendados: 0,
+  leadsHoje: 0,
 };

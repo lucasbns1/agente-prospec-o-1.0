@@ -5,6 +5,8 @@ import { Dashboard } from '@/pages/Dashboard';
 import { Login } from '@/pages/Login';
 import { EmBreve } from '@/pages/EmBreve';
 import { Configuracoes } from '@/pages/Configuracoes';
+import { Leads } from '@/pages/Leads';
+import { Importar } from '@/pages/Importar';
 import { useUsuario } from '@/hooks/useAuth';
 import { useEvents } from '@/hooks/useEvents';
 
@@ -34,22 +36,14 @@ function AppAutenticado({
             <div className="mx-auto max-w-[1400px]">
               <Routes>
                 <Route path="/" element={<Dashboard />} />
-                <Route
-                  path="/leads"
-                  element={
-                    <EmBreve
-                      titulo="Leads"
-                      fase="Fase 2"
-                      descricao="CRM com tabela, filtros e visualizações por temperatura."
-                    />
-                  }
-                />
+                <Route path="/leads" element={<Leads />} />
+                <Route path="/importar" element={<Importar />} />
                 <Route
                   path="/conversas"
                   element={
                     <EmBreve
                       titulo="Conversas"
-                      fase="Fase 10"
+                      fase="Fase 6"
                       descricao="Caixa de conversas com histórico completo por lead."
                     />
                   }
@@ -65,21 +59,11 @@ function AppAutenticado({
                   }
                 />
                 <Route
-                  path="/captura"
-                  element={
-                    <EmBreve
-                      titulo="Captura"
-                      fase="Fase 3"
-                      descricao="Importação de CSV/XLSX do Instant Data Scraper."
-                    />
-                  }
-                />
-                <Route
                   path="/tarefas"
                   element={
                     <EmBreve
                       titulo="Tarefas"
-                      fase="Fase 10"
+                      fase="Fase 6"
                       descricao="O que precisa da sua ação, priorizado."
                     />
                   }
@@ -89,7 +73,7 @@ function AppAutenticado({
                   element={
                     <EmBreve
                       titulo="Notificações"
-                      fase="Fase 10"
+                      fase="Fase 6"
                       descricao="Alertas de leads quentes e intervenções necessárias."
                     />
                   }

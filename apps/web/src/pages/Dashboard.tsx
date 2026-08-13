@@ -40,7 +40,9 @@ const CARTOES: CartaoMetrica[] = [
   { chave: 'optOuts', rotulo: 'Opt-outs', destaque: 'alerta' },
   { chave: 'clientes', rotulo: 'Clientes', destaque: 'sucesso' },
   { chave: 'errosEnvio', rotulo: 'Erros de envio', destaque: 'alerta' },
+  { chave: 'agendados', rotulo: 'Agendados' },
   { chave: 'tarefasPendentes', rotulo: 'Tarefas pendentes' },
+  { chave: 'leadsHoje', rotulo: 'Leads hoje' },
 ];
 
 const COR_DESTAQUE: Record<string, string> = {
@@ -178,9 +180,9 @@ export function Dashboard() {
           aria-hidden="true"
         />
         <span>
-          <strong>Fase 1 (fundação).</strong> Os números vêm do banco de dados
-          real, que ainda está vazio. Importação, CRM, campanhas e envio entram
-          nas fases seguintes.
+          <strong>Fase 2.</strong> Importação e CRM funcionando; todos os números
+          vêm do banco. Campanhas, motor de regras e envio entram nas fases
+          seguintes — nenhuma mensagem é enviada ainda.
         </span>
       </div>
     </div>

@@ -88,3 +88,55 @@ export function calcularChaveDedupe(dados: DadosDedupe): ChaveDedupe {
   // Sem telefone, sem endereco e sem cidade: nao ha base confiavel.
   return { chave: null, criterio: null, base: null };
 }
+
+/**
+ * Calcula TODAS as chaves aplicaveis, nao apenas a de maior prioridade.
+ *
+ * POR QUE ISSO E NECESSARIO:
+ * A chave primaria segue a prioridade — um lead com telefone recebe a
+ * chave de telefone e nunca a de nome+endereco. Consequencia: o MESMO
+ * estabelecimento importado duas vezes, uma com telefone e outra sem,
+ * produz duas chaves diferentes e passaria como dois leads.
+ *
+ * Esta funcao devolve todas as chaves possiveis para a deteccao em
+ * memoria e a consulta ao banco cobrirem tambem esse caso.
+ *
+ * A constraint UNIQUE continua sendo apenas sobre a chave primaria: e
+ * ela que da a garantia forte. Estas chaves extras sao uma rede de
+ * seguranca a mais, nao a substituem.
+ */
+export function calcularChavesSecundarias(dados: DadosDedupe): ChaveDedupe[] {
+  const chaves: ChaveDedupe[] = [];
+  const nome = normalizarParaComparacao(dados.nomeCompleto);
+
+  if (dados.telefoneNormalizado) {
+    chaves.push({
+      chave: hash('TELEFONE', dados.telefoneNormalizado),
+      criterio: 'TELEFONE',
+      base: dados.telefoneNormalizado,
+    });
+  }
+
+  if (nome !== '') {
+    const enderecoEstruturado =
+      dados.logradouro && dados.numero
+        ? `${dados.logradouro} ${dados.numero}`
+        : null;
+    const endereco = normalizarParaComparacao(
+      enderecoEstruturado ?? dados.enderecoOriginal
+    );
+
+    if (endereco !== '') {
+      const base = `${nome}|${endereco}`;
+      chaves.push({ chave: hash('NOME_ENDERECO', base), criterio: 'NOME_ENDERECO', base });
+    }
+
+    const cidade = normalizarParaComparacao(dados.cidade);
+    if (cidade !== '') {
+      const base = `${nome}|${cidade}`;
+      chaves.push({ chave: hash('NOME_CIDADE', base), criterio: 'NOME_CIDADE', base });
+    }
+  }
+
+  return chaves;
+}
