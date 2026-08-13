@@ -403,6 +403,12 @@ describe('despachante — o que vira job e o que nao vira', () => {
     const campanha = await criarCampanha({ limiteDiarioEnvios: 1 });
     await servico.enfileirarCampanha(campanha.id);
 
+    // A varredura roda uma hora a frente (a janela de envio precisa estar
+    // aberta). O envio que consome a cota tem de cair no MESMO dia dessa
+    // varredura: rodando entre 23h e meia-noite, o "amanha" da varredura
+    // zerava a cota e o teste falhava sem que nada estivesse errado.
+    const referencia = new Date(Date.now() + 3600_000);
+
     // Um envio REAL ja consumiu a cota do dia.
     await prisma.outboundMessage.create({
       data: {
@@ -413,12 +419,12 @@ describe('despachante — o que vira job e o que nao vira', () => {
         })).id,
         idempotencyKey: `manual-${Date.now()}`,
         status: 'ENVIADA',
-        processedAt: new Date(),
+        processedAt: referencia,
         dryRun: false,
       },
     });
 
-    const r = await varrer(new Date(Date.now() + 3600_000));
+    const r = await varrer(referencia);
 
     expect(r.despachadas).toBe(0);
     expect(r.adiadas).toBe(1);

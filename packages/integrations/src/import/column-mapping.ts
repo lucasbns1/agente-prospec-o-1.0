@@ -14,6 +14,10 @@
 /** Campos do lead que podem ser preenchidos por uma coluna. */
 export const CAMPOS_MAPEAVEIS = [
   'nome',
+  // A UNICA origem valida de nome de PESSOA. O sistema nunca deduz um
+  // nome de pessoa a partir de `nome` (o estabelecimento) — ver
+  // `packages/domain/src/campaign/nome-abordagem.ts`.
+  'responsavel',
   'categoria',
   'telefone',
   'email',
@@ -35,6 +39,7 @@ export type CampoMapeavel = (typeof CAMPOS_MAPEAVEIS)[number];
 /** Rotulos em portugues para a tela de mapeamento. */
 export const ROTULO_CAMPO: Record<CampoMapeavel, string> = {
   nome: 'Nome',
+  responsavel: 'Responsável / Proprietário',
   categoria: 'Categoria / Nicho',
   telefone: 'Telefone',
   email: 'E-mail',
@@ -60,6 +65,16 @@ const ALIASES: Record<CampoMapeavel, string[]> = {
     'nome', 'name', 'title', 'titulo', 'nome da empresa', 'empresa',
     'business name', 'nome do negocio', 'estabelecimento', 'razao social',
     'nome fantasia', 'company', 'business', 'local',
+  ],
+  // Cabecalhos que declaram explicitamente uma PESSOA. Repare que
+  // "contato" NAO esta aqui: ele aparece em `telefone` e costuma trazer
+  // um numero, nao um nome. Na duvida, o campo fica sem mapeamento e
+  // voce escolhe na tela — melhor do que saudar alguem pelo nome errado.
+  responsavel: [
+    'responsavel', 'proprietario', 'dono', 'dona', 'nome do responsavel',
+    'nome do proprietario', 'nome do dono', 'titular', 'gestor',
+    'owner', 'nome do contato', 'pessoa de contato', 'falar com',
+    'nome contato', 'representante', 'socio', 'gerente',
   ],
   categoria: [
     'categoria', 'category', 'nicho', 'tipo', 'type', 'segmento',

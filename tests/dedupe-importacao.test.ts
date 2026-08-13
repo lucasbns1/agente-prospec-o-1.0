@@ -152,7 +152,12 @@ describe('normalizarLead — pipeline completo', () => {
 
     expect(r.valido).toBe(true);
     expect(r.dados.nomeCompleto).toBe('Psicóloga Maria Silva');
-    expect(r.dados.primeiroNome).toBe('Maria');
+    // "Psicóloga Maria Silva" e o nome do CONSULTORIO. Sem coluna de
+    // responsavel, o sistema nao afirma que ha uma Maria do outro lado:
+    // pode ser nome fantasia, pode ser a mae da dona, pode ser a sócia
+    // que saiu. Nome de pessoa so quando declarado.
+    expect(r.dados.primeiroNome).toBeNull();
+    expect(r.dados.nomeContato).toBeNull();
     expect(r.dados.telefoneNormalizado).toBe('5519999991111');
     expect(r.dados.bairro).toBe('Cambuí');
     expect(r.dados.cidade).toBe('Campinas');
@@ -209,14 +214,85 @@ describe('normalizarLead — pipeline completo', () => {
     expect(r.avisos.some((a) => a.campo === 'telefone')).toBe(true);
   });
 
-  it('nome de empresa nao gera primeiro nome e avisa', () => {
+  it('nome de empresa nao gera primeiro nome', () => {
     const r = normalizarLead(
       { nome: 'Clínica Bem Viver', telefone: '(19) 3232-1010' },
       opcoes
     );
     expect(r.dados.primeiroNome).toBeNull();
+    expect(r.dados.nomeContato).toBeNull();
     expect(r.dados.empresa).toBe('Clínica Bem Viver');
-    expect(r.avisos.some((a) => a.campo === 'primeiroNome')).toBe(true);
+  });
+
+  // ---- Nome de pessoa: so quando DECLARADO (regra do §5) ----
+
+  it('a coluna de responsavel e a unica origem de nome de pessoa', () => {
+    const r = normalizarLead(
+      {
+        nome: 'Studio Luana Silva',
+        responsavel: 'Luana',
+        telefone: '(19) 99999-7777',
+      },
+      opcoes
+    );
+    expect(r.dados.nomeContato).toBe('Luana');
+    expect(r.dados.primeiroNome).toBe('Luana');
+    // O estabelecimento NAO e sobrescrito pelo nome da pessoa.
+    expect(r.dados.empresa).toBe('Studio Luana Silva');
+    expect(r.dados.nomeCompleto).toBe('Studio Luana Silva');
+  });
+
+  it('corta o responsavel no primeiro nome, mas guarda o nome inteiro', () => {
+    const r = normalizarLead(
+      { nome: 'Clínica X', responsavel: 'Dra. Marina Costa', telefone: '(19) 99999-8888' },
+      opcoes
+    );
+    expect(r.dados.primeiroNome).toBe('Marina');
+    expect(r.dados.nomeContato).toBe('Dra. Marina Costa');
+  });
+
+  it('nomes que a versao anterior transformava em pessoa nao viram mais', () => {
+    // Cada um destes produzia uma saudacao errada: "Oi, Salão!",
+    // "Oi, Barbearia!", "Oi, Ana!" (nome do salao tratado como o da dona).
+    for (const nome of [
+      'Salão da Ana',
+      'Barbearia do Zé',
+      'Pizzaria Roma',
+      'Ana Beleza',
+      'Maria Fernanda Advocacia',
+    ]) {
+      const r = normalizarLead({ nome, telefone: '(19) 99999-0000' }, opcoes);
+      expect(r.dados.primeiroNome).toBeNull();
+      expect(r.dados.nomeContato).toBeNull();
+      expect(r.dados.empresa).toBe(nome);
+    }
+  });
+
+  it('avisa quando o nome nao parece empresa e nao ha responsavel', () => {
+    // Aviso ACIONAVEL: provavelmente existe uma pessoa, e vale mapear a
+    // coluna. O sistema aponta, mas nao decide.
+    const r = normalizarLead(
+      { nome: 'Salão da Ana', telefone: '(19) 99999-0001' },
+      opcoes
+    );
+    expect(r.avisos.some((a) => a.campo === 'nomeContato')).toBe(true);
+  });
+
+  it('nao avisa quando o nome ja tem cara de empresa', () => {
+    const r = normalizarLead(
+      { nome: 'Clínica Bem Viver', telefone: '(19) 99999-0002' },
+      opcoes
+    );
+    expect(r.avisos.some((a) => a.campo === 'nomeContato')).toBe(false);
+  });
+
+  it('responsavel vazio nao cria nome de pessoa', () => {
+    const r = normalizarLead(
+      { nome: 'Padaria Central', responsavel: '   ', telefone: '(19) 99999-0003' },
+      opcoes
+    );
+    expect(r.dados.nomeContato).toBeNull();
+    expect(r.dados.primeiroNome).toBeNull();
   });
 
   it('bairro ausente gera aviso e fica NULL — nunca deduzido', () => {

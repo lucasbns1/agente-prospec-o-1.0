@@ -36,6 +36,11 @@ import {
 /** Campos que o parser extrai da planilha, ja mapeados. */
 export interface LinhaBruta {
   nome?: string | null;
+  /**
+   * Coluna que declara uma PESSOA ("Responsavel", "Proprietario"...).
+   * E a UNICA origem valida de nome de pessoa — ver `nome-abordagem.ts`.
+   */
+  responsavel?: string | null;
   categoria?: string | null;
   telefone?: string | null;
   email?: string | null;
@@ -54,7 +59,14 @@ export interface LinhaBruta {
 
 export interface LeadNormalizado {
   nomeCompleto: string | null;
+  /**
+   * Primeiro nome da PESSOA. Extraido de `responsavel`, NUNCA de
+   * `nomeCompleto`: "Salao da Ana" nao diz que existe uma Ana do outro
+   * lado. `null` quando ninguem declarou uma pessoa.
+   */
   primeiroNome: string | null;
+  /** Nome da pessoa como veio, sem cortar no primeiro nome. */
+  nomeContato: string | null;
   empresa: string | null;
   categoria: string | null;
   telefone: string | null;
@@ -133,15 +145,36 @@ export function normalizarLead(
     erros.push('Linha sem nome — impossivel identificar o lead');
   }
 
-  const ehEmpresa = pareceEmpresa(nomeCompleto);
-  const primeiroNome = extrairPrimeiroNome(nomeCompleto);
+  // --- Nome da PESSOA ---
+  //
+  // Sai EXCLUSIVAMENTE da coluna de responsavel. Antes era extraido de
+  // `nomeCompleto`, e isso produzia "Oi, Salao!", "Oi, Barbearia!" e —
+  // o pior caso — "Oi, Ana!" tratando o nome do salao como o da dona.
+  //
+  // Nao existe lista de palavras que separe "Ana Beleza" (salao) de
+  // "Ana Beleza" (pessoa): a informacao nao esta no texto. Por isso a
+  // regra virou "so quando declarado", e nao "quando parecer".
+  const nomeContato = normalizarNome(linha.responsavel);
+  const primeiroNome = extrairPrimeiroNome(nomeContato);
 
-  if (nomeCompleto !== null && primeiroNome === null) {
+  if (nomeContato !== null && primeiroNome === null) {
     avisos.push({
       campo: 'primeiroNome',
-      mensagem: ehEmpresa
-        ? 'Nome parece ser de empresa — {{primeiro_nome}} ficara vazio e bloqueara o envio'
-        : 'Nao foi possivel extrair um primeiro nome confiavel',
+      mensagem:
+        'A coluna de responsavel nao tem um primeiro nome utilizavel — a mensagem usara a saudacao sem nome',
+      valorOriginal: nomeContato,
+    });
+  }
+
+  // `pareceEmpresa` nao decide mais nada. Vira um aviso ACIONAVEL: se o
+  // nome NAO tem cara de empresa e nao ha coluna de responsavel, e bem
+  // provavel que exista uma pessoa por tras — e vale a pena voce mapear
+  // essa coluna. O sistema aponta a oportunidade sem tomar a decisao.
+  if (nomeContato === null && nomeCompleto !== null && !pareceEmpresa(nomeCompleto)) {
+    avisos.push({
+      campo: 'nomeContato',
+      mensagem:
+        'Sem coluna de responsavel: a mensagem usara a saudacao sem nome. Se a planilha tiver o nome da pessoa, mapeie a coluna "Responsavel".',
       valorOriginal: nomeCompleto,
     });
   }
@@ -229,7 +262,16 @@ export function normalizarLead(
   const dados: LeadNormalizado = {
     nomeCompleto,
     primeiroNome,
-    empresa: ehEmpresa ? nomeCompleto : null,
+    nomeContato,
+    // Antes: `ehEmpresa ? nomeCompleto : null` — ou seja, "Salao da Ana"
+    // ficava com `empresa` NULA porque nao tinha marcador conhecido, e
+    // `{{empresa}}` (variavel OBRIGATORIA) so nao bloqueava o envio por
+    // causa de um fallback para o nome cru.
+    //
+    // Agora que nenhum nome e tratado como pessoa, a coluna "nome" de uma
+    // planilha do Maps e sempre o estabelecimento. Dizer isso direto
+    // remove o fallback e o caso de borda junto.
+    empresa: nomeCompleto,
     categoria: limparEspacos(linha.categoria),
     telefone: limparEspacos(linha.telefone),
     telefoneNormalizado: tel.e164,

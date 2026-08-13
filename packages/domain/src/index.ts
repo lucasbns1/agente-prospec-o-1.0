@@ -31,6 +31,7 @@ export * from './campaign/template.js';
 export * from './campaign/agendamento.js';
 export * from './campaign/contracts.js';
 export * from './campaign/quadro.js';
+export * from './campaign/nome-abordagem.js';
 export * from './template/contracts.js';
 // --- Dashboard (Fase 5) ---
 export * from './dashboard/atencao.js';

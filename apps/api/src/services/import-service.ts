@@ -357,6 +357,9 @@ export async function executarImportacao(
 
           nomeCompleto: d.nomeCompleto,
           primeiroNome: d.primeiroNome,
+          // Preenchido apenas quando a planilha traz uma coluna de
+          // responsavel mapeada. Nunca derivado do nome do lugar.
+          nomeContato: d.nomeContato,
           empresa: d.empresa,
           categoria: d.categoria,
 

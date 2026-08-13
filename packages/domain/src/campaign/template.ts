@@ -21,6 +21,12 @@ export const VARIAVEIS_CAMPANHA = [
   'nome',
   'primeiro_nome',
   'empresa',
+  // Nomes explicitos, para o template dizer o que quer sem ambiguidade.
+  // `nome_abordagem` so tem valor quando ha PESSOA declarada — nunca cai
+  // para o nome do estabelecimento, senao a saudacao viraria
+  // "Oi, Barbearia do Ze!".
+  'nome_abordagem',
+  'nome_estabelecimento',
   'cidade',
   'bairro',
   'estado',
@@ -49,6 +55,8 @@ export interface ContextoLead {
   nome: string | null;
   primeiro_nome: string | null;
   empresa: string | null;
+  /** Nome de PESSOA declarado. `null` quando ninguem declarou. */
+  nome_contato: string | null;
   cidade: string | null;
   bairro: string | null;
   estado: string | null;
@@ -94,15 +102,15 @@ export function extrairVariaveis(template: string): string[] {
  * fluido em vez de com um buraco.
  */
 const SAUDACAO_SEM_NOME: Array<[RegExp, string]> = [
-  [/\bol[aá],?\s*\{\{\s*(primeiro_)?nome\s*\}\}\s*!/gi, 'Olá!'],
-  [/\bol[aá],?\s*\{\{\s*(primeiro_)?nome\s*\}\}\s*,/gi, 'Olá,'],
-  [/\bol[aá],?\s*\{\{\s*(primeiro_)?nome\s*\}\}/gi, 'Olá'],
-  [/\boi,?\s*\{\{\s*(primeiro_)?nome\s*\}\}\s*!/gi, 'Oi!'],
-  [/\boi,?\s*\{\{\s*(primeiro_)?nome\s*\}\}/gi, 'Oi'],
-  [/\bbom dia,?\s*\{\{\s*(primeiro_)?nome\s*\}\}/gi, 'Bom dia'],
-  [/\bboa tarde,?\s*\{\{\s*(primeiro_)?nome\s*\}\}/gi, 'Boa tarde'],
-  [/\bboa noite,?\s*\{\{\s*(primeiro_)?nome\s*\}\}/gi, 'Boa noite'],
-  [/\bfalo com (a|o)\s*\{\{\s*(primeiro_)?nome\s*\}\}\s*\?/gi, 'falo com o responsável?'],
+  [/\bol[aá],?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}\s*!/gi, 'Olá!'],
+  [/\bol[aá],?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}\s*,/gi, 'Olá,'],
+  [/\bol[aá],?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}/gi, 'Olá'],
+  [/\boi,?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}\s*!/gi, 'Oi!'],
+  [/\boi,?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}/gi, 'Oi'],
+  [/\bbom dia,?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}/gi, 'Bom dia'],
+  [/\bboa tarde,?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}/gi, 'Boa tarde'],
+  [/\bboa noite,?\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}/gi, 'Boa noite'],
+  [/\bfalo com (a|o)\s*\{\{\s*(primeiro_nome|nome_abordagem|nome)\s*\}\}\s*\?/gi, 'falo com o responsável?'],
 ];
 
 /**
@@ -132,6 +140,13 @@ function valorDe(contexto: ContextoLead, variavel: string): string | null {
       return contexto.primeiro_nome;
     case 'primeiro_nome':
       return contexto.primeiro_nome;
+    case 'nome_abordagem':
+      // Deliberadamente SEM fallback para o estabelecimento. Se cair
+      // para ele, "Oi, {{nome_abordagem}}!" vira "Oi, Barbearia do Ze!".
+      // Sem pessoa declarada, o fallback de saudacao reescreve a frase.
+      return contexto.nome_contato ?? contexto.primeiro_nome;
+    case 'nome_estabelecimento':
+      return contexto.empresa ?? contexto.nome;
     case 'empresa':
       return contexto.empresa ?? contexto.nome;
     case 'cidade':
@@ -224,7 +239,10 @@ export function renderizarMensagem(
   // Se olhasse tambem `contexto.nome` (que para lead de empresa carrega a
   // razao social), o fallback nao dispararia e `{{nome}}` deixaria um
   // buraco no texto, bloqueando o envio de todo lead sem pessoa.
-  const temNome = Boolean(contexto.primeiro_nome);
+  // So conta nome de PESSOA declarado. `empresa` nunca entra aqui: se
+  // entrasse, "Oi, {{nome_abordagem}}!" viraria "Oi, Barbearia do Ze!"
+  // em vez de "Oi!".
+  const temNome = Boolean(contexto.nome_contato ?? contexto.primeiro_nome);
   if (!temNome) {
     for (const [padrao, troca] of SAUDACAO_SEM_NOME) {
       if (padrao.test(texto)) {

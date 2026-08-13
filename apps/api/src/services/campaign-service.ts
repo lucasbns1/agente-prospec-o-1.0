@@ -144,7 +144,7 @@ export interface ResultadoPreview {
 
 /** Campos do lead necessarios para qualificar e renderizar. */
 const SELECAO_LEAD = {
-  id: true, nomeCompleto: true, primeiroNome: true, empresa: true,
+  id: true, nomeCompleto: true, primeiroNome: true, nomeContato: true, empresa: true,
   telefone: true, telefoneNormalizado: true, websiteStatus: true, websiteUrl: true,
   instagramUrl: true, cidade: true, bairro: true, estado: true, categoria: true,
   avaliacao: true, totalAvaliacoes: true, status: true, optOut: true, tags: true,
@@ -177,6 +177,9 @@ function paraContexto(l: LeadSelecionado): ContextoLead {
   return {
     nome: l.nomeCompleto,
     primeiro_nome: l.primeiroNome,
+    // Nome de pessoa sai SO de `nomeContato`, preenchido a partir de uma
+    // coluna declarada de responsavel — nunca do estabelecimento.
+    nome_contato: l.nomeContato,
     empresa: l.empresa ?? l.nomeCompleto,
     cidade: l.cidade,
     bairro: l.bairro,
