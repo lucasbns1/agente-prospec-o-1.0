@@ -19,6 +19,7 @@ import { criarWorkerHealth } from './workers/health.js';
 import { criarWorkerOutbound } from './workers/outbound.js';
 import { iniciarDespachante } from './workers/despachante.js';
 import { criarWorkerInbound, enfileirarRecebida } from './workers/inbound.js';
+import { processarConfirmacaoEntrega } from './services/inbound.js';
 import { fecharPublicador } from './redis.js';
 import { publicarEvento } from './events.js';
 import { publicarEstadoCanal, publicarQr, limparQr } from './estado-canal.js';
@@ -87,6 +88,31 @@ async function main(): Promise<void> {
       log.error({ err, providerMessageId: m.id }, 'Falha ao enfileirar mensagem recebida');
     }
   });
+
+  // Confirmacoes de entrega. So o WhatsAppWebAdapter emite este evento;
+  // o adapter simulado nao tem o barramento interno.
+  if (adapter instanceof WhatsAppWebAdapter) {
+    adapter.ouvirCanal(async (evento) => {
+      if (evento.tipo !== 'canal.confirmacao_entrega') return;
+      if (!evento.providerMessageId || evento.ack === undefined) return;
+
+      try {
+        const r = await processarConfirmacaoEntrega({
+          providerMessageId: evento.providerMessageId,
+          ack: evento.ack,
+        });
+        if (r.aplicado) {
+          log.info(
+            { providerMessageId: evento.providerMessageId, estado: r.estado },
+            'Confirmacao de entrega aplicada'
+          );
+        }
+      } catch (err) {
+        // Uma confirmacao perdida nao pode derrubar a conexao.
+        log.error({ err }, 'Falha ao processar confirmacao de entrega');
+      }
+    });
+  }
 
   // O estado da conexao vai para a tela por duas vias: o Redis (retrato
   // atual, que a tela consulta) e o SSE (aviso de que mudou). Sem isso o

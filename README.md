@@ -90,7 +90,10 @@ um typo no `.env` não pode virar mensagem enviada por acidente.
 |---|---|
 | `pnpm dev` | Sobe API, worker e frontend juntos |
 | `pnpm dev:api` / `dev:worker` / `dev:web` | Sobe um de cada vez |
-| `pnpm test` | Testes unitários e de API (Vitest) — 868 testes |
+| `pnpm test` | Testes unitários e de API (Vitest) — 890 testes |
+| `pnpm health` | Verifica API, banco, Redis, worker e canal |
+| `pnpm auditoria` | Estado real do banco, incluindo `REAL_MESSAGES_SENT` |
+| `pnpm simular <tel> "<texto>"` | Injeta uma mensagem recebida, sem celular |
 | `pnpm test:e2e` | Testes E2E (Playwright) |
 | `pnpm typecheck` | Verifica os tipos de todos os pacotes |
 | `pnpm build` | Build de produção |
@@ -149,6 +152,8 @@ Detalhes e justificativas em **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | [docs/INTERVENCAO.md](docs/INTERVENCAO.md) | Assumir a conversa, mudar status, opt-out e o rastro de auditoria |
 | [docs/WHATSAPP.md](docs/WHATSAPP.md) | Conexão, QR, os sete estados e as quatro barreiras contra envio real |
 | [docs/CONVERSAS.md](docs/CONVERSAS.md) | Recebimento, identificação do lead, classificação e a caixa de entrada |
+| [docs/VALIDACAO-6B.md](docs/VALIDACAO-6B.md) | Roteiro de validação com WhatsApp real, passo a passo |
+| [docs/FASE-7-ENVIO-REAL-PLANO.md](docs/FASE-7-ENVIO-REAL-PLANO.md) | O que seria preciso para ligar o envio — **não implementado** |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Cada variável do `.env` explicada |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | O que fazer quando algo não sobe |
 

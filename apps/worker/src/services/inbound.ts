@@ -31,6 +31,8 @@ import {
   type RegraCategoria,
   type TemplateDisponivel,
   type EfeitoDecisao,
+  avaliarAck,
+  estadoDeStatus,
   type ResultadoClassificacao,
 } from '@prospector/domain';
 import type { MensagemEntrada } from '@prospector/integrations';
@@ -505,5 +507,86 @@ export async function processarMensagemRecebida(
     categoria: classificacao.categoria,
     confianca: classificacao.confianca,
     acao: decisao.acao,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// CONFIRMACAO DE ENTREGA
+// -----------------------------------------------------------------------------
+
+/**
+ * Aplica um `message_ack` vindo do provedor.
+ *
+ * ============================================================
+ * ACKS CHEGAM FORA DE ORDEM E REPETIDOS
+ * ============================================================
+ * Nao e excecao — e o normal. `avaliarAck` decide se a transicao avanca;
+ * um ack de "servidor recebeu" que chega depois do de "lida" e
+ * descartado, senao a mensagem "desleria" e o historico passaria a
+ * mentir.
+ *
+ * NESTA FASE isto quase nunca roda: sem envio real nao ha mensagem
+ * nossa para o WhatsApp confirmar. Existe implementado e testado para
+ * que ligar o envio nao exija escrever esta parte com pressa no dia da
+ * ativacao.
+ */
+export async function processarConfirmacaoEntrega(dados: {
+  providerMessageId: string;
+  ack: number;
+}): Promise<{ aplicado: boolean; motivo: string; estado?: string }> {
+  const mensagem = await prisma.message.findUnique({
+    where: { whatsappMessageId: dados.providerMessageId },
+    select: { id: true, leadId: true, status: true, simulada: true },
+  });
+
+  if (!mensagem) {
+    // Ack de mensagem que nao e nossa (ou que nunca foi gravada).
+    // Silencioso de proposito: o WhatsApp confirma tudo que passa pela
+    // conta, inclusive o que voce mandou do celular na mao.
+    return { aplicado: false, motivo: 'Mensagem não encontrada' };
+  }
+
+  if (mensagem.simulada) {
+    return { aplicado: false, motivo: 'Mensagem simulada não recebe confirmação real' };
+  }
+
+  const veredicto = avaliarAck(estadoDeStatus(mensagem.status), dados.ack);
+  if (!veredicto.aplicar || !veredicto.statusMensagem) {
+    return { aplicado: false, motivo: veredicto.motivo };
+  }
+
+  const agora = new Date();
+  await prisma.message.update({
+    where: { id: mensagem.id },
+    data: {
+      status: veredicto.statusMensagem,
+      ...(veredicto.novoEstado === 'ENTREGUE' ? { entregueEm: agora } : {}),
+      ...(veredicto.novoEstado === 'LIDA' ? { lidaEm: agora } : {}),
+    },
+  });
+
+  await prisma.leadEvent.create({
+    data: {
+      leadId: mensagem.leadId,
+      tipo: veredicto.novoEstado === 'FALHOU' ? 'MENSAGEM_FALHOU' : 'MENSAGEM_ENVIADA',
+      descricao: `Confirmação de entrega: ${veredicto.motivo}`,
+      origem: 'canal',
+      dados: {
+        providerMessageId: dados.providerMessageId,
+        ack: dados.ack,
+        estado: veredicto.novoEstado,
+      } as Prisma.InputJsonValue,
+    },
+  });
+
+  void publicarEvento('mensagem.enviada', {
+    leadId: mensagem.leadId,
+    estado: veredicto.novoEstado,
+  });
+
+  return {
+    aplicado: true,
+    motivo: veredicto.motivo,
+    ...(veredicto.novoEstado ? { estado: veredicto.novoEstado } : {}),
   };
 }

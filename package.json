@@ -27,7 +27,10 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "setup": "pnpm install && pnpm db:generate"
+    "setup": "pnpm install && pnpm db:generate",
+    "health": "pnpm --filter @prospector/worker health",
+    "auditoria": "pnpm --filter @prospector/worker auditoria",
+    "simular": "pnpm --filter @prospector/worker simular"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

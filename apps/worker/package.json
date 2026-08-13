@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "simular": "tsx scripts/simular-recebida.ts"
+    "simular": "tsx scripts/simular-recebida.ts",
+    "health": "tsx scripts/health.ts",
+    "auditoria": "tsx scripts/auditoria.ts"
   },
   "dependencies": {
     "@prospector/config": "workspace:*",

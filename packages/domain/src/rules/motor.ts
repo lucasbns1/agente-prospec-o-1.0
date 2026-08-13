@@ -287,11 +287,20 @@ const PADROES_AUXILIARES: Array<[keyof SinaisAuxiliares, string[]]> = [
     'recebi orcamento', 'estou pesquisando', 'estou vendo precos',
     'estou comparando precos', 'ja tenho fornecedor', 'ja tenho empresa',
   ]],
+  // ATENCAO ao mexer aqui: este sinal derruba a confianca em 40 pontos,
+  // o suficiente para jogar uma categoria de peso 60 abaixo do limiar e
+  // transformar a resposta em DESCONHECIDO.
+  //
+  // Todos os padroes abaixo sao ACUSACOES — a pessoa esta dizendo que o
+  // contato e ilegitimo. "quem e voce" saiu daqui: e uma PERGUNTA, e a
+  // pergunta mais comum que alguem faz ao receber uma mensagem fria.
+  // Tratada como suspeita, ela virava intervencao manual quando na
+  // verdade e o momento exato de o sistema se apresentar.
   ['suspeitaGolpe', [
     'isso e golpe', 'e golpe', 'voces sao quem', 'como conseguiram meu numero',
     'de onde pegaram meu contato', 'quem passou meu numero', 'isso e spam',
     'por que voces tem meu numero', 'como conseguiu meu numero',
-    'quem e voce', 'de onde voce conseguiu',
+    'de onde voce conseguiu',
   ]],
   ['reclamacao', [
     'ja falei que nao', 'voces nao param', 'ja pedi para parar',

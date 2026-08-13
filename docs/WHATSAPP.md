@@ -243,8 +243,49 @@ idempotência.
 
 ---
 
+## Confirmação de entrega (`message_ack`)
+
+Três coisas diferentes que é fácil confundir:
+
+```
+aceito pelo adapter  ≠  entregue  ≠  lido
+```
+
+| Código | Estado | Significa |
+|---|---|---|
+| `-1` | `FALHOU` | O provedor reportou erro |
+| `0` | `PENDENTE` | Ainda não saiu |
+| `1` | `ENVIADA` | O **servidor** do WhatsApp aceitou |
+| `2` | `ENTREGUE` | Chegou no **aparelho** |
+| `3` / `4` | `LIDA` | A pessoa abriu (4 = áudio ouvido) |
+
+Tratar as três como "enviado" faz o painel dizer que você falou com 50
+pessoas quando 12 estão com o celular desligado. **A diferença entre
+ENVIADA e ENTREGUE é a principal pista de que um número está sendo
+bloqueado.**
+
+### Fora de ordem e repetidos
+
+Os acks chegam fora de ordem com frequência — não é exceção, é o normal.
+O estado só **avança**, nunca retrocede: um ack de "servidor recebeu"
+que chega depois do de "lida" é descartado, senão a mensagem "desleria"
+e as métricas de leitura mentiriam junto.
+
+`FALHOU` é a exceção: vence qualquer estado, porque uma mensagem
+entregue que depois falha (o número bloqueou) precisa aparecer como
+falha.
+
+> Nesta fase isto quase nunca roda: sem envio real não há mensagem nossa
+> para o WhatsApp confirmar. Está implementado e testado (20 testes)
+> para que ligar o envio não exija escrever esta parte com pressa no dia
+> da ativação.
+
+---
+
 ## Veja também
 
 - [CONVERSAS.md](CONVERSAS.md) — o que acontece com a mensagem depois
+- [VALIDACAO-6B.md](VALIDACAO-6B.md) — roteiro para validar com WhatsApp real
+- [FASE-7-ENVIO-REAL-PLANO.md](FASE-7-ENVIO-REAL-PLANO.md) — o que falta para enviar
 - [FILA.md](FILA.md) — as barreiras de dry-run no envio
 - [MOTOR-REGRAS.md](MOTOR-REGRAS.md) — como a resposta é interpretada

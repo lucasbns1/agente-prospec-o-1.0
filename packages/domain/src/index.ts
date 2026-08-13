@@ -35,3 +35,4 @@ export * from './template/contracts.js';
 export * from './dashboard/atencao.js';
 // --- Recebimento (Fase 6A) ---
 export * from './inbound/identificar-lead.js';
+export * from './inbound/confirmacao-entrega.js';

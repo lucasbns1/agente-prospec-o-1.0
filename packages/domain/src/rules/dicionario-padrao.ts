@@ -55,6 +55,15 @@ function t(
 // =============================================================================
 const OPT_OUT: TermoPadrao[] = [
   ...t('OPT_OUT', 'opt_out_direto', 100, 'CONTEM',
+    // "nao quero receber" sozinho e opt-out, nao apenas recusa da oferta.
+    //
+    // Sem ele, a frase caia em NEGATIVO ("nao quero", peso 90) e o lead
+    // continuava alcancavel por campanha. O risco inverso — alguem
+    // dizendo "nao quero receber o orcamento por email" e sendo marcado
+    // como opt-out — custa um lead. Subdetectar opt-out custa mandar
+    // mensagem para quem pediu para parar. Os dois erros nao tem o mesmo
+    // peso.
+    'nao quero receber',
     'nao quero receber mais', 'nao quero receber mensagens',
     'nao quero receber mais mensagens', 'nao quero mais mensagens',
     'nao me mande mais', 'nao me mande mensagem', 'nao me mande mais mensagens',

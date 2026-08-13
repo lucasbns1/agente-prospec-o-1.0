@@ -857,3 +857,88 @@ describe('determinismo', () => {
     expect(r.textoNormalizado).toBe('nao quero mais');
   });
 });
+
+/**
+ * Casos que a validacao da Fase 6B exercitou e que estavam errados.
+ *
+ * Os dois eram defeitos de dicionario, nao de motor — mas so apareceram
+ * quando alguem listou as frases que um lead REALMENTE escreve.
+ */
+describe('regressoes encontradas na Fase 6B', () => {
+  /**
+   * "quem e voce" estava na lista de `suspeitaGolpe`, que derruba a
+   * confianca em 40 pontos. DUVIDA (peso 60) caia para 20, abaixo do
+   * limiar de 30, e a resposta virava DESCONHECIDO -> intervencao
+   * manual.
+   *
+   * E a pergunta mais comum ao receber uma mensagem fria, e o momento
+   * exato de o sistema se apresentar — nao de acordar um humano.
+   */
+  it('"quem é você?" é DUVIDA, não suspeita de golpe', () => {
+    const r = classificar('quem é você?');
+    expect(r.categoria).toBe('DUVIDA');
+    expect(r.subtipo).toBe('identificacao');
+    expect(r.sinais.suspeitaGolpe).toBe(false);
+  });
+
+  it('acusações de verdade continuam derrubando a confiança', () => {
+    for (const frase of [
+      'isso é golpe',
+      'como conseguiram meu numero',
+      'isso e spam',
+    ]) {
+      const r = classificar(frase);
+      expect(r.sinais.suspeitaGolpe).toBe(true);
+      // Acusacao vira intervencao humana, nao resposta automatica.
+      expect(r.categoria).toBe('DESCONHECIDO');
+    }
+  });
+
+  /**
+   * "nao quero receber" caia em NEGATIVO (por causa de "nao quero",
+   * peso 90) e o lead continuava alcancavel por campanha. So as
+   * variantes mais longas eram opt-out.
+   *
+   * Subdetectar opt-out significa continuar mandando mensagem para quem
+   * pediu para parar — o erro mais caro do sistema.
+   */
+  it('"não quero receber" é OPT_OUT, não apenas recusa da oferta', () => {
+    const r = classificar('não quero receber');
+    expect(r.categoria).toBe('OPT_OUT');
+    expect(r.confianca).toBe(100);
+  });
+
+  it('"não quero" sozinho continua NEGATIVO — recusar a oferta não é opt-out', () => {
+    // A distincao importa: quem recusa a proposta pode voltar depois;
+    // quem pede para parar de receber, nao.
+    const r = classificar('não quero');
+    expect(r.categoria).toBe('NEGATIVO');
+  });
+
+  /**
+   * EFEITO COLATERAL ACEITO, documentado de proposito.
+   *
+   * "nao quero receber o orcamento por email" vira OPT_OUT. Custa um
+   * lead. O erro inverso custa mandar mensagem para quem pediu para
+   * parar — e os dois nao tem o mesmo peso.
+   */
+  it('o falso positivo conhecido do opt-out está coberto', () => {
+    const r = classificar('nao quero receber o orcamento por email');
+    expect(r.categoria).toBe('OPT_OUT');
+  });
+
+  it('as cinco frases do roteiro de validação classificam como esperado', () => {
+    const esperado: Array<[string, string]> = [
+      ['sim', 'POSITIVO'],
+      ['pode mandar', 'POSITIVO'],
+      ['quanto custa?', 'PRECO'],
+      ['não quero receber', 'OPT_OUT'],
+      ['quem é você?', 'DUVIDA'],
+    ];
+
+    for (const [frase, categoria] of esperado) {
+      expect(classificar(frase).categoria, frase).toBe(categoria);
+    }
+  });
+});
+
