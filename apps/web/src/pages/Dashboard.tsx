@@ -4,16 +4,27 @@
  * A ordem da pagina e uma decisao de produto, nao estetica: primeiro o
  * que exige acao sua, depois os numeros. Um lead quente esperando
  * resposta vale mais que qualquer grafico.
- *
- * FASE 1: os cards ja leem do banco (que esta vazio, entao mostram 0) e a
- * secao de atencao vem vazia. As agregacoes reais entram na Fase 9.
  */
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Flame, Inbox, TriangleAlert } from 'lucide-react';
+import { Flame, Inbox, TriangleAlert, Rocket } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { get } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui/primitives';
-import { formatarNumero } from '@/lib/utils';
+import {
+  Card, CardContent, CardHeader, CardTitle, Badge, Button,
+  variantePorTemperatura,
+} from '@/components/ui/primitives';
+import { formatarNumero, formatarDataHora } from '@/lib/utils';
+import { LeadDetalhe } from '@/components/LeadDetalhe';
 import type { DashboardResponse } from '@prospector/shared';
+
+/** Cor do motivo. Os quatro primeiros são os que doem. */
+function varianteMotivo(motivo: string): 'alerta' | 'quente' | 'morno' | 'info' {
+  if (motivo === 'INTERVENCAO_NECESSARIA') return 'alerta';
+  if (motivo === 'LEAD_QUENTE') return 'quente';
+  if (motivo === 'PEDIDO_PREVIEW' || motivo === 'PEDIDO_PRECO') return 'morno';
+  return 'info';
+}
 
 interface CartaoMetrica {
   chave: keyof DashboardResponse['metricas'];
@@ -54,6 +65,8 @@ const COR_DESTAQUE: Record<string, string> = {
 };
 
 export function Dashboard() {
+  const [leadAberto, setLeadAberto] = useState<string | null>(null);
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => get<DashboardResponse>('/api/dashboard'),
@@ -109,7 +122,43 @@ export function Dashboard() {
             <ul className="divide-y divide-[var(--color-borda)]">
               {atencao.map((item) => (
                 <li key={item.leadId} className="py-3">
-                  {item.nome} — {item.acaoNecessaria}
+                  <button
+                    type="button"
+                    className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
+                    onClick={() => setLeadAberto(item.leadId)}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">
+                          {item.nome ?? 'Lead sem nome'}
+                        </span>
+                        <Badge variant={variantePorTemperatura(item.temperatura)}>
+                          {item.temperatura.toLowerCase()}
+                        </Badge>
+                        {item.totalMotivos > 1 && (
+                          <Badge variant="neutro">
+                            +{item.totalMotivos - 1} motivo(s)
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-[var(--color-texto-suave)]">
+                        {[item.categoria, item.bairro, item.cidade]
+                          .filter(Boolean)
+                          .join(' · ') || 'sem localização'}
+                        {' · espera desde '}
+                        {formatarDataHora(item.em)}
+                      </p>
+                      {item.ultimaMensagem && (
+                        <p className="mt-1 truncate text-xs text-[var(--color-texto-fraco)]">
+                          {item.ultimaMensagem}
+                        </p>
+                      )}
+                    </div>
+
+                    <Badge variant={varianteMotivo(item.motivo)}>
+                      {item.acaoNecessaria}
+                    </Badge>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -142,6 +191,43 @@ export function Dashboard() {
           ))}
         </div>
       </section>
+
+      {/* ---- Campanha ativa ---- */}
+      {data?.campanhaAtiva && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Rocket className="h-4 w-4" aria-hidden="true" />
+              {data.campanhaAtiva.nome}
+            </CardTitle>
+            <Button variant="secundario" size="sm" asChild>
+              <Link to={`/campanhas/${data.campanhaAtiva.id}`}>Abrir</Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { rotulo: 'Na fila', valor: data.campanhaAtiva.totalLeads },
+                {
+                  rotulo: `Enviadas hoje (de ${data.campanhaAtiva.limiteDiario})`,
+                  valor: data.campanhaAtiva.enviadasHoje,
+                },
+                { rotulo: 'Respostas', valor: data.campanhaAtiva.respostas },
+                { rotulo: 'Quentes', valor: data.campanhaAtiva.quentes },
+              ].map((c) => (
+                <div key={c.rotulo} className="rounded-lg bg-[var(--color-fundo)] px-3 py-2">
+                  <p className="num text-lg font-semibold">
+                    {formatarNumero(c.valor)}
+                  </p>
+                  <p className="text-[11px] text-[var(--color-texto-suave)]">
+                    {c.rotulo}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ---- Funil ---- */}
       <Card>
@@ -180,11 +266,16 @@ export function Dashboard() {
           aria-hidden="true"
         />
         <span>
-          <strong>Fase 2.</strong> Importação e CRM funcionando; todos os números
-          vêm do banco. Campanhas, motor de regras e envio entram nas fases
-          seguintes — nenhuma mensagem é enviada ainda.
+          <strong>Fase 5.</strong> Importação, CRM, campanhas, fila, tarefas e
+          intervenção manual funcionando; todos os números vêm do banco. A
+          integração com o WhatsApp entra na fase seguinte — nenhuma mensagem
+          é enviada ainda.
         </span>
       </div>
+
+      {leadAberto && (
+        <LeadDetalhe leadId={leadAberto} onFechar={() => setLeadAberto(null)} />
+      )}
     </div>
   );
 }

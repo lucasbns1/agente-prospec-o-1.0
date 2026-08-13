@@ -11,6 +11,7 @@ import { X, ExternalLink, Star, MapPin, Phone, Globe, Clock } from 'lucide-react
 import { get } from '@/lib/api';
 import { Badge, Button, variantePorTemperatura } from '@/components/ui/primitives';
 import { formatarDataHora } from '@/lib/utils';
+import { AcoesLead } from '@/components/AcoesLead';
 
 interface Evento {
   id: string;
@@ -276,6 +277,10 @@ export function LeadDetalhe({
                 <Campo rotulo="Observações" valor={lead.observacoes} />
               </dl>
             </section>
+
+            {/* Ações — vêm antes do histórico: o histórico explica o
+                passado, as ações destravam o presente. */}
+            <AcoesLead lead={lead} />
 
             {/* Histórico */}
             <section>

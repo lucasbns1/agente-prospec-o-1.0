@@ -9,6 +9,8 @@ import { Leads } from '@/pages/Leads';
 import { Importar } from '@/pages/Importar';
 import { Campanhas } from '@/pages/Campanhas';
 import { CampanhaDetalhe } from '@/pages/CampanhaDetalhe';
+import { Tarefas } from '@/pages/Tarefas';
+import { Notificacoes } from '@/pages/Notificacoes';
 import { useUsuario } from '@/hooks/useAuth';
 import { useEvents } from '@/hooks/useEvents';
 
@@ -52,26 +54,8 @@ function AppAutenticado({
                 />
                 <Route path="/campanhas" element={<Campanhas />} />
                 <Route path="/campanhas/:id" element={<CampanhaDetalhe />} />
-                <Route
-                  path="/tarefas"
-                  element={
-                    <EmBreve
-                      titulo="Tarefas"
-                      fase="Fase 6"
-                      descricao="O que precisa da sua ação, priorizado."
-                    />
-                  }
-                />
-                <Route
-                  path="/notificacoes"
-                  element={
-                    <EmBreve
-                      titulo="Notificações"
-                      fase="Fase 6"
-                      descricao="Alertas de leads quentes e intervenções necessárias."
-                    />
-                  }
-                />
+                <Route path="/tarefas" element={<Tarefas />} />
+                <Route path="/notificacoes" element={<Notificacoes />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route
                   path="*"

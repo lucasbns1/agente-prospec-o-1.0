@@ -1,13 +1,13 @@
 /**
  * GET /api/dashboard
  *
- * FASE 1: o contrato de resposta ja e o definitivo, mas as metricas sao
- * calculadas a partir de um banco que ainda esta vazio — entao vem tudo
- * zerado. As agregacoes reais e a secao "PRECISA DA SUA ATENCAO" com
- * dados de verdade entram na Fase 9.
+ * A ordem da resposta espelha a ordem da tela, e ela e uma decisao de
+ * produto: primeiro o que exige acao sua, depois os numeros.
  *
- * As contagens abaixo ja consultam o banco (nao sao numeros fixos): assim
- * que a Fase 2 comecar a criar leads, os cards passam a se mover sozinhos.
+ * As agregacoes de "precisa da sua atencao" e o resumo da campanha ativa
+ * vivem em `dashboard-service`. Ate a Fase 4 essa secao era um array
+ * vazio fixo e o card da campanha mostrava quatro zeros — existiam, mas
+ * mentiam.
  */
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '@prospector/database';
@@ -17,6 +17,7 @@ import {
   type DashboardResponse,
 } from '@prospector/shared';
 import { exigirAutenticacao } from '../plugins/auth.js';
+import { montarAtencao, resumoCampanhaAtiva } from '../services/dashboard-service.js';
 
 export async function rotasDashboard(app: FastifyInstance): Promise<void> {
   app.get(
@@ -83,11 +84,10 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
         prisma.lead.count({ where: { createdAt: { gte: inicioDoDia } } }),
       ]);
 
-      // Campanha ativa: na Fase 1 ainda nao existe nenhuma.
-      const campanha = await prisma.campaign.findFirst({
-        where: { status: 'ATIVA' },
-        orderBy: { iniciadaEm: 'desc' },
-      });
+      const [atencao, campanhaAtiva] = await Promise.all([
+        montarAtencao(),
+        resumoCampanhaAtiva(),
+      ]);
 
       return {
         metricas: {
@@ -113,21 +113,8 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
           agendados,
           leadsHoje,
         },
-        campanhaAtiva: campanha
-          ? {
-              id: campanha.id,
-              nome: campanha.nome,
-              nicho: campanha.nicho,
-              cidade: campanha.cidade,
-              totalLeads: 0,
-              enviadasHoje: 0,
-              respostas: 0,
-              quentes: 0,
-              limiteDiario: campanha.limiteDiarioEnvios,
-            }
-          : null,
-        // Populada na Fase 9, quando existirem leads e conversas.
-        atencao: [],
+        campanhaAtiva,
+        atencao,
         funil: [
           { rotulo: 'Capturados', total: totalLeads },
           { rotulo: 'Sem site', total: semSite },
@@ -138,7 +125,8 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
           { rotulo: 'Clientes', total: clientes },
         ],
         whatsapp: {
-          // Fase 1: sempre desconectado — o adapter real chega na Fase 8.
+          // Sempre desconectado ate a fase de integracao: o adapter real
+          // com whatsapp-web.js ainda nao existe.
           status: 'DESCONECTADO',
           modo:
             process.env.WHATSAPP_MODE?.trim().toLowerCase() === 'live'

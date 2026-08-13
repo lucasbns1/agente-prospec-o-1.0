@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Bell, LogOut, FlaskConical } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { get } from '@/lib/api';
+import { Link } from 'react-router-dom';
+import { Bell, LogOut, FlaskConical, CheckCheck } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { get, post } from '@/lib/api';
 import { Button, Badge } from '@/components/ui/primitives';
 import { useLogout, type Usuario } from '@/hooks/useAuth';
 import type { StatusConexaoSSE } from '@/hooks/useEvents';
@@ -56,6 +57,7 @@ interface Notificacao {
  */
 function SinoNotificacoes() {
   const [aberto, setAberto] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data } = useQuery({
     queryKey: ['notificacoes'],
@@ -63,6 +65,21 @@ function SinoNotificacoes() {
       get<{ notificacoes: Notificacao[]; naoLidas: number }>(
         '/api/notifications?limite=20'
       ),
+  });
+
+  const invalidar = (): void => {
+    void queryClient.invalidateQueries({ queryKey: ['notificacoes'] });
+    void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  };
+
+  const marcarLida = useMutation({
+    mutationFn: (id: string) => post(`/api/notifications/${id}/read`),
+    onSuccess: invalidar,
+  });
+
+  const marcarTodas = useMutation({
+    mutationFn: () => post('/api/notifications/read-all'),
+    onSuccess: invalidar,
   });
 
   const naoLidas = data?.naoLidas ?? 0;
@@ -88,8 +105,19 @@ function SinoNotificacoes() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setAberto(false)} />
           <div className="absolute right-0 top-10 z-50 w-80 overflow-hidden rounded-xl border border-[var(--color-borda)] bg-white shadow-lg">
-            <div className="border-b border-[var(--color-borda)] px-4 py-2.5 text-sm font-medium">
+            <div className="flex items-center justify-between border-b border-[var(--color-borda)] px-4 py-2 text-sm font-medium">
               Notificações
+              {naoLidas > 0 && (
+                <Button
+                  variant="fantasma"
+                  size="sm"
+                  aria-label="Marcar todas como lidas"
+                  disabled={marcarTodas.isPending}
+                  onClick={() => marcarTodas.mutate()}
+                >
+                  <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              )}
             </div>
             <div className="max-h-96 overflow-y-auto">
               {(data?.notificacoes.length ?? 0) === 0 ? (
@@ -103,15 +131,32 @@ function SinoNotificacoes() {
                       key={n.id}
                       className={`px-4 py-2.5 ${n.lida ? 'opacity-60' : ''}`}
                     >
-                      <div className="text-sm font-medium">{n.titulo}</div>
-                      <div className="text-xs text-[var(--color-texto-suave)]">
-                        {n.mensagem}
-                      </div>
+                      {/* Clicar marca como lida. Antes o sino so exibia:
+                          o contador nunca zerava e a lista virava um mural
+                          que ninguem conseguia limpar. */}
+                      <button
+                        type="button"
+                        className="w-full text-left"
+                        disabled={n.lida || marcarLida.isPending}
+                        onClick={() => marcarLida.mutate(n.id)}
+                      >
+                        <div className="text-sm font-medium">{n.titulo}</div>
+                        <div className="text-xs text-[var(--color-texto-suave)]">
+                          {n.mensagem}
+                        </div>
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
+            <Link
+              to="/notificacoes"
+              onClick={() => setAberto(false)}
+              className="block border-t border-[var(--color-borda)] px-4 py-2.5 text-center text-xs text-[var(--color-texto-suave)] hover:bg-[var(--color-fundo)] hover:text-[var(--color-texto)]"
+            >
+              Ver todas
+            </Link>
           </div>
         </>
       )}

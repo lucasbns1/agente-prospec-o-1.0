@@ -92,11 +92,18 @@ export interface ItemAtencao {
   temperatura: string;
   status: string;
   motivo: MotivoAtencao;
-  /** O que o usuario precisa fazer. Ex: "CRIAR PREVIEW" */
+  /** O que o usuario precisa fazer. Ex: "Criar o preview" */
   acaoNecessaria: string;
   ultimaMensagem: string | null;
   etapaAtual: string | null;
   em: string;
+  /**
+   * Quantos motivos este lead acumula.
+   *
+   * Ele aparece UMA vez, com o motivo mais urgente. Este contador evita
+   * que os outros motivos sumam sem deixar rastro.
+   */
+  totalMotivos: number;
 }
 
 export interface FunilEtapa {
