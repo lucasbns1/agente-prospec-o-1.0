@@ -1,17 +1,25 @@
 /**
  * @prospector/domain — regras de negocio puras.
  *
- * REGRA ARQUITETURAL: este package nao faz I/O. Nao importa Prisma, nao
- * importa Fastify, nao importa whatsapp-web.js, nao le arquivo, nao acessa
- * rede. Recebe dados, devolve dados. E isso que permite testar todo o
- * comportamento de campanha no Vitest sem banco e sem telefone conectado.
+ * REGRA ARQUITETURAL: este package nao faz I/O de rede nem de banco. Nao
+ * importa Prisma, nao importa Fastify, nao importa whatsapp-web.js.
+ * Recebe dados, devolve dados. E isso que permite testar todo o
+ * comportamento de importacao e campanha no Vitest sem banco.
  *
- * ESTADO NA FASE 1: apenas contratos (tipos e assinaturas) e o utilitario
- * de delay. As implementacoes entram nas fases indicadas em cada arquivo.
+ * IMPLEMENTADO (Fase 2): normalizacao, classificacao de website, dedupe.
+ * CONTRATOS (Fases 4-7): motor de regras, templates, avanco de campanha.
  */
 
 export * from './delay.js';
-export * from './normalization/contracts.js';
+
+// --- Normalizacao (Fase 2) ---
+export * from './normalization/texto.js';
+export * from './normalization/telefone.js';
+export * from './normalization/website.js';
+export * from './normalization/dedupe.js';
+export * from './normalization/lead.js';
+
+// --- Contratos das proximas fases ---
 export * from './rules/contracts.js';
 export * from './campaign/contracts.js';
 export * from './template/contracts.js';
