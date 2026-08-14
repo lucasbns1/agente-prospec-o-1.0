@@ -26,6 +26,26 @@ import type { ProvedorWhatsApp, MensagemProvedor } from './provedor.js';
 import { BarramentoCanal, type MensagemEntrada, type EventoCanal } from './eventos-canal.js';
 import { avaliarGuardaEnvio, FASE_PERMITE_ENVIO_REAL } from './guarda-envio.js';
 
+/**
+ * Tipos que o WhatsApp usa para eventos internos, nao para conversa.
+ *
+ * Lista FECHADA de propósito: filtrar por "tudo que nao for `chat`"
+ * descartaria audio, imagem e documento — que sao respostas de verdade.
+ * Um tipo novo e desconhecido passa e vira mensagem, que e o erro barato:
+ * aparece na tela para voce decidir, em vez de sumir.
+ */
+const TIPOS_DE_SISTEMA = new Set([
+  'e2e_notification',
+  'notification',
+  'notification_template',
+  'gp2',
+  'protocol',
+  'ciphertext',
+  'revoked',
+  'call_log',
+  'broadcast_notification',
+]);
+
 export interface OpcoesWhatsAppWebAdapter {
   provedor: ProvedorWhatsApp;
   modo: WhatsAppMode;
@@ -172,7 +192,26 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
 
       // O eco do proprio envio nao e uma resposta do lead. Processar
       // como entrada faria o sistema classificar as proprias mensagens.
-      if (m.fromMe) return;
+      //
+      // Descartar em SILENCIO era uma armadilha: quem testa mandando
+      // mensagem do proprio numero conectado ve "nada acontece" e conclui
+      // que o canal esta quebrado. O log transforma esse minuto de
+      // confusao numa linha que explica.
+      if (m.fromMe) {
+        this.log('Mensagem ignorada: enviada pelo proprio numero conectado');
+        return;
+      }
+
+      // Eventos internos do WhatsApp — troca de chave, aviso de grupo,
+      // registro de chamada. Nao sao alguem falando com voce.
+      //
+      // Um destes criou um "contato desconhecido" com texto vazio na
+      // validacao real: um fantasma na tela, pedindo uma decisao sobre
+      // uma mensagem que nunca existiu.
+      if (TIPOS_DE_SISTEMA.has(m.type)) {
+        this.log('Evento de sistema ignorado', { tipo: m.type });
+        return;
+      }
 
       const entrada: MensagemEntrada = {
         providerMessageId: m.id,

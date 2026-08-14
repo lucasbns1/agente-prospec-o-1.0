@@ -31,7 +31,11 @@ import { BarramentoCanal } from '../packages/integrations/src/whatsapp/eventos-c
 import type { EventoCanal } from '../packages/integrations/src/whatsapp/eventos-canal.js';
 
 /** Adapter + provedor prontos, sem esperar de verdade na reconexão. */
-function montar(opcoes: ConstructorParameters<typeof ProvedorSimulado>[0] = {}) {
+function montar(
+  opcoes: ConstructorParameters<typeof ProvedorSimulado>[0] = {},
+  /** Captura o que o adapter registra — alguns testes olham o log. */
+  logger?: (mensagem: string, dados?: Record<string, unknown>) => void
+) {
   const provedor = new ProvedorSimulado(opcoes);
   const eventos: EventoCanal[] = [];
   const adapter = new WhatsAppWebAdapter({
@@ -39,6 +43,7 @@ function montar(opcoes: ConstructorParameters<typeof ProvedorSimulado>[0] = {}) 
     modo: 'dry-run',
     aguardar: async () => {},
     maxTentativasReconexao: 2,
+    ...(logger ? { logger } : {}),
   });
   adapter.ouvirCanal((e) => {
     eventos.push(e);
@@ -195,6 +200,61 @@ describe('recebimento no adapter', () => {
     // Processar o próprio envio como entrada faria o sistema classificar
     // as mensagens que ele mesmo escreveu.
     expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(false);
+  });
+
+  // ---- Ruído que não é conversa (achado na validação real) ----
+
+  it('ignora o eco do próprio número e diz isso no log', async () => {
+    const linhas: string[] = [];
+    const { adapter, provedor, eventos } = montar({}, (m) => linhas.push(m));
+    await adapter.connect();
+
+    provedor.receber({ from: '5519999991111@c.us', body: 'oi', fromMe: true });
+
+    expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(false);
+    // Descartar em silêncio fazia quem testava com o próprio número
+    // concluir que o canal estava quebrado.
+    expect(linhas.some((l) => l.includes('proprio numero conectado'))).toBe(true);
+  });
+
+  it('eventos de sistema não viram mensagem', async () => {
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    // Um destes criou um "contato desconhecido" com texto vazio na
+    // validação real — um fantasma pedindo decisão sobre nada.
+    for (const tipo of ['e2e_notification', 'gp2', 'call_log', 'protocol']) {
+      provedor.receber({ from: '5519999991111@c.us', body: '', type: tipo });
+    }
+
+    expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(false);
+  });
+
+  it('mas áudio, imagem e documento continuam passando', async () => {
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    // Filtrar por "tudo que não for chat" descartaria respostas reais.
+    for (const tipo of ['ptt', 'image', 'document', 'sticker']) {
+      provedor.receber({ from: '5519999991111@c.us', body: '', type: tipo });
+    }
+
+    const recebidas = eventos.filter((e) => e.tipo === 'canal.mensagem_recebida');
+    expect(recebidas).toHaveLength(4);
+  });
+
+  it('tipo desconhecido passa em vez de sumir', async () => {
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    provedor.receber({
+      from: '5519999991111@c.us',
+      body: 'algo novo',
+      type: 'tipo_que_ainda_nao_existe',
+    });
+
+    // O erro barato é deixar aparecer na tela para você decidir.
+    expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(true);
   });
 
   // ---- Conversas LID (defeito achado na validação com WhatsApp real) ----
