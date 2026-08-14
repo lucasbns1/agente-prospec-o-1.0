@@ -556,6 +556,60 @@ export async function enfileirarCampanha(
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
+        // --- Ja existe uma mensagem para este lead nesta etapa ---
+        //
+        // "Ja existe" nao quer dizer "nao ha o que fazer". Pausar uma
+        // campanha CANCELA a fila (e certo: pausa que nao para nada seria
+        // enfeite), e uma mensagem bloqueada por telefone ausente pode
+        // ter sido corrigida desde entao.
+        //
+        // Sem reviver, uma campanha pausada nunca mais voltava a rodar:
+        // reenfileirar batia na chave de idempotencia e respondia "ja
+        // existiam" para tudo. Nao havia saida pela interface.
+        //
+        // O UPDATE e CONDICIONAL nos status que ainda nao sairam. Reviver
+        // uma ENVIADA ou SIMULADA seria mandar de novo para quem ja
+        // recebeu — o unico erro que este arquivo inteiro existe para
+        // evitar. O banco garante isso no `where`, nao a aplicacao.
+        const revividas = await prisma.outboundMessage.updateMany({
+          where: {
+            idempotencyKey,
+            status: { in: ['CANCELADA', 'BLOQUEADA'] },
+          },
+          data: {
+            status: motivoBloqueio ? 'BLOQUEADA' : 'AGENDADA',
+            motivoBloqueio,
+            detalheBloqueio: detalhe,
+            telefoneDestino: lead.telefoneNormalizado,
+            // Recalculados agora: o texto pode ter mudado e o horario
+            // antigo ja passou.
+            textoRenderizado,
+            textoTemplate: template,
+            variaveisUsadas: variaveis as Prisma.InputJsonValue,
+            scheduledAt,
+            erro: null,
+            processedAt: null,
+            tentativas: 0,
+          },
+        });
+
+        if (revividas.count > 0) {
+          if (motivoBloqueio) {
+            resultado.bloqueadas++;
+            resultado.detalhes.push({
+              leadId: lead.id, empresa: lead.empresa ?? lead.nomeCompleto,
+              resultado: 'BLOQUEADA', motivo: detalhe,
+            });
+          } else {
+            resultado.criadas++;
+            resultado.detalhes.push({
+              leadId: lead.id, empresa: lead.empresa ?? lead.nomeCompleto,
+              resultado: 'CRIADA', motivo: 'Reenfileirada apos cancelamento',
+            });
+          }
+          continue;
+        }
+
         resultado.jaExistiam++;
         resultado.detalhes.push({
           leadId: lead.id, empresa: lead.empresa ?? lead.nomeCompleto,

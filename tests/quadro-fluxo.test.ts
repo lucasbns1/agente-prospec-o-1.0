@@ -301,3 +301,78 @@ describe('excluir campanha', () => {
     expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
   });
 });
+
+describe('reenfileirar depois de pausar', () => {
+  it('revive as mensagens canceladas', async () => {
+    await criarLead();
+    const campanha = await criarCampanha(1);
+    await servico.enfileirarCampanha(campanha.id);
+
+    // Pausar cancela a fila — comportamento correto.
+    await prisma.outboundMessage.updateMany({
+      where: { campaignId: campanha.id },
+      data: { status: 'CANCELADA', erro: 'Campanha pausada' },
+    });
+
+    // Sem a revivificação, isto batia na chave de idempotência e
+    // respondia "já existiam" para tudo: a campanha pausada nunca mais
+    // voltava a rodar, e não havia saída pela interface.
+    const r = await servico.enfileirarCampanha(campanha.id);
+
+    expect(r.criadas).toBe(1);
+    expect(r.jaExistiam).toBe(0);
+
+    const m = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(m.status).toBe('AGENDADA');
+    // O erro antigo não pode sobreviver: ele descreve um estado que
+    // deixou de valer.
+    expect(m.erro).toBeNull();
+    expect(m.tentativas).toBe(0);
+  });
+
+  it('NUNCA revive uma mensagem já enviada ou simulada', async () => {
+    await criarLead();
+    const campanha = await criarCampanha(1);
+    await servico.enfileirarCampanha(campanha.id);
+
+    await prisma.outboundMessage.updateMany({
+      where: { campaignId: campanha.id },
+      data: { status: 'SIMULADA', processedAt: new Date() },
+    });
+
+    const r = await servico.enfileirarCampanha(campanha.id);
+
+    // Reviver aqui seria mandar de novo para quem já recebeu — o único
+    // erro que o enfileiramento inteiro existe para evitar.
+    expect(r.criadas).toBe(0);
+    expect(r.jaExistiam).toBe(1);
+
+    const m = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(m.status).toBe('SIMULADA');
+  });
+
+  it('revive também o que estava BLOQUEADA', async () => {
+    // Bloqueio por telefone ausente pode ter sido corrigido desde então.
+    await criarLead();
+    const campanha = await criarCampanha(1);
+    await servico.enfileirarCampanha(campanha.id);
+
+    await prisma.outboundMessage.updateMany({
+      where: { campaignId: campanha.id },
+      data: { status: 'BLOQUEADA', motivoBloqueio: 'LEAD_SEM_TELEFONE' },
+    });
+
+    const r = await servico.enfileirarCampanha(campanha.id);
+    expect(r.criadas).toBe(1);
+
+    const m = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(m.status).toBe('AGENDADA');
+    expect(m.motivoBloqueio).toBeNull();
+  });
+});
