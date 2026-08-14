@@ -396,6 +396,21 @@ function EditorEtapas({ campanha }: { campanha: Campanha }) {
 function Previa({ campanha }: { campanha: Campanha }) {
   const queryClient = useQueryClient();
   const [leadAberto, setLeadAberto] = useState<string | null>(null);
+  /**
+   * Leads escolhidos a mao. Vazio = enfileira todos os prontos.
+   *
+   * Existe para o primeiro envio real: voce quer escolher QUEM recebe,
+   * nao aceitar os que a ordenacao entregou primeiro.
+   */
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+
+  const alternar = (leadId: string): void =>
+    setSelecionados((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(leadId)) novo.delete(leadId);
+      else novo.add(leadId);
+      return novo;
+    });
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['campanha-previa', campanha.id],
@@ -405,7 +420,8 @@ function Previa({ campanha }: { campanha: Campanha }) {
   const enfileirar = useMutation({
     mutationFn: () =>
       post<{ criadas: number; jaExistiam: number; bloqueadas: number }>(
-        `/api/campaigns/${campanha.id}/enfileirar`
+        `/api/campaigns/${campanha.id}/enfileirar`,
+        selecionados.size > 0 ? { leadIds: [...selecionados] } : undefined
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['campanha-fila', campanha.id] });
@@ -500,12 +516,18 @@ function Previa({ campanha }: { campanha: Campanha }) {
             dizer isso aqui do que deixar o clique falhar com 422. */}
         <Button
           onClick={() => enfileirar.mutate()}
-          disabled={enfileirar.isPending || campanha.status !== 'ATIVA' || r.prontos === 0}
+          disabled={
+            enfileirar.isPending ||
+            campanha.status !== 'ATIVA' ||
+            (selecionados.size === 0 && r.prontos === 0)
+          }
         >
           {enfileirar.isPending && (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           )}
-          Enfileirar {formatarNumero(r.prontos)} mensagens (dry-run)
+          {selecionados.size > 0
+            ? `Enfileirar ${selecionados.size} selecionado${selecionados.size === 1 ? '' : 's'} (dry-run)`
+            : `Enfileirar ${formatarNumero(r.prontos)} mensagens (dry-run)`}
         </Button>
         {campanha.status !== 'ATIVA' && (
           <span className="text-sm text-[var(--color-texto-suave)]">
@@ -527,11 +549,37 @@ function Previa({ campanha }: { campanha: Campanha }) {
         )}
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-[var(--color-texto-suave)]">
+          {selecionados.size === 0
+            ? 'Nenhum lead marcado — enfileira todos os prontos.'
+            : `${selecionados.size} de ${data.linhas.length} marcados.`}
+        </span>
+        {selecionados.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelecionados(new Set())}
+            className="underline underline-offset-2 hover:text-[var(--color-texto)]"
+          >
+            limpar seleção
+          </button>
+        )}
+      </div>
+
       <Card>
         <CardContent className="p-0">
           <ul className="divide-y divide-[var(--color-borda)]">
             {data.linhas.map((l) => (
-              <li key={l.leadId} className="px-5 py-4">
+              <li key={l.leadId} className="flex gap-3 px-5 py-4">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 shrink-0"
+                  aria-label={`Selecionar ${l.empresa ?? 'lead'}`}
+                  checked={selecionados.has(l.leadId)}
+                  onChange={() => alternar(l.leadId)}
+                />
+
+                <div className="min-w-0 flex-1">
                 <button
                   type="button"
                   className="flex w-full items-start justify-between gap-3 text-left"
@@ -579,6 +627,7 @@ function Previa({ campanha }: { campanha: Campanha }) {
                     </Link>
                   </p>
                 )}
+                </div>
               </li>
             ))}
           </ul>

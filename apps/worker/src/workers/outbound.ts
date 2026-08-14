@@ -217,12 +217,40 @@ export function criarWorkerOutbound(
           'SIMULACAO — mensagem seria enviada'
         );
       } else {
-        // Caminho ainda nao habilitado. Falhar alto e melhor do que
-        // simular em silencio: o usuario acharia que enviou.
-        throw new Error(
-          'Envio real ainda nao esta habilitado. A integracao com whatsapp-web.js ' +
-            'entra em uma fase posterior, com autorizacao explicita.'
+        // --- Caminho de envio real ---
+        //
+        // A MESMA chamada do dry-run. Quem decide se sai de verdade e o
+        // adapter, que consulta `FASE_PERMITE_ENVIO_REAL` e o modo global
+        // por conta propria.
+        //
+        // Isso e de proposito: se o worker decidisse sozinho, existiriam
+        // dois lugares dizendo "pode enviar" — e bastaria um deles estar
+        // errado. Aqui a decisao final e sempre do mesmo codigo.
+        resultadoEnvio = await adapter.sendMessage(
+          m.telefoneDestino!,
+          m.textoRenderizado!
         );
+
+        if (resultadoEnvio.simulado) {
+          // O worker achou que era envio real, o adapter simulou. Uma
+          // barreira que o worker nao enxerga esta levantada — a trava de
+          // fase, tipicamente. Registrar como SIMULADA e a verdade.
+          log.warn(
+            { outboundMessageId, campanha: m.campaign.nome },
+            'Envio real pedido, mas a guarda simulou — trava de fase ainda fechada'
+          );
+        } else {
+          log.info(
+            {
+              outboundMessageId,
+              lead: m.lead.nomeCompleto,
+              campanha: m.campaign.nome,
+              etapa: m.campaignStep.ordem,
+              whatsappMessageId: resultadoEnvio.whatsappMessageId,
+            },
+            'MENSAGEM REAL ENVIADA'
+          );
+        }
       }
 
       const mensagem = await prisma.message.create({

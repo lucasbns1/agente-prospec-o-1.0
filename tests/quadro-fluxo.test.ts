@@ -376,3 +376,66 @@ describe('reenfileirar depois de pausar', () => {
     expect(m.motivoBloqueio).toBeNull();
   });
 });
+
+describe('enfileirar apenas os leads escolhidos', () => {
+  it('enfileira só os selecionados', async () => {
+    const a = await criarLead();
+    const b = await criarLead();
+    await criarLead();
+    const campanha = await criarCampanha(1);
+
+    const r = await servico.enfileirarCampanha(campanha.id, {
+      leadIds: [a.id, b.id],
+    });
+
+    expect(r.criadas).toBe(2);
+    expect(await prisma.outboundMessage.count()).toBe(2);
+
+    const ids = (
+      await prisma.outboundMessage.findMany({ select: { leadId: true } })
+    ).map((m) => m.leadId);
+    expect(ids.sort()).toEqual([a.id, b.id].sort());
+  });
+
+  it('a seleção NÃO contorna os filtros da campanha', async () => {
+    // Escolher um lead em opt-out à mão não pode liberá-lo. A seleção
+    // restringe o público; nunca amplia.
+    const optOut = await criarLead({ optOut: true, optOutEm: new Date() });
+    const campanha = await criarCampanha(1);
+
+    const r = await servico.enfileirarCampanha(campanha.id, {
+      leadIds: [optOut.id],
+    });
+
+    const enviaveis = await prisma.outboundMessage.count({
+      where: { status: 'AGENDADA' },
+    });
+    expect(enviaveis).toBe(0);
+    expect(r.criadas).toBe(0);
+  });
+
+  it('com seleção, o limite da campanha não corta', async () => {
+    const leads = [await criarLead(), await criarLead(), await criarLead()];
+    const campanha = await criarCampanha(1);
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { maxLeads: 1 },
+    });
+
+    // Você já disse exatamente quantos quer. Cortar em silêncio deixaria
+    // alguém de fora sem avisar.
+    const r = await servico.enfileirarCampanha(campanha.id, {
+      leadIds: leads.map((l) => l.id),
+    });
+    expect(r.criadas).toBe(3);
+  });
+
+  it('sem seleção, continua enfileirando todos', async () => {
+    await criarLead();
+    await criarLead();
+    const campanha = await criarCampanha(1);
+
+    const r = await servico.enfileirarCampanha(campanha.id);
+    expect(r.criadas).toBe(2);
+  });
+});

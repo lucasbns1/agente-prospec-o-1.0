@@ -473,12 +473,19 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
     { preHandler: exigirAutenticacao },
     async (request) => {
       const { id } = idSchema.parse(request.params);
-      const { limite } = z
-        .object({ limite: z.coerce.number().int().min(1).max(5000).optional() })
+      const { limite, leadIds } = z
+        .object({
+          limite: z.coerce.number().int().min(1).max(5000).optional(),
+          // Selecao explicita, vinda das caixas marcadas na previa.
+          leadIds: z.array(z.string().uuid()).max(5000).optional(),
+        })
         .parse(request.body ?? {});
 
       try {
-        const r = await enfileirarCampanha(id, limite ? { limite } : {});
+        const r = await enfileirarCampanha(id, {
+          ...(limite ? { limite } : {}),
+          ...(leadIds?.length ? { leadIds } : {}),
+        });
         request.log.info({ campaignId: id, ...r }, 'Campanha enfileirada (dry-run)');
         eventsBus.publicar('dashboard.atualizar');
         return r;

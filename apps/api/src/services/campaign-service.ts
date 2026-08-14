@@ -366,7 +366,23 @@ export interface ResultadoEnfileiramento {
  */
 export async function enfileirarCampanha(
   campaignId: string,
-  opcoes: { agora?: Date; limite?: number } = {}
+  opcoes: {
+    agora?: Date;
+    limite?: number;
+    /**
+     * Enfileira APENAS estes leads, ignorando o limite.
+     *
+     * E o que permite "mandar para estes cinco, que eu escolhi na
+     * previa" em vez de "os cinco primeiros que o filtro devolver".
+     * A diferenca importa no primeiro envio real: voce quer escolher
+     * quem recebe, nao aceitar quem a ordenacao entregou.
+     *
+     * Os filtros da campanha CONTINUAM valendo por cima: um lead em
+     * opt-out selecionado a mao segue bloqueado. A selecao restringe,
+     * nunca libera.
+     */
+    leadIds?: string[];
+  } = {}
 ): Promise<ResultadoEnfileiramento> {
   const agora = opcoes.agora ?? new Date();
 
@@ -409,11 +425,21 @@ export async function enfileirarCampanha(
   const limite =
     opcoes.limite ?? (campanha.maxLeads > 0 ? campanha.maxLeads : 500);
 
+  const selecionados = opcoes.leadIds?.length ? opcoes.leadIds : null;
+
   const leads = await prisma.lead.findMany({
-    where: montarWhere(filtros),
+    where: selecionados
+      // A selecao entra em AND com os filtros: escolher um lead a mao
+      // nao contorna opt-out, telefone ausente nem lote. Selecao
+      // restringe; nunca libera.
+      ? { AND: [montarWhere(filtros), { id: { in: selecionados } }] }
+      : montarWhere(filtros),
     select: { ...SELECAO_LEAD, _count: { select: { messages: true } } },
     orderBy: { createdAt: 'desc' },
-    take: limite,
+    // Com selecao explicita o limite nao se aplica: voce ja disse
+    // exatamente quantos quer, e cortar em silencio deixaria alguem de
+    // fora sem avisar.
+    ...(selecionados ? {} : { take: limite }),
   });
 
   // Espalha o primeiro disparo: 76 mensagens no mesmo segundo e o
