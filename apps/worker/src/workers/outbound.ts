@@ -114,7 +114,9 @@ function carregar(id: string) {
         },
       },
       campaign: { select: { id: true, nome: true, status: true, dryRun: true } },
-      campaignStep: { select: { id: true, ordem: true, ativo: true } },
+      campaignStep: {
+        select: { id: true, ordem: true, ativo: true, aguardarResposta: true },
+      },
     },
   });
 }
@@ -248,6 +250,31 @@ export function criarWorkerOutbound(
           messageId: mensagem.id,
           bullJobId: job.id ?? null,
           dryRun: resultadoEnvio.simulado,
+        },
+      });
+
+      // --- Move o lead para a coluna desta etapa, no quadro ---
+      //
+      // Acontece TAMBEM em simulacao, de proposito: o dry-run existe para
+      // ensaiar o fluxo inteiro. Se o quadro so andasse com envio real,
+      // ele ficaria parado justamente na fase em que voce confere se a
+      // sequencia faz sentido.
+      //
+      // `updateMany` e nao `update`: o vinculo pode nao existir (mensagem
+      // enfileirada por uma versao anterior), e falhar aqui perderia o
+      // registro de um envio que ja aconteceu.
+      await prisma.leadCampaign.updateMany({
+        where: { leadId: m.lead.id, campaignId: m.campaign.id },
+        data: {
+          etapaAtualId: m.campaignStep.id,
+          etapaAtualOrdem: m.campaignStep.ordem,
+          // Quem decide o proximo estado e a ETAPA, nao o worker: se ela
+          // espera resposta, o lead fica aguardando; senao a sequencia
+          // segue sozinha.
+          status: m.campaignStep.aguardarResposta
+            ? 'AGUARDANDO_RESPOSTA'
+            : 'EM_ANDAMENTO',
+          totalEnviadas: { increment: 1 },
         },
       });
 

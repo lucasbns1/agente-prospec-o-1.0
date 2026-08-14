@@ -494,6 +494,29 @@ export async function enfileirarCampanha(
         },
       });
 
+      // --- O vinculo lead <-> campanha ---
+      //
+      // E o que alimenta o quadro de estado. Sem esta linha o lead entra
+      // na fila mas nao aparece em coluna nenhuma: o quadro leria uma
+      // tabela que ninguem escreve.
+      //
+      // `upsert` porque enfileirar duas vezes e normal (voce adiciona
+      // leads novos a uma campanha ja rodando) e nao pode derrubar o
+      // progresso de quem ja esta andando.
+      await prisma.leadCampaign.upsert({
+        where: { leadId_campaignId: { leadId: lead.id, campaignId: campanha.id } },
+        // Nasce PENDENTE e SEM etapa: ele ainda nao recebeu nada. Dizer
+        // que ja esta na etapa 1 seria afirmar um envio que nao houve.
+        create: {
+          leadId: lead.id,
+          campaignId: campanha.id,
+          status: motivoBloqueio ? 'PARADO' : 'PENDENTE',
+          motivoParada: motivoBloqueio ? detalhe : null,
+        },
+        // Reenfileirar NAO reseta quem ja avancou.
+        update: {},
+      });
+
       if (motivoBloqueio) {
         resultado.bloqueadas++;
         resultado.detalhes.push({
