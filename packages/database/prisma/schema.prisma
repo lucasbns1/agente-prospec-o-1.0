@@ -880,6 +880,19 @@ model CampaignStep {
   /// Padrao seguro: congela e chama um humano. Nunca avanca sozinho.
   acaoPadraoDesconhecido StepAction @default(AGUARDAR_INTERVENCAO) @map("acao_padrao_desconhecido")
 
+  // ---- Aviso quando o lead CHEGA nesta etapa ----
+  //
+  // Diferente de `CampaignStepRule.notificar`, que dispara conforme a
+  // RESPOSTA do lead. Aqui o gatilho e a CHEGADA: "quando alguem chegar
+  // na etapa 3, me avise para eu montar a previa do site dele".
+  //
+  // Sem isso, o trabalho manual no meio da sequencia so apareceria para
+  // quem ficasse olhando o quadro de tempos em tempos.
+  notificarAoChegar Boolean @default(false) @map("notificar_ao_chegar")
+  /// O que voce quer ler no aviso. Ex: "Montar a previa do site".
+  /// Vazio cai num texto padrao com o nome da etapa.
+  notificacaoTexto  String? @map("notificacao_texto")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

@@ -6,13 +6,14 @@
  * uma mensagem ficou estranha antes de ela existir.
  */
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, Loader2, Plus, Trash2, ArrowUp, ArrowDown, Eye, ListOrdered,
-  Play, Pause, ShieldCheck, AlertTriangle, Inbox, Save, Users,
+  Play, Pause, ShieldCheck, AlertTriangle, Inbox, Save, Users, Settings2,
+  BellRing,
 } from 'lucide-react';
-import { get, post, put, patch, ApiError } from '@/lib/api';
+import { get, post, put, patch, del, ApiError } from '@/lib/api';
 import {
   Button, Card, CardContent, CardHeader, CardTitle, Badge, Input,
   Textarea, Checkbox,
@@ -20,6 +21,7 @@ import {
 import { formatarNumero, formatarDataHora, cn } from '@/lib/utils';
 import { FiltrosLead, type Filtros } from '@/components/campanha/FiltrosLead';
 import { varianteStatus, rotuloStatusCampanha } from '@/pages/Campanhas';
+import { ConfiguracoesCampanha } from '@/components/campanha/ConfiguracoesCampanha';
 
 /**
  * Atalhos de variavel oferecidos abaixo do texto.
@@ -50,6 +52,8 @@ interface Etapa {
   ativo: boolean;
   enviarAutomaticamente: boolean;
   aguardarResposta: boolean;
+  notificarAoChegar: boolean;
+  notificacaoTexto: string | null;
 }
 
 interface Campanha {
@@ -63,6 +67,10 @@ interface Campanha {
   diasPermitidos: number[];
   limiteDiarioEnvios: number;
   limiteHorarioEnvios: number;
+  delayEntreLeadsMinSegundos: number;
+  delayEntreLeadsMaxSegundos: number;
+  delayMinSegundos: number;
+  delayMaxSegundos: number;
   maxLeads: number;
   filtros: Filtros | null;
   steps: Etapa[];
@@ -109,7 +117,7 @@ interface MensagemFila {
   lead: { id: string; nomeCompleto: string | null; empresa: string | null };
 }
 
-type Aba = 'etapas' | 'publico' | 'previa' | 'fila';
+type Aba = 'etapas' | 'publico' | 'previa' | 'fila' | 'config';
 
 function varianteQualificacao(q: string): 'sucesso' | 'morno' | 'alerta' | 'neutro' {
   if (q === 'QUALIFICADO') return 'sucesso';
@@ -148,6 +156,8 @@ function EditorEtapas({ campanha }: { campanha: Campanha }) {
             ativo: true,
             enviarAutomaticamente: true,
             aguardarResposta: true,
+            notificarAoChegar: false,
+            notificacaoTexto: null,
           },
         ]
   );
@@ -166,6 +176,8 @@ function EditorEtapas({ campanha }: { campanha: Campanha }) {
           ativo: e.ativo,
           enviarAutomaticamente: e.enviarAutomaticamente,
           aguardarResposta: e.aguardarResposta,
+          notificarAoChegar: e.notificarAoChegar,
+          notificacaoTexto: e.notificacaoTexto,
         })),
       }),
     onSuccess: () => {
@@ -203,6 +215,8 @@ function EditorEtapas({ campanha }: { campanha: Campanha }) {
         ativo: true,
         enviarAutomaticamente: true,
         aguardarResposta: true,
+        notificarAoChegar: false,
+        notificacaoTexto: null,
       },
     ]);
 
@@ -303,6 +317,38 @@ function EditorEtapas({ campanha }: { campanha: Campanha }) {
                 checked={etapa.aguardarResposta}
                 onChange={(e) => atualizar(i, { aguardarResposta: e.target.checked })}
               />
+            </div>
+
+            {/* Aviso na CHEGADA da etapa — diferente das regras por
+                resposta. É assim que o trabalho manual no meio da
+                sequência ("montar a prévia deste") vem te procurar, em
+                vez de depender de você olhar o quadro. */}
+            <div className="space-y-2 rounded-lg border border-[var(--color-borda)] bg-[var(--color-fundo)] p-3">
+              <Checkbox
+                rotulo="Me avisar quando um lead chegar nesta etapa"
+                checked={etapa.notificarAoChegar}
+                onChange={(e) =>
+                  atualizar(i, { notificarAoChegar: e.target.checked })
+                }
+              />
+
+              {etapa.notificarAoChegar && (
+                <>
+                  <Input
+                    aria-label={`Texto do aviso da etapa ${i + 1}`}
+                    value={etapa.notificacaoTexto ?? ''}
+                    placeholder="Ex: Montar a prévia do site deste lead"
+                    onChange={(e) =>
+                      atualizar(i, { notificacaoTexto: e.target.value || null })
+                    }
+                  />
+                  <p className="flex items-start gap-1.5 text-xs text-[var(--color-texto-suave)]">
+                    <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    O aviso aparece em <strong>Notificações</strong> e no sino,
+                    com link direto para a conversa. Vale também em simulação.
+                  </p>
+                </>
+              )}
             </div>
 
             <p className="text-xs text-[var(--color-texto-suave)]">
@@ -647,6 +693,9 @@ export function CampanhaDetalhe() {
   const queryClient = useQueryClient();
   const [aba, setAba] = useState<Aba>('etapas');
   const [filtros, setFiltros] = useState<Filtros | null>(null);
+  // Confirmação em dois passos: excluir é a única ação sem desfazer.
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const navegar = useNavigate();
 
   const { data, isLoading } = useQuery({
     queryKey: ['campanha', id],
@@ -658,6 +707,16 @@ export function CampanhaDetalhe() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['campanha', id] });
       void queryClient.invalidateQueries({ queryKey: ['campanhas'] });
+    },
+  });
+
+  const excluir = useMutation({
+    // `confirmar: true` e exigido pela API tambem — a confirmacao da tela
+    // sozinha nao protegeria quem chamasse a rota direto.
+    mutationFn: () => del(`/api/campaigns/${id}`, { confirmar: true }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['campanhas'] });
+      navegar('/campanhas');
     },
   });
 
@@ -699,6 +758,7 @@ export function CampanhaDetalhe() {
     { id: 'publico', rotulo: 'Público', icone: Users },
     { id: 'previa', rotulo: 'Prévia', icone: Eye },
     { id: 'fila', rotulo: 'Fila', icone: Inbox },
+    { id: 'config', rotulo: 'Configurações', icone: Settings2 },
   ];
 
   return (
@@ -815,6 +875,95 @@ export function CampanhaDetalhe() {
 
       {aba === 'previa' && <Previa campanha={campanha} />}
       {aba === 'fila' && <Fila campanhaId={campanha.id} />}
+
+      {aba === 'config' && (
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle>Configurações de envio</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ConfiguracoesCampanha
+                campanhaId={campanha.id}
+                valor={{
+                  horarioInicio: campanha.horarioInicio,
+                  horarioFim: campanha.horarioFim,
+                  diasPermitidos: campanha.diasPermitidos,
+                  limiteDiarioEnvios: campanha.limiteDiarioEnvios,
+                  limiteHorarioEnvios: campanha.limiteHorarioEnvios,
+                  delayEntreLeadsMinSegundos: campanha.delayEntreLeadsMinSegundos,
+                  delayEntreLeadsMaxSegundos: campanha.delayEntreLeadsMaxSegundos,
+                  delayMinSegundos: campanha.delayMinSegundos,
+                  delayMaxSegundos: campanha.delayMaxSegundos,
+                  maxLeads: campanha.maxLeads,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Exclusão por último e separada: é a única ação da tela que
+              não tem desfazer. */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Excluir campanha</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-[var(--color-texto-suave)]">
+                Apaga a campanha, as etapas e a fila. Os{' '}
+                <strong>leads permanecem</strong> — eles existiam antes
+                desta campanha e continuam depois dela.
+              </p>
+
+              {excluir.error && (
+                <p className="text-sm text-[var(--color-alerta)]">
+                  {excluir.error instanceof ApiError
+                    ? excluir.error.message
+                    : 'Não foi possível excluir'}
+                </p>
+              )}
+
+              {!confirmandoExclusao ? (
+                <Button
+                  variant="secundario"
+                  onClick={() => setConfirmandoExclusao(true)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Excluir esta campanha
+                </Button>
+              ) : (
+                <div className="space-y-2 rounded-lg border border-[var(--color-alerta)] bg-[var(--color-alerta-bg)] p-3">
+                  <p className="text-sm font-medium text-[var(--color-alerta)]">
+                    Excluir “{campanha.nome}”? Não há como desfazer.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secundario"
+                      size="sm"
+                      onClick={() => setConfirmandoExclusao(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => excluir.mutate()}
+                      disabled={excluir.isPending}
+                    >
+                      {excluir.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          Excluindo…
+                        </>
+                      ) : (
+                        'Sim, excluir'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

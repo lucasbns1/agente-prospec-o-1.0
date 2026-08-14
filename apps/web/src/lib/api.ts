@@ -69,3 +69,10 @@ export const patch = <T>(caminho: string, corpo?: unknown): Promise<T> =>
     method: 'PATCH',
     ...(corpo !== undefined ? { body: JSON.stringify(corpo) } : {}),
   });
+
+/** `del` e nao `delete`: a palavra e reservada em JavaScript. */
+export const del = <T>(caminho: string, corpo?: unknown): Promise<T> =>
+  api<T>(caminho, {
+    method: 'DELETE',
+    ...(corpo !== undefined ? { body: JSON.stringify(corpo) } : {}),
+  });

@@ -111,6 +111,8 @@ const etapaSchema = z.object({
   aguardarResposta: z.boolean().default(true),
   delayMinSegundos: z.number().int().min(0).max(2592000).nullable().optional(),
   delayMaxSegundos: z.number().int().min(0).max(2592000).nullable().optional(),
+  notificarAoChegar: z.boolean().default(false),
+  notificacaoTexto: z.string().trim().max(500).nullable().optional(),
 });
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -228,6 +230,68 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // ----------------------------------------------------------- excluir
+  /**
+   * Apaga a campanha.
+   *
+   * O `onDelete: Cascade` do schema leva junto etapas, fila e vinculos
+   * com leads. Os LEADS ficam: eles sao seus, existiam antes da campanha
+   * e continuam depois dela.
+   *
+   * Exige `confirmar: true` no corpo. Um DELETE que obedece de primeira
+   * transforma um clique errado em perda de historico — e nao ha desfazer.
+   */
+  app.delete<{ Params: { id: string } }>(
+    '/api/campaigns/:id',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const { confirmar } = z
+        .object({ confirmar: z.boolean().optional() })
+        .parse(request.body ?? {});
+
+      if (confirmar !== true) {
+        throw new AppError(
+          'Exclusao exige confirmacao explicita',
+          422,
+          'CONFIRMACAO_NECESSARIA'
+        );
+      }
+
+      const campanha = await prisma.campaign.findUnique({
+        where: { id },
+        select: {
+          nome: true,
+          _count: { select: { outbound: true, leadCampaigns: true } },
+        },
+      });
+      if (!campanha) throw new AppError('Campanha nao encontrada', 404, 'NAO_ENCONTRADO');
+
+      // Mensagem REAL enviada e historico de conversa com uma pessoa.
+      // Apagar a campanha apagaria o "de onde veio" daquele contato.
+      const enviadasReais = await prisma.outboundMessage.count({
+        where: { campaignId: id, status: 'ENVIADA', dryRun: false },
+      });
+      if (enviadasReais > 0) {
+        throw new AppError(
+          `Esta campanha ja enviou ${enviadasReais} mensagem(ns) real(is). Arquive em vez de apagar, para nao perder o historico.`,
+          422,
+          'CAMPANHA_COM_ENVIO_REAL'
+        );
+      }
+
+      await prisma.campaign.delete({ where: { id } });
+
+      request.log.info(
+        { campaignId: id, nome: campanha.nome, ...campanha._count },
+        'Campanha excluida'
+      );
+      eventsBus.publicar('dashboard.atualizar');
+
+      return { excluida: true, nome: campanha.nome };
+    }
+  );
+
   // ------------------------------------------------------- mudar status
   app.post<{ Params: { id: string } }>(
     '/api/campaigns/:id/status',
@@ -331,6 +395,8 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
               aguardarResposta: e.aguardarResposta,
               delayMinSegundos: e.delayMinSegundos ?? null,
               delayMaxSegundos: e.delayMaxSegundos ?? null,
+              notificarAoChegar: e.notificarAoChegar,
+              notificacaoTexto: e.notificacaoTexto ?? null,
             },
           });
         }

@@ -180,6 +180,34 @@ describe('enfileirar cria o vínculo lead <-> campanha', () => {
   });
 });
 
+describe('aviso quando o lead chega na etapa', () => {
+  it('a etapa guarda a configuração do aviso', async () => {
+    const campanha = await criarCampanha(1);
+    const etapa = await prisma.campaignStep.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+
+    // Nasce desligado: um aviso que ninguém pediu vira ruído, e ruído
+    // faz você parar de olhar o sino.
+    expect(etapa.notificarAoChegar).toBe(false);
+    expect(etapa.notificacaoTexto).toBeNull();
+
+    await prisma.campaignStep.update({
+      where: { id: etapa.id },
+      data: {
+        notificarAoChegar: true,
+        notificacaoTexto: 'Montar a prévia do site',
+      },
+    });
+
+    const depois = await prisma.campaignStep.findUniqueOrThrow({
+      where: { id: etapa.id },
+    });
+    expect(depois.notificarAoChegar).toBe(true);
+    expect(depois.notificacaoTexto).toBe('Montar a prévia do site');
+  });
+});
+
 describe('campanha em cima de um lote específico', () => {
   it('o filtro por planilha separa nichos diferentes', async () => {
     const psicologos = await prisma.captureSession.create({
@@ -252,5 +280,24 @@ describe('o quadro reflete o que foi enfileirado', () => {
       },
     });
     expect(naFila).toBe(2);
+  });
+});
+
+describe('excluir campanha', () => {
+  it('leva junto etapas e fila, mas NÃO os leads', async () => {
+    const lead = await criarLead();
+    const campanha = await criarCampanha(2);
+    await servico.enfileirarCampanha(campanha.id);
+
+    expect(await prisma.outboundMessage.count()).toBeGreaterThan(0);
+
+    await prisma.campaign.delete({ where: { id: campanha.id } });
+
+    expect(await prisma.campaignStep.count({ where: { campaignId: campanha.id } })).toBe(0);
+    expect(await prisma.outboundMessage.count({ where: { campaignId: campanha.id } })).toBe(0);
+    expect(await prisma.leadCampaign.count({ where: { campaignId: campanha.id } })).toBe(0);
+
+    // O lead existia antes da campanha e continua depois dela.
+    expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
   });
 });

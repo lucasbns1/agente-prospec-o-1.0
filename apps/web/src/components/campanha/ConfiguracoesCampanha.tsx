@@ -1,0 +1,296 @@
+/**
+ * Quando e em que ritmo a campanha roda.
+ *
+ * Estes campos so existiam no formulario de CRIACAO. Depois de criada,
+ * mudar o horario exigia SQL — e a primeira coisa que se descobre ao
+ * enfileirar de madrugada e que a janela padrao vai ate as 20h.
+ *
+ * ============================================================
+ * MUDAR AQUI NAO REAGENDA O QUE JA ESTA NA FILA
+ * ============================================================
+ * O horario de cada mensagem e calculado no enfileiramento e congelado.
+ * A tela diz isso na cara: descobrir sozinho, vendo a fila parada, custa
+ * uma noite.
+ */
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Save, Loader2, Clock } from 'lucide-react';
+import { patch, ApiError } from '@/lib/api';
+import { Button, Input, Label, Checkbox } from '@/components/ui/primitives';
+
+const DIAS = [
+  { valor: 1, rotulo: 'Seg' },
+  { valor: 2, rotulo: 'Ter' },
+  { valor: 3, rotulo: 'Qua' },
+  { valor: 4, rotulo: 'Qui' },
+  { valor: 5, rotulo: 'Sex' },
+  { valor: 6, rotulo: 'Sáb' },
+  { valor: 0, rotulo: 'Dom' },
+];
+
+export interface ConfigCampanha {
+  horarioInicio: string;
+  horarioFim: string;
+  diasPermitidos: number[];
+  limiteDiarioEnvios: number;
+  limiteHorarioEnvios: number;
+  delayEntreLeadsMinSegundos: number;
+  delayEntreLeadsMaxSegundos: number;
+  delayMinSegundos: number;
+  delayMaxSegundos: number;
+  maxLeads: number;
+}
+
+export function ConfiguracoesCampanha({
+  campanhaId,
+  valor,
+}: {
+  campanhaId: string;
+  valor: ConfigCampanha;
+}) {
+  const queryClient = useQueryClient();
+  const [c, setC] = useState<ConfigCampanha>(valor);
+
+  const salvar = useMutation({
+    mutationFn: (dados: ConfigCampanha) =>
+      patch(`/api/campaigns/${campanhaId}`, dados),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['campanha', campanhaId] });
+    },
+  });
+
+  const mudar = (patchC: Partial<ConfigCampanha>): void =>
+    setC({ ...c, ...patchC });
+
+  const alternarDia = (dia: number): void => {
+    const tem = c.diasPermitidos.includes(dia);
+    mudar({
+      diasPermitidos: tem
+        ? c.diasPermitidos.filter((d) => d !== dia)
+        : [...c.diasPermitidos, dia].sort(),
+    });
+  };
+
+  const horarioInvertido = c.horarioFim <= c.horarioInicio;
+  const semDia = c.diasPermitidos.length === 0;
+  const delayInvertido =
+    c.delayEntreLeadsMaxSegundos < c.delayEntreLeadsMinSegundos ||
+    c.delayMaxSegundos < c.delayMinSegundos;
+
+  const impedido = horarioInvertido || semDia || delayInvertido;
+
+  return (
+    <div className="space-y-6">
+      {/* ---- Janela ---- */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-[var(--color-texto-suave)]" aria-hidden="true" />
+          <h3 className="text-sm font-medium">Quando pode enviar</h3>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="hi">Das</Label>
+            <Input
+              id="hi"
+              type="time"
+              value={c.horarioInicio}
+              onChange={(e) => mudar({ horarioInicio: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="hf">Até</Label>
+            <Input
+              id="hf"
+              type="time"
+              value={c.horarioFim}
+              onChange={(e) => mudar({ horarioFim: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {horarioInvertido && (
+          <p className="text-sm text-[var(--color-alerta)]">
+            O horário final precisa ser depois do inicial.
+          </p>
+        )}
+
+        <div>
+          <Label>Dias da semana</Label>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {DIAS.map((d) => {
+              const marcado = c.diasPermitidos.includes(d.valor);
+              return (
+                <button
+                  key={d.valor}
+                  type="button"
+                  aria-pressed={marcado}
+                  onClick={() => alternarDia(d.valor)}
+                  className={
+                    marcado
+                      ? 'rounded-lg border border-[var(--color-marca)] bg-[var(--color-marca)] px-3 py-1.5 text-sm text-white'
+                      : 'rounded-lg border border-[var(--color-borda)] px-3 py-1.5 text-sm text-[var(--color-texto-suave)] hover:bg-[var(--color-fundo)]'
+                  }
+                >
+                  {d.rotulo}
+                </button>
+              );
+            })}
+          </div>
+          {semDia && (
+            <p className="mt-1.5 text-sm text-[var(--color-alerta)]">
+              Sem nenhum dia marcado, nada sai nunca.
+            </p>
+          )}
+        </div>
+
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          Fora da janela a mensagem é <strong>adiada</strong>, nunca
+          descartada — perder o lead porque a fila virou a noite seria pior.
+        </p>
+      </section>
+
+      {/* ---- Ritmo ---- */}
+      <section className="space-y-3 border-t border-[var(--color-borda)] pt-5">
+        <h3 className="text-sm font-medium">Ritmo</h3>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="dlmin">Intervalo entre leads — mín. (s)</Label>
+            <Input
+              id="dlmin"
+              type="number"
+              min={0}
+              value={c.delayEntreLeadsMinSegundos}
+              onChange={(e) =>
+                mudar({ delayEntreLeadsMinSegundos: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div>
+            <Label htmlFor="dlmax">Intervalo entre leads — máx. (s)</Label>
+            <Input
+              id="dlmax"
+              type="number"
+              min={0}
+              value={c.delayEntreLeadsMaxSegundos}
+              onChange={(e) =>
+                mudar({ delayEntreLeadsMaxSegundos: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div>
+            <Label htmlFor="demin">Intervalo entre etapas — mín. (s)</Label>
+            <Input
+              id="demin"
+              type="number"
+              min={0}
+              value={c.delayMinSegundos}
+              onChange={(e) => mudar({ delayMinSegundos: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="demax">Intervalo entre etapas — máx. (s)</Label>
+            <Input
+              id="demax"
+              type="number"
+              min={0}
+              value={c.delayMaxSegundos}
+              onChange={(e) => mudar({ delayMaxSegundos: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+
+        {delayInvertido && (
+          <p className="text-sm text-[var(--color-alerta)]">
+            O intervalo máximo precisa ser maior ou igual ao mínimo.
+          </p>
+        )}
+
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          O intervalo é sorteado dentro da faixa. Ele existe para não
+          disparar tudo no mesmo minuto — o padrão que mais chama atenção
+          de sistema antispam. Para <strong>testar</strong>, valores baixos
+          (2 a 5 segundos) fazem a fila andar na sua frente.
+        </p>
+      </section>
+
+      {/* ---- Limites ---- */}
+      <section className="space-y-3 border-t border-[var(--color-borda)] pt-5">
+        <h3 className="text-sm font-medium">Limites</h3>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <Label htmlFor="ld">Por dia</Label>
+            <Input
+              id="ld"
+              type="number"
+              min={1}
+              value={c.limiteDiarioEnvios}
+              onChange={(e) => mudar({ limiteDiarioEnvios: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="lh">Por hora</Label>
+            <Input
+              id="lh"
+              type="number"
+              min={1}
+              value={c.limiteHorarioEnvios}
+              onChange={(e) => mudar({ limiteHorarioEnvios: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="ml">Máx. de leads (0 = sem teto)</Label>
+            <Input
+              id="ml"
+              type="number"
+              min={0}
+              value={c.maxLeads}
+              onChange={(e) => mudar({ maxLeads: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          Só envio <strong>real</strong> consome os limites. Simulação e
+          falha não contam — senão testar queimaria a cota do dia.
+        </p>
+      </section>
+
+      {salvar.error && (
+        <p className="text-sm text-[var(--color-alerta)]">
+          {salvar.error instanceof ApiError
+            ? salvar.error.message
+            : 'Não foi possível salvar'}
+        </p>
+      )}
+
+      {salvar.isSuccess && (
+        <div className="rounded-lg border border-[var(--color-borda)] bg-[var(--color-fundo)] p-3">
+          <p className="text-sm font-medium">Configurações salvas.</p>
+          <p className="mt-0.5 text-sm text-[var(--color-texto-suave)]">
+            Isto vale para o que for enfileirado <strong>a partir de
+            agora</strong>. As mensagens que já estão na fila mantêm o
+            horário calculado no enfileiramento — para reagendá-las, pause
+            a campanha e enfileire de novo.
+          </p>
+        </div>
+      )}
+
+      <Button onClick={() => salvar.mutate(c)} disabled={salvar.isPending || impedido}>
+        {salvar.isPending ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Salvando…
+          </>
+        ) : (
+          <>
+            <Save className="h-4 w-4" aria-hidden="true" />
+            Salvar configurações
+          </>
+        )}
+      </Button>
+    </div>
+  );
+}

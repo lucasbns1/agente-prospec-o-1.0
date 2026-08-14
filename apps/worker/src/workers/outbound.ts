@@ -109,13 +109,16 @@ function carregar(id: string) {
     include: {
       lead: {
         select: {
-          id: true, nomeCompleto: true, optOut: true, status: true,
-          telefoneNormalizado: true,
+          id: true, nomeCompleto: true, empresa: true, optOut: true,
+          status: true, telefoneNormalizado: true,
         },
       },
       campaign: { select: { id: true, nome: true, status: true, dryRun: true } },
       campaignStep: {
-        select: { id: true, ordem: true, ativo: true, aguardarResposta: true },
+        select: {
+          id: true, ordem: true, ativo: true, aguardarResposta: true,
+          nome: true, notificarAoChegar: true, notificacaoTexto: true,
+        },
       },
     },
   });
@@ -277,6 +280,39 @@ export function criarWorkerOutbound(
           totalEnviadas: { increment: 1 },
         },
       });
+
+      // --- "Me avise quando alguem chegar nesta etapa" ---
+      //
+      // Configurado por etapa. E o que transforma um trabalho manual no
+      // meio da sequencia ("montar a previa do site deste") em algo que
+      // te procura, em vez de depender de voce olhar o quadro.
+      //
+      // Dispara TAMBEM em simulacao: se so avisasse no envio real, voce
+      // descobriria que o aviso nao funciona justamente no dia em que
+      // passou a depender dele.
+      if (m.campaignStep.notificarAoChegar) {
+        const rotuloEtapa =
+          m.campaignStep.nome?.trim() || `Mensagem ${m.campaignStep.ordem}`;
+        const quem = m.lead.empresa ?? m.lead.nomeCompleto ?? 'Lead sem nome';
+
+        await prisma.notification.create({
+          data: {
+            leadId: m.lead.id,
+            tipo: 'PEDIDO_PREVIEW',
+            nivel: 'ALERTA',
+            titulo: m.campaignStep.notificacaoTexto?.trim()
+              ? m.campaignStep.notificacaoTexto.trim()
+              : `Lead chegou em "${rotuloEtapa}"`,
+            mensagem: `${quem} chegou na etapa "${rotuloEtapa}" da campanha ${m.campaign.nome}.`,
+            // Leva direto para a conversa: um aviso sem caminho de volta
+            // faz voce procurar o lead na mao.
+            link: `/conversas/${m.lead.id}`,
+            prioridade: 80,
+          },
+        });
+
+        await publicarEvento('notificacao.criada', { leadId: m.lead.id });
+      }
 
       await prisma.leadEvent.create({
         data: {
