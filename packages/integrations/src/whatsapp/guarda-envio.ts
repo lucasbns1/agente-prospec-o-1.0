@@ -33,10 +33,25 @@
  * A trava da fase. NAO mudar sem autorizacao explicita do dono do
  * projeto.
  *
- * Fase 6A: integracao tecnica + recebimento + dry-run. O envio real
- * entra numa fase separada, que ainda nao foi autorizada.
+ * ============================================================
+ * ABERTA — Fase 7, autorizada em 14/08/2026
+ * ============================================================
+ * Autorizacao dada em conversa, para o primeiro envio real: cinco leads
+ * escolhidos a mao, chip dedicado, mensagens revisadas na previa.
+ *
+ * Esta constante sozinha NAO envia nada. Continuam valendo:
+ *
+ *   2. `WHATSAPP_MODE=live` no .env
+ *   3. `Campaign.dryRun = false` na campanha
+ *   4. `OutboundMessage.dryRun = false`, herdado da campanha no
+ *      enfileiramento
+ *
+ * As quatro precisam estar abertas ao mesmo tempo. Tres nao bastam.
+ *
+ * PARA FECHAR DE NOVO: volte para `false` e reinicie o worker. E o freio
+ * mais forte que existe — nao depende de banco nem de configuracao.
  */
-export const FASE_PERMITE_ENVIO_REAL = false as boolean;
+export const FASE_PERMITE_ENVIO_REAL = true as boolean;
 
 /** Descreve por que um envio foi simulado, para o log e para a tela. */
 export type MotivoSimulacao =

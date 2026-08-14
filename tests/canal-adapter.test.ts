@@ -338,8 +338,12 @@ describe('recebimento no adapter', () => {
 
 // ============================================================ 21-22 DRY-RUN
 describe('a guarda de envio', () => {
-  it('a fase está travada — este é o invariante da Fase 6A', () => {
-    expect(FASE_PERMITE_ENVIO_REAL).toBe(false);
+  // A trava de fase está ABERTA desde a autorização da Fase 7. Este
+  // teste não afirma que ela deve estar aberta — ele existe para que
+  // fechá-la de novo seja uma mudança VISÍVEL, que aparece aqui em vez
+  // de passar despercebida num diff.
+  it('a trava de fase está aberta (Fase 7 autorizada)', () => {
+    expect(FASE_PERMITE_ENVIO_REAL).toBe(true);
   });
 
   it('21. tentar enviar devolve resultado simulado e não toca o provedor', async () => {
@@ -354,7 +358,7 @@ describe('a guarda de envio', () => {
     expect(provedor.enviadas).toHaveLength(0);
   });
 
-  it('nem com WHATSAPP_MODE=live o envio passa', async () => {
+  it('com a fase aberta E o modo live, o envio chega ao provedor', async () => {
     const original = process.env.WHATSAPP_MODE;
     process.env.WHATSAPP_MODE = 'live';
     try {
@@ -363,8 +367,28 @@ describe('a guarda de envio', () => {
 
       const r = await adapter.sendMessage('5519999991111', 'Olá!');
 
-      // A variável de ambiente sozinha não destrava nada — é exatamente
-      // para isso que a guarda de fase existe.
+      // O caminho de envio real existe e funciona. Antes da Fase 7 este
+      // teste afirmava o contrário — e é essa mudança que a autorização
+      // significa na prática.
+      expect(r.simulado).toBe(false);
+      expect(provedor.enviadas).toHaveLength(1);
+    } finally {
+      if (original === undefined) delete process.env.WHATSAPP_MODE;
+      else process.env.WHATSAPP_MODE = original;
+    }
+  });
+
+  it('o modo global sozinho ainda segura: dry-run simula', async () => {
+    const original = process.env.WHATSAPP_MODE;
+    process.env.WHATSAPP_MODE = 'dry-run';
+    try {
+      const { adapter, provedor } = montar();
+      await adapter.connect();
+
+      const r = await adapter.sendMessage('5519999991111', 'Olá!');
+
+      // Abrir a fase não desligou as outras barreiras. Esta é a que você
+      // usa no dia a dia para voltar a ensaiar sem tocar em código.
       expect(r.simulado).toBe(true);
       expect(provedor.enviadas).toHaveLength(0);
     } finally {
@@ -373,11 +397,19 @@ describe('a guarda de envio', () => {
     }
   });
 
-  it('a última barreira lança em vez de simular em silêncio', () => {
-    expect(() => exigirPermissaoDeEnvioReal('teste')).toThrow(
-      EnvioRealBloqueadoError
-    );
-    expect(() => exigirPermissaoDeEnvioReal('teste')).toThrow(/guarda de fase/);
+  it('a última barreira deixa passar com a fase aberta', () => {
+    // Com a fase fechada ela LANÇA — nunca simula em silêncio, porque
+    // simular em silêncio faria você achar que enviou o que não saiu.
+    // Com a fase aberta, passa reto.
+    expect(() => exigirPermissaoDeEnvioReal('teste')).not.toThrow();
+  });
+
+  it('a exceção da última barreira continua existindo', () => {
+    // Ela é usada quando a fase for fechada de novo. Um erro que some
+    // do código volta mal escrito no dia em que precisar dele.
+    const e = new EnvioRealBloqueadoError('contexto');
+    expect(e).toBeInstanceOf(Error);
+    expect(e.message).toMatch(/contexto/);
   });
 
   it('acumula todos os motivos, não só o primeiro', () => {
@@ -389,25 +421,38 @@ describe('a guarda de envio', () => {
 
     // Saber que são quatro barreiras, e não uma, é o que evita alguém
     // baixar só uma e achar que liberou o envio.
+    // Saber que são TRÊS barreiras levantadas, e não uma, é o que evita
+    // alguém baixar só uma e achar que liberou o envio.
     expect(v.simular).toBe(true);
     expect(v.motivos).toEqual([
-      'FASE_BLOQUEIA',
       'MODO_GLOBAL',
       'CAMPANHA_DRY_RUN',
       'MENSAGEM_DRY_RUN',
     ]);
-    expect(v.explicacao).toContain('fase atual');
   });
 
-  it('mesmo com tudo o mais liberado, a fase ainda bloqueia', () => {
+  it('só envia de verdade com as QUATRO barreiras abertas', () => {
     const v = avaliarGuardaEnvio({
       modoGlobal: 'live',
       campanhaDryRun: false,
       mensagemDryRun: false,
     });
 
-    expect(v.simular).toBe(true);
-    expect(v.motivos).toEqual(['FASE_BLOQUEIA']);
+    expect(v.simular).toBe(false);
+    expect(v.motivos).toEqual([]);
+  });
+
+  it('uma barreira sozinha basta para simular', () => {
+    // A lógica é "E" para enviar e "OU" para simular. Um typo no .env
+    // não pode virar 80 mensagens disparadas.
+    const casos = [
+      { modoGlobal: 'dry-run', campanhaDryRun: false, mensagemDryRun: false },
+      { modoGlobal: 'live', campanhaDryRun: true, mensagemDryRun: false },
+      { modoGlobal: 'live', campanhaDryRun: false, mensagemDryRun: true },
+    ];
+    for (const caso of casos) {
+      expect(avaliarGuardaEnvio(caso).simular).toBe(true);
+    }
   });
 
   it('isRegistered não consulta nada enquanto o canal não está pronto', async () => {
