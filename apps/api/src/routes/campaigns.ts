@@ -380,28 +380,62 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
         }
       }
 
-      // Substitui o conjunto inteiro numa transacao: uma atualizacao
-      // parcial poderia deixar duas etapas com a mesma ordem no meio do
-      // caminho e violar a constraint.
+      // ============================================================
+      // ATUALIZA EM VEZ DE RECRIAR
+      // ============================================================
+      // A versao anterior fazia `deleteMany` + `create`. Como
+      // `LeadCampaign.etapaAtual` tem `onDelete: SetNull`, apagar as
+      // etapas zerava a posicao de TODOS os leads: quem estava na
+      // "Mensagem 1" voltava para "Na fila", ainda marcado com
+      // "1 enviada". O quadro se contradizia na propria tela.
+      //
+      // Pior: `OutboundMessage` tem `onDelete: Cascade` — a fila inteira
+      // sumia junto, sem aviso. Corrigir um typo no texto apagava o
+      // trabalho da campanha.
+      //
+      // Agora as etapas existentes sao atualizadas pela ORDEM, que e o
+      // que o usuario enxerga na tela. So o excedente e apagado.
       await prisma.$transaction(async (tx) => {
-        await tx.campaignStep.deleteMany({ where: { campaignId: id } });
-        for (const e of etapas) {
-          await tx.campaignStep.create({
-            data: {
-              campaignId: id,
-              ordem: e.ordem,
-              nome: e.nome ?? null,
-              texto: e.texto,
-              templateId: e.templateId ?? null,
-              ativo: e.ativo,
-              enviarAutomaticamente: e.enviarAutomaticamente,
-              aguardarResposta: e.aguardarResposta,
-              delayMinSegundos: e.delayMinSegundos ?? null,
-              delayMaxSegundos: e.delayMaxSegundos ?? null,
-              notificarAoChegar: e.notificarAoChegar,
-              notificacaoTexto: e.notificacaoTexto ?? null,
-            },
+        const atuais = await tx.campaignStep.findMany({
+          where: { campaignId: id },
+          orderBy: { ordem: 'asc' },
+          select: { id: true, ordem: true },
+        });
+
+        // Sobras primeiro: se a lista encolheu, as etapas do fim saem
+        // antes de qualquer update, senao a constraint de ordem unica
+        // poderia colidir no meio do caminho.
+        const sobrando = atuais.filter((a) => a.ordem > etapas.length);
+        if (sobrando.length > 0) {
+          await tx.campaignStep.deleteMany({
+            where: { id: { in: sobrando.map((s) => s.id) } },
           });
+        }
+
+        const porOrdem = new Map(atuais.map((a) => [a.ordem, a.id]));
+
+        for (const e of etapas) {
+          const dados = {
+            nome: e.nome ?? null,
+            texto: e.texto,
+            templateId: e.templateId ?? null,
+            ativo: e.ativo,
+            enviarAutomaticamente: e.enviarAutomaticamente,
+            aguardarResposta: e.aguardarResposta,
+            delayMinSegundos: e.delayMinSegundos ?? null,
+            delayMaxSegundos: e.delayMaxSegundos ?? null,
+            notificarAoChegar: e.notificarAoChegar,
+            notificacaoTexto: e.notificacaoTexto ?? null,
+          };
+
+          const existente = porOrdem.get(e.ordem);
+          if (existente) {
+            await tx.campaignStep.update({ where: { id: existente }, data: dados });
+          } else {
+            await tx.campaignStep.create({
+              data: { campaignId: id, ordem: e.ordem, ...dados },
+            });
+          }
         }
       });
 

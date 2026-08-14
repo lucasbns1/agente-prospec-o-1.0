@@ -321,3 +321,111 @@ describe('GET /api/campaigns/:id/quadro', () => {
     expect(q.totalLeads).toBe(0);
   });
 });
+
+describe('PUT /api/campaigns/:id/steps — editar não destrói progresso', () => {
+  async function salvar(
+    campaignId: string,
+    etapas: Array<Record<string, unknown>>
+  ) {
+    return app.inject({
+      method: 'PUT',
+      url: `/api/campaigns/${campaignId}/steps`,
+      headers: { cookie },
+      payload: { etapas },
+    });
+  }
+
+  it('o lead continua na etapa depois de corrigir o texto', async () => {
+    const { campanha, etapas } = await criarCampanhaComEtapas(1);
+    const lead = await colocar(campanha.id, 'AGUARDANDO_RESPOSTA', etapas[0]!.id);
+    await prisma.leadCampaign.updateMany({
+      where: { leadId: lead.id },
+      data: { etapaAtualOrdem: 1, totalEnviadas: 1 },
+    });
+
+    // Antes: a rota apagava e recriava as etapas. Com
+    // `onDelete: SetNull` em LeadCampaign.etapaAtual, TODO lead voltava
+    // para "Na fila" — ainda marcado com "1 enviada". O quadro se
+    // contradizia na própria tela.
+    const r = await salvar(campanha.id, [
+      { ordem: 1, texto: 'Texto corrigido', ativo: true },
+    ]);
+    expect(r.statusCode).toBe(200);
+
+    const v = await prisma.leadCampaign.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(v.etapaAtualId).not.toBeNull();
+    expect(v.etapaAtualOrdem).toBe(1);
+  });
+
+  it('a fila sobrevive à edição', async () => {
+    const { campanha, etapas } = await criarCampanhaComEtapas(1);
+    const lead = await criarLead();
+
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `fila-${Date.now()}-${n}`,
+        status: 'AGENDADA',
+        dryRun: true,
+      },
+    });
+
+    // `OutboundMessage` tem onDelete: Cascade. Recriar as etapas apagava
+    // a fila inteira: corrigir um typo destruía o trabalho da campanha.
+    await salvar(campanha.id, [{ ordem: 1, texto: 'Outro texto', ativo: true }]);
+
+    expect(
+      await prisma.outboundMessage.count({ where: { campaignId: campanha.id } })
+    ).toBe(1);
+  });
+
+  it('o texto realmente muda', async () => {
+    const { campanha } = await criarCampanhaComEtapas(1);
+
+    await salvar(campanha.id, [
+      { ordem: 1, texto: 'Mensagem nova', nome: 'Abertura', ativo: true },
+    ]);
+
+    const e = await prisma.campaignStep.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(e.texto).toBe('Mensagem nova');
+    expect(e.nome).toBe('Abertura');
+  });
+
+  it('remover uma etapa do fim apaga só ela', async () => {
+    const { campanha } = await criarCampanhaComEtapas(3);
+
+    await salvar(campanha.id, [
+      { ordem: 1, texto: 'A', ativo: true },
+      { ordem: 2, texto: 'B', ativo: true },
+    ]);
+
+    const restantes = await prisma.campaignStep.findMany({
+      where: { campaignId: campanha.id },
+      orderBy: { ordem: 'asc' },
+    });
+    expect(restantes.map((r) => r.ordem)).toEqual([1, 2]);
+    expect(restantes.map((r) => r.texto)).toEqual(['A', 'B']);
+  });
+
+  it('acrescentar uma etapa não mexe nas existentes', async () => {
+    const { campanha, etapas } = await criarCampanhaComEtapas(1);
+    const idOriginal = etapas[0]!.id;
+
+    await salvar(campanha.id, [
+      { ordem: 1, texto: 'Mensagem 1', ativo: true },
+      { ordem: 2, texto: 'Follow-up', ativo: true },
+    ]);
+
+    const primeira = await prisma.campaignStep.findFirstOrThrow({
+      where: { campaignId: campanha.id, ordem: 1 },
+    });
+    // Mesmo id: quem apontava para ela continua apontando.
+    expect(primeira.id).toBe(idOriginal);
+  });
+});
