@@ -39,6 +39,8 @@ export interface ConfigCampanha {
   delayMinSegundos: number;
   delayMaxSegundos: number;
   maxLeads: number;
+  /** true = simulacao. A barreira #3 das quatro. */
+  dryRun: boolean;
 }
 
 export function ConfiguracoesCampanha({
@@ -255,6 +257,54 @@ export function ConfiguracoesCampanha({
         <p className="text-xs text-[var(--color-texto-suave)]">
           Só envio <strong>real</strong> consome os limites. Simulação e
           falha não contam — senão testar queimaria a cota do dia.
+        </p>
+      </section>
+
+      {/* ---- A barreira da campanha ---- */}
+      <section className="space-y-3 border-t border-[var(--color-borda)] pt-5">
+        <h3 className="text-sm font-medium">Modo de envio</h3>
+
+        <div
+          className={
+            c.dryRun
+              ? 'rounded-lg border border-[var(--color-borda)] bg-[var(--color-fundo)] p-3'
+              : 'rounded-lg border border-[var(--color-alerta)] bg-[var(--color-alerta-bg)] p-3'
+          }
+        >
+          <Checkbox
+            rotulo="Simulação — nada é enviado de verdade (recomendado)"
+            checked={c.dryRun}
+            onChange={(e) => {
+              // Desligar a simulação é a única mudança desta tela que
+              // pode fazer uma mensagem chegar a um desconhecido.
+              if (!e.target.checked) {
+                const ok = window.confirm(
+                  'Desligar a simulação desta campanha.\n\n' +
+                    'As mensagens enfileiradas A PARTIR DE AGORA poderão ser ' +
+                    'enviadas de verdade, se as outras barreiras também ' +
+                    'estiverem abertas.\n\n' +
+                    'Mensagem entregue não tem como voltar atrás. Continuar?'
+                );
+                if (!ok) return;
+              }
+              mudar({ dryRun: e.target.checked });
+            }}
+          />
+
+          {!c.dryRun && (
+            <p className="mt-2 text-sm text-[var(--color-alerta)]">
+              Esta campanha está liberada para envio real. Ela ainda depende
+              das outras barreiras — a trava de fase no código e o{' '}
+              <code>WHATSAPP_MODE</code> no <code>.env</code>.
+            </p>
+          )}
+        </div>
+
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          Vale só para o que for enfileirado <strong>depois</strong> de
+          salvar. As mensagens já na fila mantêm o modo com que nasceram —
+          liberar a campanha não transforma em envio real o que já estava
+          agendado.
         </p>
       </section>
 

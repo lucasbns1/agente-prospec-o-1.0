@@ -86,6 +86,9 @@ const campanhaSchema = campanhaBase
 /** Versao parcial para PATCH, com as mesmas validacoes cruzadas. */
 const campanhaPatchSchema = campanhaBase
   .partial()
+  // `dryRun` so na EDICAO, nunca na criacao: toda campanha nasce em
+  // simulacao, e liberar precisa ser um ato separado e deliberado.
+  .extend({ dryRun: z.boolean().optional() })
   .refine(
     (d) =>
       d.delayMinSegundos === undefined ||

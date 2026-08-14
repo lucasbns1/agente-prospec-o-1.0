@@ -945,6 +945,7 @@ export function CampanhaDetalhe() {
                   delayMinSegundos: campanha.delayMinSegundos,
                   delayMaxSegundos: campanha.delayMaxSegundos,
                   maxLeads: campanha.maxLeads,
+                  dryRun: campanha.dryRun,
                 }}
               />
             </CardContent>

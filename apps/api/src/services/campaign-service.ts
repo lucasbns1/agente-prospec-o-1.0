@@ -537,7 +537,18 @@ export async function enfileirarCampanha(
           textoTemplate: template,
           variaveisUsadas: variaveis as Prisma.InputJsonValue,
           scheduledAt,
-          dryRun: true,
+          // Herdado da campanha, e nao fixo em `true`.
+          //
+          // Fixo, a barreira #4 nunca caia: mesmo com a trava de fase
+          // aberta, o modo global em `live` e a campanha liberada, toda
+          // mensagem nascia simulada e nada saia. Era uma quinta trava
+          // escondida — pior do que uma trava a mais, porque ninguem
+          // sabia dela.
+          //
+          // Congelado no enfileiramento de proposito: liberar a campanha
+          // depois NAO transforma em envio real o que ja esta na fila.
+          // Quem quiser isso reenfileira, e a decisao fica explicita.
+          dryRun: campanha.dryRun,
         },
       });
 
