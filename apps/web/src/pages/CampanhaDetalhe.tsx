@@ -21,9 +21,24 @@ import { formatarNumero, formatarDataHora, cn } from '@/lib/utils';
 import { FiltrosLead, type Filtros } from '@/components/campanha/FiltrosLead';
 import { varianteStatus, rotuloStatusCampanha } from '@/pages/Campanhas';
 
+/**
+ * Atalhos de variavel oferecidos abaixo do texto.
+ *
+ * Os dois primeiros sao os corretos para prospeccao:
+ *
+ *   nome_abordagem       so o nome de uma PESSOA declarada. Sem ela, a
+ *                        saudacao vira "Oi!" — nunca "Oi, Barbearia!"
+ *   nome_estabelecimento o nome do lugar, para "Encontrei o X no Google"
+ *
+ * `nome`, `primeiro_nome` e `empresa` continuam na lista por causa das
+ * campanhas ja escritas, mas ficam no FIM: quem monta um texto novo deve
+ * tropecar primeiro nos dois de cima.
+ */
 const VARIAVEIS = [
-  'nome', 'primeiro_nome', 'empresa', 'cidade', 'bairro', 'estado',
-  'categoria', 'telefone', 'avaliacao', 'totalAvaliacoes',
+  'nome_abordagem', 'nome_estabelecimento',
+  'cidade', 'bairro', 'estado', 'categoria', 'telefone',
+  'avaliacao', 'totalAvaliacoes',
+  'empresa', 'nome', 'primeiro_nome',
 ];
 
 interface Etapa {
@@ -250,7 +265,7 @@ function EditorEtapas({ campanha }: { campanha: Campanha }) {
               aria-label={`Texto da etapa ${i + 1}`}
               rows={4}
               value={etapa.texto}
-              placeholder="Olá, {{nome}}! Vi a {{empresa}} no Google, em {{cidade}}…"
+              placeholder="Oi, {{nome_abordagem}}! Encontrei o {{nome_estabelecimento}} no Google…"
               onChange={(e) => atualizar(i, { texto: e.target.value })}
             />
 
