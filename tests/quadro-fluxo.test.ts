@@ -50,6 +50,13 @@ beforeEach(async () => {
 
 let n = 0;
 
+/** Mesmo caminho da rota `contar-leads`: monta o WHERE e conta. */
+async function contar(
+  filtros: Parameters<typeof servico.montarWhere>[0]
+): Promise<number> {
+  return prisma.lead.count({ where: servico.montarWhere(filtros) });
+}
+
 async function criarLead(dados: Record<string, unknown> = {}) {
   n += 1;
   return prisma.lead.create({
@@ -170,6 +177,61 @@ describe('enfileirar cria o vínculo lead <-> campanha', () => {
     expect(v.etapaAtualOrdem).toBe(2);
     expect(v.status).toBe('AGUARDANDO_RESPOSTA');
     expect(v.totalEnviadas).toBe(2);
+  });
+});
+
+describe('campanha em cima de um lote específico', () => {
+  it('o filtro por planilha separa nichos diferentes', async () => {
+    const psicologos = await prisma.captureSession.create({
+      data: { nicho: 'psicólogos', cidade: 'Campinas', estado: 'SP' },
+    });
+    const saloes = await prisma.captureSession.create({
+      data: { nicho: 'salões', cidade: 'Osasco', estado: 'SP' },
+    });
+
+    await criarLead({ captureSessionId: psicologos.id });
+    await criarLead({ captureSessionId: psicologos.id });
+    await criarLead({ captureSessionId: saloes.id });
+
+    // Sem o filtro, "todos os leads sem site" pegaria as duas planilhas
+    // e a mensagem de psicólogo iria para um salão.
+    const so = await contar({ captureSessionIds: [psicologos.id] });
+    expect(so).toBe(2);
+
+    const ambos = await contar({
+      captureSessionIds: [psicologos.id, saloes.id],
+    });
+    expect(ambos).toBe(3);
+  });
+
+  it('sem filtro de lote, o público continua sendo todo mundo', async () => {
+    const s = await prisma.captureSession.create({
+      data: { nicho: 'psicólogos', cidade: 'Campinas' },
+    });
+    await criarLead({ captureSessionId: s.id });
+    await criarLead(); // sem lote nenhum
+
+    expect(await contar({})).toBe(2);
+  });
+
+  it('dá para combinar planilha classificada com arquivo solto', async () => {
+    const s = await prisma.captureSession.create({
+      data: { nicho: 'psicólogos', cidade: 'Campinas' },
+    });
+    const imp = await prisma.import.create({
+      data: { nomeArquivo: 'antiga.csv', formato: 'csv', status: 'CONCLUIDO' },
+    });
+
+    await criarLead({ captureSessionId: s.id });
+    await criarLead({ importId: imp.id });
+    await criarLead();
+
+    const total = await contar({
+      captureSessionIds: [s.id],
+      importIds: [imp.id],
+    });
+    // Os dois entram como OR — é uma combinação legítima.
+    expect(total).toBe(2);
   });
 });
 

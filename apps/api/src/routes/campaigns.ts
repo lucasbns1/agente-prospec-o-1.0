@@ -42,6 +42,8 @@ const filtrosSchema = z
     apenasNuncaContatados: z.boolean().optional(),
     status: z.array(z.string()).optional(),
     origem: z.array(z.string()).optional(),
+    captureSessionIds: z.array(z.string().uuid()).optional(),
+    importIds: z.array(z.string().uuid()).optional(),
   })
   .strict();
 

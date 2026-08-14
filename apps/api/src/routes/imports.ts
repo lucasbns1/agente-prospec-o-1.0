@@ -197,11 +197,38 @@ export async function rotasImports(app: FastifyInstance): Promise<void> {
         // Reanalisa: o estado do banco pode ter mudado desde a previa.
         const analise = await analisarArquivo(buffer, nomeArquivo, mapeamento);
 
+        // --- Classificacao do lote ---
+        //
+        // "psicologos em Campinas" e o que voce escreve ao subir a
+        // planilha. Vira uma CaptureSession, que etiqueta a importacao E
+        // cada lead dela — e e isso que permite montar a campanha em
+        // cima daquele lote especifico, em vez de "todos os leads sem
+        // site", misturando planilhas de nichos diferentes.
+        //
+        // Opcional: sem nicho e cidade, a importacao segue como antes.
+        const nicho = campoTexto(fields, 'nicho');
+        const cidade = campoTexto(fields, 'cidade');
+
+        let captureSessionId: string | null = null;
+        if (nicho && cidade) {
+          const sessao = await prisma.captureSession.create({
+            data: {
+              nicho,
+              cidade,
+              estado: campoTexto(fields, 'estado') ?? null,
+              observacao: campoTexto(fields, 'observacao') ?? null,
+              userId: request.usuario?.id ?? null,
+            },
+          });
+          captureSessionId = sessao.id;
+        }
+
         const resultado = await executarImportacao(analise, {
           nomeArquivo,
           formato: analise.formato,
           userId: request.usuario?.id ?? null,
           somenteSemSite,
+          captureSessionId,
         });
 
         request.log.info(
@@ -238,11 +265,65 @@ export async function rotasImports(app: FastifyInstance): Promise<void> {
           totalLinhas: true, totalImportados: true, totalDuplicados: true,
           totalInvalidos: true, totalIgnorados: true,
           iniciadoEm: true, concluidoEm: true, createdAt: true,
+          captureSession: {
+            select: { id: true, nicho: true, cidade: true, estado: true },
+          },
         },
       });
       return { imports };
     }
   );
+
+  /**
+   * Lotes disponiveis para montar uma campanha.
+   *
+   * Um "lote" e uma planilha classificada ("psicologos em Campinas") ou,
+   * quando ela nao foi classificada, o proprio arquivo. A contagem de
+   * leads vem junto: escolher um lote as cegas e como montar publico no
+   * escuro — voce so descobriria o tamanho na previa.
+   */
+  app.get('/api/imports/lotes', { preHandler: exigirAutenticacao }, async () => {
+    const sessoes = await prisma.captureSession.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true, nicho: true, cidade: true, estado: true, createdAt: true,
+        _count: { select: { leads: true } },
+      },
+    });
+
+    // Importacoes sem classificacao continuam selecionaveis pelo nome do
+    // arquivo — quem importou antes desta tela nao fica sem opcao.
+    const semClassificacao = await prisma.import.findMany({
+      where: { captureSessionId: null, status: 'CONCLUIDO' },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        nomeArquivo: true,
+        createdAt: true,
+        _count: { select: { leads: true } },
+      },
+    });
+
+    return {
+      sessoes: sessoes.map((s) => ({
+        id: s.id,
+        rotulo: `${s.nicho} em ${s.cidade}${s.estado ? `/${s.estado}` : ''}`,
+        totalLeads: s._count.leads,
+        createdAt: s.createdAt,
+      })),
+      arquivos: semClassificacao
+        // Importacao que nao gerou lead nenhum so polui a lista.
+        .filter((i) => i._count.leads > 0)
+        .map((i) => ({
+          id: i.id,
+          rotulo: i.nomeArquivo,
+          totalLeads: i._count.leads,
+          createdAt: i.createdAt,
+        })),
+    };
+  });
 
   /** Detalhe de uma importacao, com as linhas problematicas. */
   app.get<{ Params: { id: string } }>(

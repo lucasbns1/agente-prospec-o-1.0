@@ -12,7 +12,9 @@ import {
   Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle,
   Copy, Globe, PhoneOff, ArrowLeft, Loader2,
 } from 'lucide-react';
-import { Button, Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui/primitives';
+import {
+  Button, Card, CardContent, CardHeader, CardTitle, Badge, Input, Label,
+} from '@/components/ui/primitives';
 import { ApiError } from '@/lib/api';
 import { formatarNumero, cn } from '@/lib/utils';
 
@@ -115,6 +117,12 @@ export function Importar() {
   const [relatorio, setRelatorio] = useState<Relatorio | null>(null);
   const [somenteSemSite, setSomenteSemSite] = useState(false);
 
+  // Classificação do lote — vira o rótulo pelo qual você escolhe esta
+  // planilha na hora de montar a campanha.
+  const [nicho, setNicho] = useState('');
+  const [cidade, setCidade] = useState('');
+  const [estado, setEstado] = useState('');
+
   const analisar = useMutation({
     mutationFn: async (f: File) => {
       const fd = new FormData();
@@ -137,6 +145,13 @@ export function Importar() {
       const fd = new FormData();
       fd.append('arquivo', arquivo);
       fd.append('somenteSemSite', String(somenteSemSite));
+      // Só vira um lote classificado quando os dois vêm preenchidos:
+      // "psicólogos" sem cidade não identifica planilha nenhuma.
+      if (nicho.trim() && cidade.trim()) {
+        fd.append('nicho', nicho.trim());
+        fd.append('cidade', cidade.trim());
+        if (estado.trim()) fd.append('estado', estado.trim().toUpperCase());
+      }
       const r = await fetch('/api/imports/confirmar', {
         method: 'POST', body: fd, credentials: 'include',
       });
@@ -346,6 +361,69 @@ export function Importar() {
                 </tbody>
               </table>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Classificação do lote.
+            Sem isto, meses depois "todos os leads sem site" mistura a
+            planilha de psicólogos de Campinas com a de salões de Osasco,
+            e não há como montar uma campanha só para uma delas. */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Classificar esta planilha</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-[var(--color-texto-suave)]">
+              Dá um nome ao lote. É por ele que você escolhe esta planilha
+              na hora de criar a campanha.
+            </p>
+
+            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_100px]">
+              <div>
+                <Label htmlFor="imp-nicho">Nicho</Label>
+                <Input
+                  id="imp-nicho"
+                  value={nicho}
+                  onChange={(e) => setNicho(e.target.value)}
+                  placeholder="psicólogos"
+                />
+              </div>
+              <div>
+                <Label htmlFor="imp-cidade">Cidade</Label>
+                <Input
+                  id="imp-cidade"
+                  value={cidade}
+                  onChange={(e) => setCidade(e.target.value)}
+                  placeholder="Campinas"
+                />
+              </div>
+              <div>
+                <Label htmlFor="imp-estado">UF</Label>
+                <Input
+                  id="imp-estado"
+                  value={estado}
+                  maxLength={2}
+                  onChange={(e) => setEstado(e.target.value)}
+                  placeholder="SP"
+                />
+              </div>
+            </div>
+
+            {nicho.trim() && cidade.trim() ? (
+              <p className="text-sm">
+                Este lote vai se chamar{' '}
+                <strong>
+                  {nicho.trim()} em {cidade.trim()}
+                  {estado.trim() ? `/${estado.trim().toUpperCase()}` : ''}
+                </strong>
+                .
+              </p>
+            ) : (
+              <p className="text-xs text-[var(--color-texto-fraco)]">
+                Opcional. Sem nicho e cidade, a planilha entra sem
+                classificação e você só a encontra pelo nome do arquivo.
+              </p>
+            )}
           </CardContent>
         </Card>
 

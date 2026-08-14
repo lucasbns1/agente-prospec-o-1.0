@@ -32,6 +32,15 @@ export interface FiltrosCampanha extends CriteriosQualificacao {
   /** Filtro adicional aplicado no SQL, antes da qualificacao. */
   status?: string[];
   origem?: string[];
+  /**
+   * Lotes de importacao. E o filtro que responde "faca a campanha em
+   * cima da planilha de psicologos de Campinas que subi ontem" — sem
+   * ele, o publico e sempre "todos os leads que casam com os criterios",
+   * misturando nichos e cidades de planilhas diferentes.
+   */
+  captureSessionIds?: string[];
+  /** Lotes por arquivo, quando a importacao nao foi classificada. */
+  importIds?: string[];
   /** true = exclui quem ja recebeu mensagem de QUALQUER campanha. */
   excluirJaContatados?: boolean;
 }
@@ -91,6 +100,18 @@ export function montarWhere(filtros: FiltrosCampanha): Prisma.LeadWhereInput {
   if (filtros.tags?.length) condicoes.push({ tags: { hasSome: filtros.tags } });
   if (filtros.status?.length) condicoes.push({ status: { in: filtros.status as never[] } });
   if (filtros.origem?.length) condicoes.push({ origem: { in: filtros.origem } });
+
+  // Lote: por sessao de captura (planilha classificada) ou por arquivo.
+  // Os dois entram como OR — escolher "psicologos Campinas" e mais uma
+  // planilha solta e uma combinacao legitima.
+  const lotes: Prisma.LeadWhereInput[] = [];
+  if (filtros.captureSessionIds?.length) {
+    lotes.push({ captureSessionId: { in: filtros.captureSessionIds } });
+  }
+  if (filtros.importIds?.length) {
+    lotes.push({ importId: { in: filtros.importIds } });
+  }
+  if (lotes.length > 0) condicoes.push({ OR: lotes });
 
   if (filtros.excluirJaContatados || filtros.apenasNuncaContatados) {
     condicoes.push({ messages: { none: { direcao: 'ENVIADA' } } });

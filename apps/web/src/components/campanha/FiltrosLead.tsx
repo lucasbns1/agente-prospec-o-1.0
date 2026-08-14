@@ -9,9 +9,9 @@
  * — nao grava nada e nao enfileira nada.
  */
 import { useEffect, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { Users, Loader2 } from 'lucide-react';
-import { post } from '@/lib/api';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Users, Loader2, FileSpreadsheet } from 'lucide-react';
+import { get, post } from '@/lib/api';
 import { Input, Label, Checkbox } from '@/components/ui/primitives';
 
 export interface Filtros {
@@ -27,6 +27,16 @@ export interface Filtros {
   categorias?: string[];
   tags?: string[];
   apenasNuncaContatados?: boolean;
+  /** Planilhas classificadas ("psicólogos em Campinas"). */
+  captureSessionIds?: string[];
+  /** Planilhas sem classificação, escolhidas pelo nome do arquivo. */
+  importIds?: string[];
+}
+
+interface Lote {
+  id: string;
+  rotulo: string;
+  totalLeads: number;
 }
 
 /** "Campinas, Santos" => ["Campinas", "Santos"]. Vazio vira undefined. */
@@ -57,6 +67,24 @@ export function FiltrosLead({
     mutationFn: (f: Filtros) => post<{ total: number }>('/api/campaigns/contar-leads', f),
   });
 
+  const { data: lotes } = useQuery({
+    queryKey: ['lotes'],
+    queryFn: () => get<{ sessoes: Lote[]; arquivos: Lote[] }>('/api/imports/lotes'),
+  });
+
+  /** Liga/desliga um lote sem apagar os outros já escolhidos. */
+  const alternarLote = (
+    campo: 'captureSessionIds' | 'importIds',
+    id: string,
+    marcado: boolean
+  ): void => {
+    const atual = valor[campo] ?? [];
+    const novo = marcado ? [...atual, id] : atual.filter((x) => x !== id);
+    // Lista vazia vira `undefined`: um array vazio no filtro significaria
+    // "nenhum lote serve" e zeraria o público sem querer.
+    mudar({ [campo]: novo.length > 0 ? novo : undefined } as Partial<Filtros>);
+  };
+
   // Recontagem com atraso: sem isso cada tecla digitada em "cidades"
   // viraria uma consulta ao banco.
   useEffect(() => {
@@ -80,8 +108,55 @@ export function FiltrosLead({
       ...(marcado ? { [oposto]: undefined } : {}),
     } as Partial<Filtros>);
 
+  const totalLotes =
+    (lotes?.sessoes.length ?? 0) + (lotes?.arquivos.length ?? 0);
+  const nenhumLoteEscolhido =
+    !valor.captureSessionIds?.length && !valor.importIds?.length;
+
   return (
     <div className="space-y-5">
+      {/* Lotes primeiro: escolher a planilha é a decisão mais grossa do
+          público. Os filtros abaixo refinam dentro do que foi escolhido. */}
+      {totalLotes > 0 && (
+        <div className="space-y-2 rounded-lg border border-[var(--color-borda)] p-3">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet
+              className="h-4 w-4 text-[var(--color-texto-suave)]"
+              aria-hidden="true"
+            />
+            <span className="text-sm font-medium">Planilhas</span>
+          </div>
+
+          <p className="text-xs text-[var(--color-texto-suave)]">
+            {nenhumLoteEscolhido
+              ? 'Nenhuma escolhida — a campanha considera todos os leads.'
+              : 'A campanha usa só os leads das planilhas marcadas.'}
+          </p>
+
+          <div className="space-y-1.5 pt-1">
+            {lotes?.sessoes.map((s) => (
+              <Checkbox
+                key={s.id}
+                rotulo={`${s.rotulo} (${s.totalLeads})`}
+                checked={valor.captureSessionIds?.includes(s.id) ?? false}
+                onChange={(e) =>
+                  alternarLote('captureSessionIds', s.id, e.target.checked)
+                }
+              />
+            ))}
+
+            {lotes?.arquivos.map((a) => (
+              <Checkbox
+                key={a.id}
+                rotulo={`${a.rotulo} (${a.totalLeads}) — sem classificação`}
+                checked={valor.importIds?.includes(a.id) ?? false}
+                onChange={(e) => alternarLote('importIds', a.id, e.target.checked)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <Checkbox
           rotulo="Só leads com telefone"
