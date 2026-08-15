@@ -142,6 +142,51 @@ async function main(): Promise<void> {
   }
 
   // ------------------------------------------------------------
+  // O REDIS TAMBEM
+  // ------------------------------------------------------------
+  // O reset limpava o Postgres e deixava as filas intactas. Isso e um
+  // problema silencioso: o `jobId` de uma mensagem recebida e
+  // `inbound-<id do WhatsApp>`, e o BullMQ guarda os jobs concluidos.
+  //
+  // Depois de um reset, se a MESMA mensagem do WhatsApp for oferecida de
+  // novo — e a varredura na reconexao faz exatamente isso —, o BullMQ
+  // reconhece o jobId, considera duplicata e DESCARTA antes de qualquer
+  // trabalho. O banco esta vazio, a mensagem existe no celular, e nao
+  // ha registro em lugar nenhum de que ela foi ignorada.
+  //
+  // Jobs de saida pendentes tambem precisam sumir: eles apontam para
+  // `outbound_messages` que acabaram de ser apagadas.
+  try {
+    const { Queue } = await import('bullmq');
+    const url = new URL(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379');
+    const connection = {
+      host: url.hostname,
+      port: Number(url.port || 6379),
+      ...(url.password ? { password: url.password } : {}),
+      maxRetriesPerRequest: null,
+    };
+
+    for (const nome of [
+      'process_incoming_message',
+      'outbound_send',
+      'send_message',
+      'advance_campaign',
+    ]) {
+      const q = new Queue(nome, { connection });
+      await q.obliterate({ force: true });
+      await q.close();
+    }
+    console.log('  filas do Redis          limpas');
+  } catch (err) {
+    // Nao aborta: o Postgres ja foi limpo, e obrigar a comecar de novo
+    // por causa do Redis seria pior. Mas o aviso e obrigatorio — sem
+    // ele voce nao saberia que os jobIds antigos continuam la.
+    console.log(`  filas do Redis          NÃO limpas (${String(err).slice(0, 60)})`);
+    console.log('    O Memurai está rodando? Mensagens repetidas podem ser');
+    console.log('    descartadas como duplicadas até você limpá-las.');
+  }
+
+  // ------------------------------------------------------------
   // A LINHA DO TEMPO TAMBEM PRECISA RECOMECAR
   // ------------------------------------------------------------
   // O reset apaga o banco, mas NAO apaga a conversa no WhatsApp — nem

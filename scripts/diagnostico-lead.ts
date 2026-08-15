@@ -260,6 +260,66 @@ async function main(): Promise<void> {
   }
 
   // ------------------------------------------------------------
+  // AS FILAS DO REDIS
+  //
+  // O banco vazio tem duas causas muito diferentes, e ate agora nao
+  // dava para distinguir:
+  //
+  //   a) o evento do WhatsApp nunca chegou     -> fila vazia
+  //   b) chegou, entrou na fila e travou la    -> fila com jobs presos
+  //
+  // Sao consertos opostos. Olhar so o Postgres mostra "0 respostas" nos
+  // dois casos.
+  //
+  // `failed` e o mais importante: um job que falhou 3 vezes fica ali em
+  // silencio. Ninguem olha o Redis, e a mensagem do cliente some sem
+  // deixar rastro em lugar nenhum.
+  // ------------------------------------------------------------
+  titulo('FILAS (Redis)');
+  try {
+    const { Queue } = await import('bullmq');
+    const url = new URL(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379');
+    const connection = {
+      host: url.hostname,
+      port: Number(url.port || 6379),
+      ...(url.password ? { password: url.password } : {}),
+      maxRetriesPerRequest: null,
+    };
+
+    for (const nome of ['process_incoming_message', 'outbound_send']) {
+      const q = new Queue(nome, { connection });
+      const c = await q.getJobCounts(
+        'waiting', 'active', 'delayed', 'completed', 'failed'
+      );
+      console.log(
+        `  ${nome.padEnd(26)} aguardando ${c.waiting} | ativo ${c.active} | ` +
+          `adiado ${c.delayed} | concluído ${c.completed} | FALHOU ${c.failed}`
+      );
+
+      if ((c.failed ?? 0) > 0) {
+        const falhos = await q.getFailed(0, 4);
+        for (const j of falhos) {
+          console.log(`      job ${j.id}: ${j.failedReason?.slice(0, 160) ?? '?'}`);
+        }
+      }
+      await q.close();
+    }
+  } catch (err) {
+    console.log(`  Não consegui ler as filas: ${String(err)}`);
+    console.log('  O Memurai/Redis está rodando?');
+  }
+
+  // Marca do reset — se ela for depois da resposta, a varredura ignora.
+  const marca = await prisma.setting.findUnique({
+    where: { chave: 'canal.varredura_desde' },
+  });
+  if (typeof marca?.valor === 'string') {
+    console.log(
+      `\n  varredura ignora respostas anteriores a ${new Date(marca.valor).toLocaleString('pt-BR')}`
+    );
+  }
+
+  // ------------------------------------------------------------
   // VEREDICTO
   //
   // Escrito como uma cascata na ordem em que as coisas acontecem: a
