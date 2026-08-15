@@ -44,6 +44,9 @@ import type { Worker } from 'bullmq';
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 config({ path: path.join(raiz, '.env') });
 process.env.LOG_LEVEL = 'silent';
+// Sem isto, os tres casos de travamento esperariam 90s cada — quatro
+// minutos e meio de suite parada para exercitar um `Promise.race`.
+process.env.ENVIO_TIMEOUT_SEGUNDOS = '1';
 
 const log = {
   error: () => {}, info: () => {}, warn: () => {}, debug: () => {},
@@ -480,4 +483,174 @@ describe('envio interrompido no meio', () => {
     expect(depois.status).toBe('ENVIADA');
     expect(depois.erro).toBeNull();
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// O ENVIO QUE TRAVA MAS SAI
+//
+// `sendMessage` às vezes entrega a mensagem e nunca resolve a promessa.
+// O código anterior só podia supor, e escolhia o caminho conservador:
+// FALHOU, "PODE ter saído".
+//
+// Só que ela tinha saído — três vezes seguidas em uso real. Mensagem
+// entregue no celular do lead às 12:47 e a fila marcando "Falhou". A
+// sequência parava numa falha que não existia: a etapa não avançava, e
+// a mensagem 3 nunca nascia.
+//
+// O WhatsApp sabe a resposta. A mensagem está na conversa.
+// ---------------------------------------------------------------------------
+describe('envio que trava mas chega', () => {
+  /**
+   * Adapter que reproduz o travamento: `sendMessage` nunca resolve.
+   *
+   * `saiu` decide o que a conversa vai dizer quando for consultada — é
+   * a diferença entre "travou e chegou" e "travou e não chegou".
+   */
+  function adapterQueTrava(saiu: boolean) {
+    const consultas: Array<{ texto: string; desde: Date }> = [];
+    return {
+      adapter: {
+        modo: 'live' as const,
+        sendMessage: () => new Promise<never>(() => {}),
+        confirmarEnvio: async (_t: string, texto: string, desde: Date) => {
+          consultas.push({ texto, desde });
+          return saiu ? 'wa-confirmado-123' : null;
+        },
+        isRegistered: async () => true,
+        getContacts: async () => [],
+        mensagensPerdidas: async () => [],
+        connect: async () => {},
+        disconnect: async () => {},
+        getStatus: () => ({ status: 'CONECTADO', modo: 'live' }),
+        onReady: () => {},
+        onQr: () => {},
+        onMessage: () => {},
+        onDisconnected: () => {},
+        onStatusChange: () => {},
+      } as never,
+      consultas,
+    };
+  }
+
+  async function enviarCom(adapter: never, dryRunCampanha: boolean) {
+    const { criarWorkerOutbound } = await import(
+      '../apps/worker/src/workers/outbound.js'
+    );
+
+    const lead = await criarLead();
+    const { campanha, etapas } = await criarCampanha(true);
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: dryRunCampanha },
+    });
+
+    // O vínculo é o que o quadro lê. Sem ele, o `updateMany` do worker
+    // não encontra linha e o avanço de etapa passa despercebido — que é
+    // justamente o que este teste precisa observar.
+    await prisma.leadCampaign.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        status: 'PENDENTE',
+      },
+    });
+
+    const m = await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `trava-${Date.now()}-${n}`,
+        status: 'AGENDADA',
+        telefoneDestino: lead.telefoneNormalizado,
+        textoRenderizado: 'Olá!',
+        textoTemplate: 'Olá!',
+        variaveisUsadas: {},
+        dryRun: dryRunCampanha,
+        scheduledAt: new Date(),
+      },
+    });
+
+    // Worker próprio, com o adapter que trava. O de cima não serve: ele
+    // responde na hora.
+    //
+    // `WHATSAPP_MODE=live` só aqui: sem ele o worker toma o caminho de
+    // simulação e nunca chega a chamar `sendMessage` — não haveria
+    // travamento nenhum para exercitar. O adapter continua sendo de
+    // mentira, então nada sai.
+    const modoAntes = process.env.WHATSAPP_MODE;
+    process.env.WHATSAPP_MODE = 'live';
+
+    // O worker do `beforeAll` escuta a MESMA fila e responde na hora —
+    // ele pegaria o job antes deste e o travamento nunca aconteceria.
+    // Levou uma rodada de teste para aparecer.
+    await workerOutbound.pause();
+
+    const w = criarWorkerOutbound(log, adapter);
+    await w.waitUntilReady();
+    try {
+      await processarFila();
+    } finally {
+      await w.close();
+      await workerOutbound.resume();
+      if (modoAntes === undefined) delete process.env.WHATSAPP_MODE;
+      else process.env.WHATSAPP_MODE = modoAntes;
+    }
+
+    return { m, lead, etapas };
+  }
+
+  it('travou mas a mensagem ESTÁ na conversa: conta como enviada', async () => {
+    const { adapter, consultas } = adapterQueTrava(true);
+    const { m, lead, etapas } = await enviarCom(adapter, false);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+
+    // Antes: FALHOU, e a sequência morria numa falha que não existia.
+    expect(depois.status).toBe('ENVIADA');
+
+    // O id do WhatsApp fica na mensagem gravada, não na linha da fila —
+    // e é ele que amarra a confirmação de entrega (ACK) depois.
+    const gravada = await prisma.message.findFirstOrThrow({
+      where: { leadId: lead.id, direcao: 'ENVIADA' },
+    });
+    expect(gravada.whatsappMessageId).toBe('wa-confirmado-123');
+    expect(gravada.simulada).toBe(false);
+
+    // E a etapa avança — que era o ponto de tudo isto.
+    const vinculo = await prisma.leadCampaign.findFirst({ where: { leadId: lead.id } });
+    expect(vinculo?.etapaAtualId).toBe(etapas[0]!.id);
+
+    // A busca na conversa olha para trás a partir do envio, não do
+    // início dos tempos: uma janela larga demais acharia uma mensagem
+    // idêntica de outra campanha.
+    expect(consultas).toHaveLength(1);
+    expect(consultas[0]!.texto).toBe('Olá!');
+    expect(consultas[0]!.desde.getTime()).toBeLessThan(Date.now());
+  }, 60_000);
+
+  it('travou e NÃO está na conversa: aí sim é falha', async () => {
+    const { adapter } = adapterQueTrava(false);
+    const { m } = await enviarCom(adapter, false);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    expect(depois.status).toBe('FALHOU');
+    expect(depois.erro).toMatch(/PODE ter saído/i);
+  }, 60_000);
+
+  it('não reenvia sozinho nem quando não confirmou', async () => {
+    const { adapter } = adapterQueTrava(false);
+    const { m } = await enviarCom(adapter, false);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    // "Não achei" não é o mesmo que "não saiu". Devolver para a fila
+    // mandaria a mesma frase duas vezes na conversa de um cliente.
+    expect(depois.status).not.toBe('AGENDADA');
+  }, 60_000);
 });

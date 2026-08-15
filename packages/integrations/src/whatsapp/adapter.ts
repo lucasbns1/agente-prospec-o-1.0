@@ -109,6 +109,28 @@ export interface WhatsAppAdapter extends WhatsAppAdapterEvents {
    * seguro.
    */
   mensagensPerdidas(desde: Date): Promise<MensagemEntrada[]>;
+
+  /**
+   * O envio saiu mesmo? Confere na conversa.
+   *
+   * ============================================================
+   * POR QUE PERGUNTAR EM VEZ DE SUPOR
+   * ============================================================
+   * `sendMessage` as vezes entrega a mensagem e nunca resolve a
+   * promessa. Ate agora a unica saida era supor, e o sistema escolhia o
+   * caminho conservador: marcar FALHOU dizendo "PODE ter saido".
+   *
+   * So que ela tinha saido — sempre. Visto em uso real tres vezes
+   * seguidas: mensagem entregue no celular do lead as 12:47, fila
+   * marcando "Falhou". A sequencia parava numa falha que nao existia, e
+   * a etapa seguinte nunca era agendada.
+   *
+   * O WhatsApp sabe a resposta: a mensagem esta la na conversa.
+   *
+   * `null` significa "nao achei OU nao consegui conferir" — nunca "com
+   * certeza nao saiu". Quem chama trata isso como incerteza.
+   */
+  confirmarEnvio(telefone: string, texto: string, desde: Date): Promise<string | null>;
 }
 
 /** Converte "5519999998888" -> "5519999998888@c.us". */

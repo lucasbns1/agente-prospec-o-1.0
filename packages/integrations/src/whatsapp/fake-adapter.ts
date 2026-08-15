@@ -110,6 +110,14 @@ export class FakeWhatsAppAdapter implements WhatsAppAdapter {
     return [];
   }
 
+  /**
+   * A simulacao nunca trava, entao nunca precisa ser conferida.
+   * `null` = "nao achei", que e a verdade aqui.
+   */
+  async confirmarEnvio(): Promise<string | null> {
+    return null;
+  }
+
   // --- Eventos ---
   onReady(h: (s: StatusConexao) => void): void {
     this.readyHandlers.push(h);

@@ -104,6 +104,17 @@ export interface ProvedorWhatsApp {
    * processado colide na constraint e e descartado.
    */
   mensagensDesde(desde: Date, maxPorConversa?: number): Promise<MensagemProvedor[]>;
+
+  /**
+   * Procura na conversa uma mensagem NOSSA com este texto, a partir de
+   * `desde`. Devolve o id dela, ou `null` quando nao achou ou nao deu
+   * para conferir.
+   *
+   * Existe porque `enviar` as vezes entrega a mensagem e nunca resolve
+   * a promessa. Sem isto, a unica saida era supor — e supor errado
+   * marcava como falha um envio que deu certo, parando a sequencia.
+   */
+  procurarEnviada(chatId: string, texto: string, desde: Date): Promise<string | null>;
 }
 
 export interface OpcoesProvedor {

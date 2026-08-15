@@ -427,6 +427,20 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
       }));
   }
 
+  /**
+   * Confere na conversa se a mensagem saiu.
+   *
+   * Usa o MESMO `telefoneParaChatId` do envio: procurar noutro chat
+   * daria "nao achei" para uma mensagem que esta la.
+   */
+  async confirmarEnvio(
+    telefone: string,
+    texto: string,
+    desde: Date
+  ): Promise<string | null> {
+    return this.provedor.procurarEnviada(telefoneParaChatId(telefone), texto, desde);
+  }
+
   // ------------------------------------------------- contrato de eventos
   onReady(h: (s: StatusConexao) => void): void {
     this.hReady.push(h);

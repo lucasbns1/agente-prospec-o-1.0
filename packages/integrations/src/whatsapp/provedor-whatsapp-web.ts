@@ -149,6 +149,52 @@ export async function criarProvedorWhatsAppWeb(
     },
 
     /**
+     * Procura na conversa uma mensagem NOSSA com este texto.
+     *
+     * ============================================================
+     * POR QUE PERGUNTAR EM VEZ DE SUPOR
+     * ============================================================
+     * `sendMessage` as vezes entrega a mensagem e nunca resolve a
+     * promessa. Ate agora o sistema so podia dizer "PODE ter saido" e
+     * marcar FALHOU — e a mensagem tinha saido, sempre. A sequencia
+     * parava numa falha que nao existia.
+     *
+     * O WhatsApp sabe a resposta: a mensagem esta na conversa. Basta
+     * olhar.
+     *
+     * A comparacao e por texto exato + janela de tempo, e nao por id,
+     * porque o id e justamente o que nao voltou. Duas mensagens
+     * identicas no mesmo minuto sao indistinguiveis — mas isso e o que
+     * queremos saber ("saiu alguma?"), nao qual delas.
+     */
+    async procurarEnviada(
+      chatId: string,
+      texto: string,
+      desde: Date
+    ): Promise<string | null> {
+      const corte = Math.floor(desde.getTime() / 1000);
+      try {
+        const chat: any = await cliente.getChatById(chatId);
+        const msgs: any[] = await chat.fetchMessages({ limit: 15 });
+
+        for (const m of msgs) {
+          if (!m?.fromMe) continue;
+          if (Number(m?.timestamp ?? 0) < corte) continue;
+          if (String(m?.body ?? '') !== texto) continue;
+          return String(m?.id?._serialized ?? m?.id ?? '');
+        }
+      } catch (err) {
+        // Nao conseguir conferir nao e o mesmo que "nao saiu". Quem
+        // chama trata `null` como "nao sei" e escolhe o caminho
+        // conservador.
+        log('Falha ao conferir se a mensagem saiu', {
+          erro: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return null;
+    },
+
+    /**
      * Le das conversas o que o evento `message` nao entregou.
      *
      * Grupos ficam de fora: prospeccao e conversa de um para um, e

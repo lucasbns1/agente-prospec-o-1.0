@@ -70,8 +70,18 @@ export function decidirDryRun(entrada: {
  *
  * 90 segundos: generoso para um envio lento em maquina carregada, curto
  * o bastante para nao parecer travado.
+ *
+ * Lido do ambiente porque o teste precisa esperar 1 segundo, nao 90 —
+ * tres casos de travamento com o valor real seriam quatro minutos e
+ * meio de suite parada. Valor invalido cai no padrao em vez de virar
+ * `NaN`, que desativaria o limite sem avisar.
  */
-export const SEGUNDOS_ATE_DESISTIR_DO_ENVIO = 90;
+function segundosDoAmbiente(): number {
+  const bruto = Number(process.env.ENVIO_TIMEOUT_SEGUNDOS);
+  return Number.isFinite(bruto) && bruto > 0 ? bruto : 90;
+}
+
+export const SEGUNDOS_ATE_DESISTIR_DO_ENVIO = segundosDoAmbiente();
 
 /** Marca um envio que estourou o tempo limite. */
 export class EnvioSemResposta extends Error {
@@ -317,7 +327,12 @@ export function criarWorkerOutbound(
         },
       });
 
-      let resultadoEnvio: { sucesso: boolean; whatsappMessageId: string | null; simulado: boolean; erro?: string };
+      // `undefined` explicito: entre o timeout e a confirmacao pela
+      // conversa existe um instante em que ainda nao se sabe se a
+      // mensagem saiu. O tipo obriga a decidir antes de seguir.
+      let resultadoEnvio:
+        | { sucesso: boolean; whatsappMessageId: string | null; simulado: boolean; erro?: string }
+        | undefined;
 
       if (dryRun) {
         // O adapter fake registra e loga. Nada sai.
@@ -345,6 +360,10 @@ export function criarWorkerOutbound(
         // Isso e de proposito: se o worker decidisse sozinho, existiriam
         // dois lugares dizendo "pode enviar" — e bastaria um deles estar
         // errado. Aqui a decisao final e sempre do mesmo codigo.
+        // Guardado ANTES da chamada, com folga de 5s: e a partir daqui
+        // que a conversa sera vasculhada se a promessa nao voltar.
+        const antesDoEnvio = new Date(Date.now() - 5_000);
+
         try {
           resultadoEnvio = await comTempoLimite(
             adapter.sendMessage(m.telefoneDestino!, m.textoRenderizado!),
@@ -352,20 +371,55 @@ export function criarWorkerOutbound(
           );
         } catch (err) {
           // ============================================================
-          // O ENVIO NAO RESPONDEU — E PODE TER SAIDO
+          // O ENVIO NAO RESPONDEU — MAS PODE TER SAIDO. PERGUNTE.
           // ============================================================
           // O `whatsapp-web.js` as vezes entrega a mensagem e nunca
-          // resolve a promessa. Visto em uso real: mensagem entregue as
-          // 12:19 no celular do lead, fila presa em "Processando".
+          // resolve a promessa. A versao anterior deste bloco so podia
+          // supor, e escolhia o caminho conservador: FALHOU, "PODE ter
+          // saido".
+          //
+          // So que ela tinha saido — tres vezes seguidas em uso real.
+          // Mensagem entregue no celular do lead as 12:47 e a fila
+          // marcando "Falhou". A sequencia parava numa falha que nao
+          // existia: a etapa nao avancava, e a mensagem 3 nunca nascia.
+          //
+          // O WhatsApp sabe a resposta — a mensagem esta na conversa.
+          // Basta olhar antes de decidir.
+          if (err instanceof EnvioSemResposta) {
+            const idConfirmado = await adapter
+              .confirmarEnvio(m.telefoneDestino!, m.textoRenderizado!, antesDoEnvio)
+              .catch(() => null);
+
+            if (idConfirmado) {
+              log.info(
+                {
+                  outboundMessageId,
+                  etapa: m.campaignStep.ordem,
+                  whatsappMessageId: idConfirmado,
+                },
+                'Envio sem resposta, mas a mensagem ESTA na conversa — tratando como enviada'
+              );
+              // Cai no fluxo normal: grava a mensagem, avanca a etapa e
+              // agenda a proxima. Era exatamente isto que nao acontecia.
+              resultadoEnvio = {
+                sucesso: true,
+                whatsappMessageId: idConfirmado,
+                simulado: false,
+              };
+            }
+          }
+
+          // Nao confirmada na conversa: agora sim e falha.
           //
           // FALHOU e nao AGENDADA, de proposito. Devolver para a fila
-          // reenviaria uma mensagem que provavelmente ja chegou — a
-          // mesma frase duas vezes na conversa de um cliente. Um
-          // incomodo seu custa menos que isso.
+          // reenviaria uma mensagem que pode ter chegado — a mesma frase
+          // duas vezes na conversa de um cliente. Um incomodo seu custa
+          // menos que isso.
           //
           // Marcar aqui, e nao esperar a varredura de orfas, porque
           // aquela so age depois de 10 minutos: ela existe para worker
           // MORTO, nao para worker vivo travado num await.
+          if (!resultadoEnvio) {
           const semResposta = err instanceof EnvioSemResposta;
           await prisma.outboundMessage.update({
             where: { id: outboundMessageId },
@@ -402,6 +456,7 @@ export function criarWorkerOutbound(
           // AGENDADA). Seriam tres tentativas inuteis e tres linhas de
           // erro no log para um caso que ja foi resolvido aqui.
           return { status: 'FALHOU', motivo: 'envio_sem_resposta' };
+          }
         }
 
         if (resultadoEnvio.simulado) {

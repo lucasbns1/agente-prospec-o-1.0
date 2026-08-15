@@ -112,6 +112,14 @@ export class ProvedorSimulado implements ProvedorWhatsApp {
     return [];
   }
 
+  /**
+   * O simulado nunca trava, entao nunca precisa ser conferido.
+   * `null` = "nao achei", que e a verdade.
+   */
+  async procurarEnviada(): Promise<string | null> {
+    return null;
+  }
+
   // ------------------------------------------------------------- controle
   //
   // Os metodos abaixo nao existem no provedor real: sao a alavanca que o
