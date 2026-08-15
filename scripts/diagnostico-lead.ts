@@ -1,0 +1,254 @@
+/**
+ * Por que este lead nao andou?
+ *
+ * ============================================================
+ * POR QUE ISTO EXISTE
+ * ============================================================
+ * Quando a sequencia para, a resposta esta espalhada por seis tabelas:
+ * a mensagem recebida e sua classificacao, o vinculo lead<->campanha, a
+ * fila de saida, as regras da etapa, o historico e as notificacoes.
+ *
+ * Olhar isso pela tela exige abrir cinco lugares e cruzar na cabeca.
+ * Perguntar "o que apareceu na tela?" e pior ainda: a tela mostra o
+ * resultado, nao a causa.
+ *
+ * Este script imprime tudo em ordem cronologica e, no fim, aponta a
+ * causa mais provavel. Ele SO LE — nao altera nada.
+ *
+ *   pnpm diagnostico
+ *   pnpm diagnostico -- 5511984110705
+ */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config } from 'dotenv';
+
+const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+config({ path: path.join(raiz, '.env') });
+
+const alvo = process.argv.slice(2).find((a) => /^\d{8,15}$/.test(a)) ?? null;
+
+function titulo(t: string): void {
+  console.log(`\n${'='.repeat(60)}\n${t}\n${'='.repeat(60)}`);
+}
+
+function hora(d: Date | null): string {
+  return d ? d.toLocaleString('pt-BR') : '—';
+}
+
+async function main(): Promise<void> {
+  const { prisma } = await import('../packages/database/src/index.js');
+
+  // --- Lead ---
+  const lead = alvo
+    ? await prisma.lead.findFirst({ where: { telefoneNormalizado: alvo } })
+    : await prisma.lead.findFirst({ orderBy: { createdAt: 'desc' } });
+
+  if (!lead) {
+    console.log('\nNenhum lead no banco. Importe a planilha primeiro.\n');
+    await prisma.$disconnect();
+    return;
+  }
+
+  titulo('LEAD');
+  console.log(`  nome            ${lead.nomeCompleto ?? '—'}`);
+  console.log(`  empresa         ${lead.empresa ?? '—'}`);
+  console.log(`  nome_contato    ${lead.nomeContato ?? '— (não é pessoa, correto)'}`);
+  console.log(`  telefone        ${lead.telefoneNormalizado ?? '—'}`);
+  console.log(`  cidade/bairro   ${lead.cidade ?? '—'} / ${lead.bairro ?? '—'}`);
+  console.log(`  status          ${lead.status}`);
+  console.log(`  temperatura     ${lead.temperatura}`);
+  console.log(`  opt-out         ${lead.optOut}`);
+
+  // --- Campanha e etapas ---
+  const campanha = await prisma.campaign.findFirst({
+    orderBy: { createdAt: 'desc' },
+    include: {
+      steps: {
+        orderBy: { ordem: 'asc' },
+        include: { _count: { select: { rules: true } } },
+      },
+    },
+  });
+
+  titulo('CAMPANHA');
+  if (!campanha) {
+    console.log('  NENHUMA campanha. Crie uma.');
+  } else {
+    console.log(`  nome            ${campanha.nome}`);
+    console.log(`  status          ${campanha.status}`);
+    console.log(`  simulação       ${campanha.dryRun ? 'LIGADA (nada sai)' : 'desligada'}`);
+    console.log(`  janela          ${campanha.horarioInicio}–${campanha.horarioFim}`);
+    console.log(`  dias            ${JSON.stringify(campanha.diasPermitidos)}`);
+    console.log(
+      `  entre etapas    ${campanha.delayMinSegundos}–${campanha.delayMaxSegundos}s`
+    );
+    console.log(`\n  ETAPAS (${campanha.steps.length}):`);
+    for (const s of campanha.steps) {
+      const regras = s._count.rules;
+      console.log(
+        `    ${s.ordem}. ${s.ativo ? 'ativa  ' : 'INATIVA'} ` +
+          `| ${regras} regra(s)${regras === 0 ? '  <<< SEM REGRA' : ''}` +
+          `${s.enviarAutomaticamente ? '' : ' | MANUAL'}` +
+          `${s.notificarAoChegar ? ' | avisa ao chegar' : ''}`
+      );
+      console.log(`       "${s.texto.slice(0, 70)}${s.texto.length > 70 ? '…' : ''}"`);
+    }
+
+    const etapa1 = campanha.steps[0];
+    if (etapa1) {
+      const regras = await prisma.campaignStepRule.findMany({
+        where: { campaignStepId: etapa1.id },
+        orderBy: { categoria: 'asc' },
+      });
+      console.log(`\n  REGRAS DA ETAPA 1:`);
+      if (regras.length === 0) {
+        console.log('    NENHUMA — toda resposta vai virar intervenção manual.');
+        console.log('    Conserto: abra a campanha, aba Etapas, clique em Salvar.');
+      }
+      for (const r of regras) {
+        console.log(`    ${r.categoria.padEnd(14)} -> ${r.acao}`);
+      }
+    }
+  }
+
+  // --- Vinculo ---
+  const vinculo = await prisma.leadCampaign.findFirst({
+    where: { leadId: lead.id },
+    include: { etapaAtual: { select: { ordem: true } } },
+  });
+
+  titulo('ONDE O LEAD ESTÁ');
+  if (!vinculo) {
+    console.log('  Sem vínculo com campanha — ele nunca foi enfileirado.');
+  } else {
+    console.log(`  status          ${vinculo.status}`);
+    console.log(
+      `  etapa atual     ${vinculo.etapaAtual ? `etapa ${vinculo.etapaAtual.ordem}` : '— (nada enviado ainda)'}`
+    );
+    console.log(`  enviadas        ${vinculo.totalEnviadas}`);
+    console.log(`  recebidas       ${vinculo.totalRecebidas}`);
+    console.log(`  aguarda você    ${vinculo.aguardandoLiberacao}`);
+    if (vinculo.motivoParada) console.log(`  motivo parada   ${vinculo.motivoParada}`);
+  }
+
+  // --- Fila ---
+  const fila = await prisma.outboundMessage.findMany({
+    where: { leadId: lead.id },
+    orderBy: { createdAt: 'asc' },
+    include: { campaignStep: { select: { ordem: true } } },
+  });
+
+  titulo(`FILA DE SAÍDA (${fila.length})`);
+  for (const m of fila) {
+    console.log(
+      `  etapa ${m.campaignStep?.ordem ?? '?'} | ${m.status.padEnd(11)}` +
+        `${m.dryRun ? ' [SIMULADA]' : ''} | agendada ${hora(m.scheduledAt)}`
+    );
+    if (m.motivoBloqueio) console.log(`      bloqueio: ${m.motivoBloqueio} — ${m.detalheBloqueio ?? ''}`);
+    if (m.erro) console.log(`      erro: ${m.erro}`);
+  }
+  if (fila.length === 0) console.log('  (vazia)');
+
+  // --- Mensagens recebidas ---
+  const recebidas = await prisma.message.findMany({
+    where: { leadId: lead.id, direcao: 'RECEBIDA' },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  titulo(`RESPOSTAS DELE (${recebidas.length})`);
+  for (const m of recebidas) {
+    console.log(`  ${hora(m.recebidaEm)}  "${m.texto}"`);
+    console.log(
+      `      classificada: ${m.categoria ?? '—'} (confiança ${m.confianca ?? '—'})`
+    );
+  }
+  if (recebidas.length === 0) {
+    console.log('  NENHUMA resposta chegou ao sistema.');
+    console.log('  Se você respondeu no WhatsApp, o worker não recebeu o evento.');
+  }
+
+  // --- Contatos desconhecidos ---
+  const desconhecidos = await prisma.unknownContact.count();
+  if (desconhecidos > 0) {
+    console.log(
+      `\n  ATENÇÃO: ${desconhecidos} mensagem(ns) caíram como "contato desconhecido".`
+    );
+    console.log('  Isso significa que a resposta chegou mas não foi ligada ao lead.');
+  }
+
+  // --- Historico ---
+  const eventos = await prisma.leadEvent.findMany({
+    where: { leadId: lead.id },
+    orderBy: { createdAt: 'asc' },
+    take: 40,
+  });
+
+  titulo(`HISTÓRICO (${eventos.length})`);
+  for (const e of eventos) {
+    console.log(`  ${hora(e.createdAt)}  [${e.tipo}] ${e.descricao}`);
+  }
+
+  // --- Notificacoes ---
+  const notifs = await prisma.notification.findMany({
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+  });
+  titulo(`NOTIFICAÇÕES (${notifs.length})`);
+  for (const n of notifs) {
+    console.log(`  [${n.tipo}] ${n.titulo}`);
+  }
+
+  // ------------------------------------------------------------
+  // VEREDICTO
+  //
+  // Escrito como uma cascata na ordem em que as coisas acontecem: a
+  // primeira condicao que falha e a causa, e as seguintes sao
+  // consequencia dela. Apontar a ultima seria mandar voce consertar um
+  // sintoma.
+  // ------------------------------------------------------------
+  titulo('CAUSA MAIS PROVÁVEL');
+
+  const semRegras =
+    campanha?.steps.some((s) => s._count.rules === 0) ?? false;
+  const etapasAtivas = campanha?.steps.filter((s) => s.ativo).length ?? 0;
+
+  if (!campanha) {
+    console.log('  Não há campanha.');
+  } else if (etapasAtivas < 2) {
+    console.log(`  A campanha tem ${etapasAtivas} etapa(s) ativa(s).`);
+    console.log('  Sem uma etapa 2, não há para onde avançar: a resposta');
+    console.log('  positiva encerra a sequência em vez de continuar.');
+  } else if (semRegras) {
+    console.log('  Há etapa SEM REGRA. Sem regra para POSITIVO, o motor não');
+    console.log('  improvisa: manda para intervenção manual, mesmo com um');
+    console.log('  "quero sim" perfeito.');
+    console.log('  Conserto: abra a campanha, aba Etapas, clique em Salvar.');
+  } else if (recebidas.length === 0 && desconhecidos > 0) {
+    console.log('  A resposta chegou mas não foi ligada a este lead —');
+    console.log('  virou "contato desconhecido". Confira se o telefone do');
+    console.log('  lead é o mesmo de onde você respondeu.');
+  } else if (recebidas.length === 0) {
+    console.log('  Nenhuma resposta chegou ao sistema. O worker estava no ar');
+    console.log('  quando você respondeu?');
+  } else if (campanha.dryRun) {
+    console.log('  A campanha está em SIMULAÇÃO. Nada sai de verdade.');
+  } else {
+    const ultima = recebidas[recebidas.length - 1]!;
+    if ((ultima.confianca ?? 0) < 50) {
+      console.log(`  A última resposta ("${ultima.texto}") teve confiança`);
+      console.log(`  ${ultima.confianca} — abaixo de 50, o mínimo para o sistema agir`);
+      console.log('  sozinho. Ele classificou, registrou e chamou você.');
+    } else {
+      console.log('  Nada óbvio. Leia o HISTÓRICO acima de baixo para cima:');
+      console.log('  a última linha diz o que o motor decidiu e por quê.');
+    }
+  }
+
+  console.log('');
+  await prisma.$disconnect();
+}
+
+main().catch((err) => {
+  console.error('Falhou:', err);
+  process.exit(1);
+});
