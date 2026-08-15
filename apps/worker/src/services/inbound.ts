@@ -38,6 +38,11 @@ import {
 import type { MensagemEntrada } from '@prospector/integrations';
 import { PRIORIDADE_NOTIFICACAO } from '@prospector/shared';
 import { publicarEvento } from '../events.js';
+import {
+  enfileirarProximaEtapa,
+  enfileirarRespostaDeTemplate,
+  temProximaEtapa,
+} from './avancar-etapa.js';
 
 /**
  * Cria uma notificacao a partir do worker.
@@ -145,11 +150,21 @@ async function registrarDesconhecido(
   }
 }
 
-/** Aplica os efeitos que a decisao produziu. Nenhum deles envia mensagem. */
+/**
+ * Aplica os efeitos que a decisao produziu.
+ *
+ * NENHUM DELES ENVIA MENSAGEM. Os dois efeitos de envio (`AVANCAR_ETAPA`
+ * e `ENVIAR_TEMPLATE`) apenas criam linhas em `outbound_messages` — quem
+ * envia e o worker de outbound, depois das quatro barreiras.
+ */
 async function aplicarEfeitos(
   leadId: string,
   efeitos: EfeitoDecisao[],
-  contexto: { campaignId: string | null; campaignStepId: string | null }
+  contexto: {
+    campaignId: string | null;
+    campaignStepId: string | null;
+    mensagemRecebidaId: string;
+  }
 ): Promise<void> {
   for (const efeito of efeitos) {
     switch (efeito.tipo) {
@@ -256,18 +271,89 @@ async function aplicarEfeitos(
         });
         break;
 
-      case 'ENVIAR_TEMPLATE':
-      case 'AVANCAR_ETAPA':
-      case 'AGUARDAR_RESPOSTA':
-        // Estes efeitos SAO de envio. Nesta fase eles não enfileiram
-        // nada: o objetivo é provar o recebimento e a classificação.
-        // Enfileirar aqui criaria mensagens de saída que existiriam só
-        // para serem bloqueadas depois — ruído sem informação.
+      // -------------------------------------------------------------
+      // OS DOIS EFEITOS QUE COLOCAM MENSAGEM NA FILA
+      //
+      // Durante as fases de dry-run eles só escreviam no histórico
+      // "ação reconhecida mas não executada". Isso fazia sentido
+      // enquanto nada podia sair: enfileirar mensagens que nasceriam
+      // só para serem bloqueadas seria ruído.
+      //
+      // Com o envio liberado, o mesmo código virou um beco: o lead
+      // respondia "quero sim", o CRM registrava tudo — e a mensagem 2
+      // nunca saía. A sequência só andava se você reenfileirasse a
+      // campanha na mão.
+      //
+      // Continuam SEM ENVIAR: criam a linha agendada e param. As
+      // quatro barreiras seguem entre isto e o WhatsApp.
+      // -------------------------------------------------------------
+      case 'AVANCAR_ETAPA': {
+        if (!contexto.campaignId) break;
+        const r = await enfileirarProximaEtapa({
+          leadId,
+          campaignId: contexto.campaignId,
+          etapaAtualId: contexto.campaignStepId,
+        });
+        await prisma.leadEvent.create({
+          data: {
+            leadId,
+            tipo: r.enfileirou ? 'ETAPA_AVANCADA' : 'RESPOSTA_CLASSIFICADA',
+            descricao: r.enfileirou
+              ? `Próxima etapa agendada a partir da resposta`
+              : `Avanço não gerou envio: ${r.motivo}${r.detalhe ? ` — ${r.detalhe}` : ''}`,
+            origem: 'motor',
+            dados: { efeito: efeito.tipo, ...r, ...contexto } as Prisma.InputJsonValue,
+          },
+        });
+        break;
+      }
+
+      case 'ENVIAR_TEMPLATE': {
+        const r = await enfileirarRespostaDeTemplate({
+          leadId,
+          campaignId: contexto.campaignId,
+          campaignStepId: contexto.campaignStepId,
+          templateId: efeito.templateId,
+          mensagemRecebidaId: contexto.mensagemRecebidaId,
+        });
+
+        // Regra de ouro: entre responder errado e não responder, não
+        // responder vence — mas em silêncio, não. Se o template existia
+        // na decisão e não virou mensagem, você precisa saber.
+        if (!r.enfileirou && r.motivo !== 'JA_ENFILEIRADA') {
+          await criarNotificacao({
+            tipo: 'INTERVENCAO_NECESSARIA',
+            titulo: 'Resposta automática não pôde ser enviada',
+            mensagem:
+              `O motor escolheu o template "${efeito.templateId}", mas a mensagem ` +
+              `não foi criada (${r.motivo}). Responda manualmente.`,
+            nivel: 'ALERTA',
+            leadId,
+          });
+        }
+
         await prisma.leadEvent.create({
           data: {
             leadId,
             tipo: 'RESPOSTA_CLASSIFICADA',
-            descricao: `Ação "${efeito.tipo}" reconhecida mas não executada — envio desativado nesta fase`,
+            descricao: r.enfileirou
+              ? `Resposta automática agendada (template ${efeito.templateId})`
+              : `Template ${efeito.templateId} não gerou envio: ${r.motivo}`,
+            origem: 'motor',
+            dados: { efeito: efeito.tipo, ...r, ...contexto } as Prisma.InputJsonValue,
+          },
+        });
+        break;
+      }
+
+      case 'AGUARDAR_RESPOSTA':
+        // Este não envia nada por definição: a sequência congela até o
+        // lead falar. Só registramos para o histórico não ter buraco.
+        await prisma.leadEvent.create({
+          data: {
+            leadId,
+            tipo: 'RESPOSTA_CLASSIFICADA',
+            descricao: 'Sequência aguardando a próxima resposta do lead',
             origem: 'motor',
             dados: { efeito: efeito.tipo, ...contexto } as Prisma.InputJsonValue,
           },
@@ -454,7 +540,13 @@ export async function processarMensagemRecebida(
     nome: lead.nomeCompleto,
     optOut: lead.optOut,
     temperatura: lead.temperatura,
-    temProximaEtapa: false,
+    // Já foi fixo em `false`, herdado das fases sem envio. O efeito
+    // colateral não era "não envia": era o motor transformar TODO
+    // avanço em fim de sequência. O lead respondia "quero" e a regra
+    // AVANCAR o encerrava, porque `temProximaEtapa: false` faz
+    // `decidirAcao` emitir PARAR_SEQUENCIA. O CRM registrava
+    // "sequência chegou ao fim" na etapa 1.
+    temProximaEtapa: await temProximaEtapa(campaignId, campaignStepId),
   }, {
     regras: regras as unknown as RegraCategoria[],
     templates: templates.map((t) => ({
@@ -468,7 +560,11 @@ export async function processarMensagemRecebida(
   });
 
   // --- 8. Aplicar os efeitos ---
-  await aplicarEfeitos(leadId, decisao.efeitos, { campaignId, campaignStepId });
+  await aplicarEfeitos(leadId, decisao.efeitos, {
+    campaignId,
+    campaignStepId,
+    mensagemRecebidaId: mensagem.id,
+  });
 
   await prisma.lead.update({
     where: { id: leadId },

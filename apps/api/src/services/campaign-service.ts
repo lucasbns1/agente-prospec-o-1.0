@@ -12,8 +12,8 @@
  * em dry-run. Nenhuma funcao deste arquivo chama o WhatsApp.
  */
 import { prisma, Prisma } from '@prospector/database';
-import { createHash } from 'node:crypto';
 import {
+  chaveIdempotencia,
   qualificarLead,
   renderizarMensagem,
   calcularAgendamento,
@@ -331,20 +331,15 @@ export async function previewCampanha(
 // -----------------------------------------------------------------------------
 
 /**
- * Chave de idempotencia deterministica.
+ * Reexportada por compatibilidade: a implementacao mudou de lugar.
  *
- * Mesmo lead + mesma campanha + mesma etapa = mesma chave, sempre.
- * Cem jobs identicos colidem na constraint UNIQUE e resultam em UMA
- * linha. E o banco que garante, nao a aplicacao.
+ * Ela mora no dominio agora porque o worker tambem precisa dela — o
+ * avanco de etapa disparado por uma resposta cria mensagem para o mesmo
+ * par lead+etapa. Duas copias da funcao divergiriam no primeiro ajuste,
+ * e a constraint UNIQUE deixaria de colidir: o lead receberia a mesma
+ * mensagem duas vezes.
  */
-export function chaveIdempotencia(
-  leadId: string,
-  campaignId: string,
-  campaignStepId: string
-): string {
-  const base = `${leadId}|${campaignId}|${campaignStepId}`;
-  return `out:${createHash('sha256').update(base).digest('hex').slice(0, 40)}`;
-}
+export { chaveIdempotencia };
 
 export interface ResultadoEnfileiramento {
   criadas: number;

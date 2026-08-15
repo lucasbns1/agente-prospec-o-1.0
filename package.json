@@ -24,6 +24,7 @@
     "db:seed": "pnpm --filter @prospector/database seed",
     "db:studio": "pnpm --filter @prospector/database studio",
     "db:reset": "pnpm --filter @prospector/database reset",
+    "reset:fabrica": "tsx scripts/reset-fabrica.ts",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
