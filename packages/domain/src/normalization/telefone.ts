@@ -68,8 +68,69 @@ export function normalizarTelefone(
   let digitos = primeiro.replace(/\D/g, '');
   if (digitos === '') return INVALIDO('nenhum digito encontrado');
 
-  // Notacao internacional explicita
-  if (primeiro.trim().startsWith('+') && !digitos.startsWith(DDI_BRASIL)) {
+  // ---------------------------------------------------------------
+  // "00" = prefixo de discagem internacional
+  //
+  // "00351912345678" e o MESMO numero que "+351912345678" — o "00" e
+  // como se disca para fora do pais, exatamente o papel do "+". Muita
+  // planilha europeia vem assim.
+  //
+  // Sem este tratamento o numero caia em "longo demais" e o lead
+  // inteiro entrava como "sem telefone". Um detalhe de formatacao da
+  // planilha nao pode decidir se voce consegue falar com a pessoa.
+  //
+  // O corte exige 12 digitos porque "00" seguido de menos que isso nao
+  // e um internacional plausivel — e um numero brasileiro que comeca
+  // com zeros de operadora, tratado logo abaixo.
+  // ---------------------------------------------------------------
+  let internacionalExplicito = primeiro.trim().startsWith('+');
+  if (!internacionalExplicito && digitos.startsWith('00') && digitos.length >= 12) {
+    digitos = digitos.slice(2);
+    internacionalExplicito = true;
+  }
+
+  // ---------------------------------------------------------------
+  // DDI ESTRANGEIRO CONFIGURADO
+  //
+  // `ddiPadrao` sai de `settings['leads.telefone_ddi_padrao']`. Quando
+  // ele NAO e 55, a planilha e de outro pais e as regras brasileiras
+  // (DDD de dois digitos, celular comecando com 9) nao valem — aplicar
+  // elas rejeitaria numeros perfeitamente validos.
+  //
+  // Aqui nao ha validacao por pais: nao da para conhecer as regras de
+  // todos, e inventar uma quase-regra rejeitaria numeros bons. O que se
+  // garante e o tamanho E.164 (8 a 15 digitos) e que o DDI apareca
+  // exatamente uma vez.
+  // ---------------------------------------------------------------
+  if (ddiPadrao !== DDI_BRASIL) {
+    // Ja traz o DDI configurado? Entao ele nao deve ser somado de novo.
+    const jaTemDdi = digitos.startsWith(ddiPadrao) && digitos.length > ddiPadrao.length + 5;
+    const completo = jaTemDdi ? digitos : `${ddiPadrao}${digitos}`;
+
+    if (completo.length < 8 || completo.length > 15) {
+      return INVALIDO(
+        `numero com tamanho invalido para E.164 (${completo.length} digitos)`
+      );
+    }
+    // A checagem e sobre a parte NACIONAL, nao sobre o numero inteiro:
+    // "351000000000" nao e uma sequencia repetida vista de fora, mas
+    // "000000000" e — e e esse pedaco que veio da planilha.
+    const nacional = completo.slice(ddiPadrao.length);
+    if (/^(\d)\1+$/.test(nacional)) {
+      return INVALIDO('numero e uma sequencia repetida');
+    }
+    return {
+      e164: completo,
+      ddi: ddiPadrao,
+      ddd: null,
+      numero: nacional,
+      celular: false,
+      motivoInvalido: null,
+    };
+  }
+
+  // Notacao internacional explicita, com o DDI padrao ainda em 55.
+  if (internacionalExplicito && !digitos.startsWith(DDI_BRASIL)) {
     // Numero estrangeiro: nao sabemos validar. Devolvemos como veio,
     // sem tentar consertar.
     if (digitos.length < 8 || digitos.length > 15) {

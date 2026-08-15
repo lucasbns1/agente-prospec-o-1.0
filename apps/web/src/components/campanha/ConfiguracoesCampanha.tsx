@@ -17,6 +17,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Save, Loader2, Clock } from 'lucide-react';
 import { patch, ApiError } from '@/lib/api';
 import { Button, Input, Label, Checkbox } from '@/components/ui/primitives';
+import { CampoDuracao } from './CampoDuracao';
 
 const DIAS = [
   { valor: 1, rotulo: 'Seg' },
@@ -157,50 +158,30 @@ export function ConfiguracoesCampanha({
         <h3 className="text-sm font-medium">Ritmo</h3>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="dlmin">Intervalo entre leads — mín. (s)</Label>
-            <Input
-              id="dlmin"
-              type="number"
-              min={0}
-              value={c.delayEntreLeadsMinSegundos}
-              onChange={(e) =>
-                mudar({ delayEntreLeadsMinSegundos: Number(e.target.value) })
-              }
-            />
-          </div>
-          <div>
-            <Label htmlFor="dlmax">Intervalo entre leads — máx. (s)</Label>
-            <Input
-              id="dlmax"
-              type="number"
-              min={0}
-              value={c.delayEntreLeadsMaxSegundos}
-              onChange={(e) =>
-                mudar({ delayEntreLeadsMaxSegundos: Number(e.target.value) })
-              }
-            />
-          </div>
-          <div>
-            <Label htmlFor="demin">Intervalo entre etapas — mín. (s)</Label>
-            <Input
-              id="demin"
-              type="number"
-              min={0}
-              value={c.delayMinSegundos}
-              onChange={(e) => mudar({ delayMinSegundos: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <Label htmlFor="demax">Intervalo entre etapas — máx. (s)</Label>
-            <Input
-              id="demax"
-              type="number"
-              min={0}
-              value={c.delayMaxSegundos}
-              onChange={(e) => mudar({ delayMaxSegundos: Number(e.target.value) })}
-            />
-          </div>
+          <CampoDuracao
+            id="dlmin"
+            rotulo="Intervalo entre leads — mín."
+            segundos={c.delayEntreLeadsMinSegundos}
+            onChange={(v) => mudar({ delayEntreLeadsMinSegundos: v })}
+          />
+          <CampoDuracao
+            id="dlmax"
+            rotulo="Intervalo entre leads — máx."
+            segundos={c.delayEntreLeadsMaxSegundos}
+            onChange={(v) => mudar({ delayEntreLeadsMaxSegundos: v })}
+          />
+          <CampoDuracao
+            id="demin"
+            rotulo="Intervalo entre etapas — mín."
+            segundos={c.delayMinSegundos}
+            onChange={(v) => mudar({ delayMinSegundos: v })}
+          />
+          <CampoDuracao
+            id="demax"
+            rotulo="Intervalo entre etapas — máx."
+            segundos={c.delayMaxSegundos}
+            onChange={(v) => mudar({ delayMaxSegundos: v })}
+          />
         </div>
 
         {delayInvertido && (
@@ -212,8 +193,8 @@ export function ConfiguracoesCampanha({
         <p className="text-xs text-[var(--color-texto-suave)]">
           O intervalo é sorteado dentro da faixa. Ele existe para não
           disparar tudo no mesmo minuto — o padrão que mais chama atenção
-          de sistema antispam. Para <strong>testar</strong>, valores baixos
-          (2 a 5 segundos) fazem a fila andar na sua frente.
+          de sistema antispam. Para <strong>testar</strong>, use{' '}
+          <strong>0,1 min</strong> (6 segundos) e a fila anda na sua frente.
         </p>
       </section>
 

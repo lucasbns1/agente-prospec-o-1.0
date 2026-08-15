@@ -283,3 +283,62 @@ describe('formatarTelefone', () => {
     expect(formatarTelefone(null)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// LISTAS DE FORA DO BRASIL
+//
+// O DDI padrao vem de `settings['leads.telefone_ddi_padrao']`. Ele
+// existia, mas nao funcionava: mesmo configurado para outro pais, o
+// numero passava pela validacao brasileira (DDD de dois digitos,
+// celular comecando com 9) e era rejeitado. Na pratica so entravam
+// numeros que ja viessem com "+DDI" na planilha — e o "+" e um detalhe
+// de formatacao, nao pode decidir se voce fala com a pessoa.
+// ---------------------------------------------------------------------------
+describe('normalizarTelefone — listas de outro pais', () => {
+  const PT = '351';
+
+  it('aceita o mesmo numero português em qualquer formatação', () => {
+    const esperado = '351912345678';
+    for (const bruto of [
+      '+351912345678',
+      '351912345678',
+      '912345678',
+      '00351912345678',
+      '+351 912 345 678',
+      '351 912 345 678',
+    ]) {
+      expect(normalizarTelefone(bruto, PT).e164).toBe(esperado);
+    }
+  });
+
+  it('não soma o DDI duas vezes quando ele já veio', () => {
+    // O erro clássico: "351912345678" virar "351351912345678".
+    expect(normalizarTelefone('351912345678', PT).e164).toBe('351912345678');
+    expect(normalizarTelefone('+351912345678', PT).e164).toBe('351912345678');
+  });
+
+  it('fixo de Lisboa entra igual ao celular', () => {
+    expect(normalizarTelefone('21 123 4567', PT).e164).toBe('351211234567');
+  });
+
+  it('respeita o teto do E.164 mesmo sem conhecer as regras do país', () => {
+    // Não há validação por país aqui — inventar uma quase-regra
+    // rejeitaria números bons. O que se garante é o tamanho.
+    expect(normalizarTelefone('9123456789012345', PT).e164).toBeNull();
+  });
+
+  it('sequência repetida continua sendo lixo', () => {
+    expect(normalizarTelefone('000000000', PT).e164).toBeNull();
+  });
+
+  it('o "00" internacional é entendido mesmo com DDI padrão 55', () => {
+    // "00351..." é o mesmo número que "+351..." — o "00" faz o papel do
+    // "+". Antes caía em "longo demais" e o lead entrava sem telefone.
+    expect(normalizarTelefone('00351912345678').e164).toBe('351912345678');
+  });
+
+  it('e não engole o zero de operadora de um número brasileiro', () => {
+    // "019 99999-8888" começa com zero mas NÃO é internacional.
+    expect(normalizarTelefone('019999998888').e164).toBe('5519999998888');
+  });
+});

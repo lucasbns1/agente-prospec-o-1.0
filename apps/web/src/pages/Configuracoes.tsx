@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Lock } from 'lucide-react';
 import { get } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui/primitives';
+import { DdiPadrao } from '@/components/configuracoes/DdiPadrao';
 
 interface SettingsResp {
   settings: Array<{
@@ -48,6 +49,14 @@ export function Configuracoes() {
     queryFn: () => get<KeywordsResp>('/api/settings/keywords'),
   });
 
+  // Só o DDI é editável; o resto da tela continua leitura. Uma edição
+  // genérica aceitaria qualquer JSON em qualquer chave — inclusive
+  // `regras.precedencia`, onde um valor mal formado mudaria em silêncio
+  // como TODA resposta é classificada.
+  const ddiAtual =
+    settings.data?.settings.find((s) => s.chave === 'leads.telefone_ddi_padrao')
+      ?.valor ?? '55';
+
   const porCategoria = settings.data?.settings.reduce<
     Record<string, SettingsResp['settings']>
   >((acc, s) => {
@@ -67,8 +76,18 @@ export function Configuracoes() {
 
       <div className="flex items-center gap-2 rounded-lg border border-[var(--color-borda)] bg-white px-3 py-2 text-xs text-[var(--color-texto-suave)]">
         <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-        Somente leitura nesta fase.
+        Somente leitura nesta fase, exceto o DDI padrão abaixo.
       </div>
+
+      {/* País das listas importadas */}
+      <Card>
+        <CardHeader>
+          <CardTitle>País das listas que você importa</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DdiPadrao atual={String(ddiAtual)} />
+        </CardContent>
+      </Card>
 
       {/* Domínios sociais */}
       <Card>

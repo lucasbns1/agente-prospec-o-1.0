@@ -8,7 +8,7 @@
  *
  * Requer `docker compose up -d` e `pnpm db:migrate && pnpm db:seed`.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -510,5 +510,94 @@ describe('notificacoes', () => {
       headers: { cookie },
     });
     expect(r.statusCode).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DDI PADRAO
+//
+// A configuracao existia no banco desde o inicio, mas nao havia rota
+// para muda-la: trocar o pais das listas exigia abrir o Postgres. Sem
+// isso, uma lista de Portugal so aceitava os numeros que ja viessem com
+// "+351" na planilha — e o "+" e formatacao, nao decisao de negocio.
+// ---------------------------------------------------------------------------
+describe('PUT /api/settings/ddi-padrao', () => {
+  async function ler(): Promise<string> {
+    const r = await app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie },
+    });
+    const body = r.json() as {
+      settings: Array<{ chave: string; valor: unknown }>;
+    };
+    return String(
+      body.settings.find((s) => s.chave === 'leads.telefone_ddi_padrao')?.valor
+    );
+  }
+
+  afterEach(async () => {
+    // Outros testes dependem do padrao brasileiro.
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings/ddi-padrao',
+      headers: { cookie },
+      payload: { valor: '55' },
+    });
+  });
+
+  it('troca o DDI e o valor persiste', async () => {
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/ddi-padrao',
+      headers: { cookie },
+      payload: { valor: '351' },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(await ler()).toBe('351');
+  });
+
+  it('avisa que não reprocessa o que já foi importado', async () => {
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/ddi-padrao',
+      headers: { cookie },
+      payload: { valor: '351' },
+    });
+    // Sem o aviso, a expectativa natural é que os leads já importados
+    // mudem de número junto — e eles não mudam.
+    expect((r.json() as { aviso: string }).aviso).toMatch(/PRÓXIMAS importações/i);
+  });
+
+  it('recusa o "+" — ele quebraria o E.164 sem "+" usado no resto', async () => {
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/ddi-padrao',
+      headers: { cookie },
+      payload: { valor: '+351' },
+    });
+    expect(r.statusCode).toBe(422);
+    expect(await ler()).toBe('55');
+  });
+
+  it('recusa texto e DDI longo demais', async () => {
+    for (const valor of ['portugal', '3511', '']) {
+      const r = await app.inject({
+        method: 'PUT',
+        url: '/api/settings/ddi-padrao',
+        headers: { cookie },
+        payload: { valor },
+      });
+      expect(r.statusCode).toBe(422);
+    }
+  });
+
+  it('exige autenticação', async () => {
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/ddi-padrao',
+      payload: { valor: '351' },
+    });
+    expect(r.statusCode).toBe(401);
   });
 });
