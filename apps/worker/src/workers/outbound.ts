@@ -550,25 +550,76 @@ export function criarWorkerOutbound(
       // seria trabalho jogado fora; no pior, o comportamento antigo de
       // marcar FALHOU o que ja tinha saido.
       try {
-        const mensagem = await prisma.message.create({
-          data: {
-            conversationId: conversa.id,
-            leadId: m.lead.id,
-            campaignId: m.campaign.id,
-            campaignStepId: m.campaignStep.id,
-            direcao: 'ENVIADA',
-            // SIMULADA e um estado terminal proprio: NAO conta no limite
-            // diario nem nas metricas de "mensagens enviadas".
-            status: resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA',
-            texto: m.textoRenderizado!,
-            textoOriginal: m.textoTemplate,
-            variaveisUsadas: m.variaveisUsadas as Prisma.InputJsonValue,
-            idempotencyKey: m.idempotencyKey,
-            whatsappMessageId: resultadoEnvio.whatsappMessageId,
-            simulada: resultadoEnvio.simulado,
-            enviadaEm: resultadoEnvio.simulado ? null : new Date(),
-          },
-        });
+        // ============================================================
+        // GRAVAR O HISTORICO DUAS VEZES NAO E ERRO
+        // ============================================================
+        // `whatsapp_message_id` e UNIQUE, e com razao: e ele que amarra
+        // a confirmacao de entrega (ACK) a mensagem certa.
+        //
+        // So que uma segunda tentativa de gravar a MESMA mensagem nao e
+        // um problema — e a mesma mensagem. Deixar a colisao estourar
+        // derrubava o pos-processamento inteiro, e com ele tudo que vem
+        // depois: mover o lead para a etapa seguinte, atualizar o
+        // quadro, criar a notificacao, agendar a proxima mensagem.
+        //
+        // Foi exatamente isto que aconteceu no uso real:
+        //
+        //   etapa 2 | ENVIADA
+        //     erro: Unique constraint failed on (whatsapp_message_id)
+        //
+        // A mensagem 2 chegou no celular, mas o lead ficou registrado na
+        // etapa 1. A conversa nao mostrou a mensagem, o quadro nao
+        // andou, e a etapa 3 nunca nasceu — tudo por causa de uma
+        // gravacao de historico repetida.
+        //
+        // Agora a colisao e tratada como o que ela e: ja esta gravado,
+        // segue em frente com a linha que ja existe.
+        let mensagem: { id: string };
+        try {
+          mensagem = await prisma.message.create({
+            data: {
+              conversationId: conversa.id,
+              leadId: m.lead.id,
+              campaignId: m.campaign.id,
+              campaignStepId: m.campaignStep.id,
+              direcao: 'ENVIADA',
+              // SIMULADA e um estado terminal proprio: NAO conta no limite
+              // diario nem nas metricas de "mensagens enviadas".
+              status: resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA',
+              texto: m.textoRenderizado!,
+              textoOriginal: m.textoTemplate,
+              variaveisUsadas: m.variaveisUsadas as Prisma.InputJsonValue,
+              idempotencyKey: m.idempotencyKey,
+              whatsappMessageId: resultadoEnvio.whatsappMessageId,
+              simulada: resultadoEnvio.simulado,
+              enviadaEm: resultadoEnvio.simulado ? null : new Date(),
+            },
+            select: { id: true },
+          });
+        } catch (err) {
+          if (
+            !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+            err.code !== 'P2002'
+          ) {
+            throw err;
+          }
+
+          // Ja existe. Reaproveita a linha em vez de desistir do resto.
+          const existente = await prisma.message.findFirst({
+            where: resultadoEnvio.whatsappMessageId
+              ? { whatsappMessageId: resultadoEnvio.whatsappMessageId }
+              : { idempotencyKey: m.idempotencyKey },
+            select: { id: true },
+          });
+
+          if (!existente) throw err;
+          mensagem = existente;
+
+          log.warn(
+            { outboundMessageId, etapa: m.campaignStep.ordem, messageId: existente.id },
+            'Histórico desta mensagem já estava gravado — seguindo com o registro existente'
+          );
+        }
 
         // So o vinculo com a mensagem gravada. O status ja foi decidido
         // la em cima, quando o transporte teve sucesso.

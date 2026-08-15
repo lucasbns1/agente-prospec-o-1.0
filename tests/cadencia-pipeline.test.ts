@@ -839,3 +839,126 @@ describe('M2 enviada → M3 exige intervenção, e NÃO sai sozinha', () => {
     expect(tarefa?.tipo).toBe('CRIAR_PREVIEW');
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// O HISTÓRICO REPETIDO NÃO PODE SEGURAR A CADÊNCIA
+//
+// `whatsapp_message_id` é UNIQUE, e com razão: é ele que amarra o ACK à
+// mensagem certa. Mas uma segunda tentativa de gravar a MESMA mensagem
+// não é um problema — é a mesma mensagem.
+//
+// Deixar a colisão estourar derrubava o pós-processamento inteiro, e com
+// ele tudo que vem depois. Do diagnóstico real:
+//
+//   etapa 2 | ENVIADA
+//     erro: Unique constraint failed on (whatsapp_message_id)
+//
+// A mensagem 2 chegou no celular, mas o lead ficou registrado na etapa
+// 1: a conversa não mostrou a mensagem, o quadro não andou, e a etapa 3
+// nunca nasceu.
+// ---------------------------------------------------------------------------
+describe('histórico já gravado não trava o avanço da etapa', () => {
+  it('colisão de whatsappMessageId não impede o lead de ir para a etapa', async () => {
+    const { criarWorkerOutbound } = await import(
+      '../apps/worker/src/workers/outbound.js'
+    );
+    const lead = await criarLead();
+    const { campanha, etapas } = await criarCampanha(true);
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: false },
+    });
+
+    const ID_REPETIDO = `wa-repetido-${Date.now()}-${n}`;
+
+    // Uma mensagem com este id JÁ existe — como se uma execução anterior
+    // tivesse gravado o histórico e parado no meio.
+    const conversa = await prisma.conversation.create({
+      data: {
+        id: `${lead.id}-${campanha.id}`,
+        leadId: lead.id,
+        campaignId: campanha.id,
+        chatId: `${lead.telefoneNormalizado}@c.us`,
+        ultimaMensagemEm: new Date(),
+      },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        direcao: 'ENVIADA',
+        status: 'ENVIADA',
+        texto: 'Olá!',
+        whatsappMessageId: ID_REPETIDO,
+      },
+    });
+
+    await prisma.leadCampaign.create({
+      data: { leadId: lead.id, campaignId: campanha.id, status: 'PENDENTE' },
+    });
+
+    const m = await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `colisao-${Date.now()}-${n}`,
+        status: 'AGENDADA',
+        telefoneDestino: lead.telefoneNormalizado,
+        textoRenderizado: 'Olá!',
+        textoTemplate: 'Olá!',
+        variaveisUsadas: {},
+        dryRun: false,
+        scheduledAt: new Date(),
+      },
+    });
+
+    // O adapter devolve o MESMO id que já está gravado.
+    const adapter = {
+      modo: 'live' as const,
+      sendMessage: async () => ({
+        sucesso: true,
+        whatsappMessageId: ID_REPETIDO,
+        simulado: false,
+      }),
+      confirmarEnvio: async () => null,
+      isRegistered: async () => true,
+      getContacts: async () => [],
+      mensagensPerdidas: async () => [],
+      connect: async () => {},
+      disconnect: async () => {},
+      getStatus: () => ({ status: 'CONECTADO', modo: 'live' }),
+      onReady: () => {}, onQr: () => {}, onMessage: () => {},
+      onDisconnected: () => {}, onStatusChange: () => {},
+    } as never;
+
+    const modoAntes = process.env.WHATSAPP_MODE;
+    process.env.WHATSAPP_MODE = 'live';
+    await workerOutbound.pause();
+    const w = criarWorkerOutbound(log, adapter);
+    await w.waitUntilReady();
+    try {
+      await processarFila();
+    } finally {
+      await w.close();
+      await workerOutbound.resume();
+      if (modoAntes === undefined) delete process.env.WHATSAPP_MODE;
+      else process.env.WHATSAPP_MODE = modoAntes;
+    }
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    expect(depois.status).toBe('ENVIADA');
+
+    // O QUE IMPORTA: o pós-processamento seguiu até o fim. Sem isto, o
+    // lead ficava na etapa anterior e a sequência morria.
+    expect(depois.erro).toBeNull();
+
+    const vinculo = await prisma.leadCampaign.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(vinculo.etapaAtualId).toBe(etapas[0]!.id);
+    expect(vinculo.totalEnviadas).toBe(1);
+  }, 60_000);
+});
