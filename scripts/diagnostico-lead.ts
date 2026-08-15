@@ -78,7 +78,36 @@ async function main(): Promise<void> {
     console.log(`  status          ${campanha.status}`);
     console.log(`  simulação       ${campanha.dryRun ? 'LIGADA (nada sai)' : 'desligada'}`);
     console.log(`  janela          ${campanha.horarioInicio}–${campanha.horarioFim}`);
-    console.log(`  dias            ${JSON.stringify(campanha.diasPermitidos)}`);
+
+    // ------------------------------------------------------------
+    // A JANELA, RESPONDIDA PARA AGORA
+    //
+    // Imprimir "[1,2,3,4,5]" e inutil na hora do aperto: exige lembrar
+    // que 0 e domingo, saber que dia da semana e hoje, e cruzar os dois
+    // de cabeca. Custou uma rodada inteira de teste num sabado com a
+    // campanha configurada de segunda a sexta — tudo certo na tela, e
+    // nada saindo.
+    //
+    // A pergunta que importa nao e "quais dias"; e "hoje, agora, sai?".
+    // ------------------------------------------------------------
+    const NOMES = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+    const agora = new Date();
+    const hoje = agora.getDay();
+    const diaOk = (campanha.diasPermitidos as number[]).includes(hoje);
+    const hhmm = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
+    const horaOk = hhmm >= campanha.horarioInicio && hhmm <= campanha.horarioFim;
+
+    console.log(
+      `  dias            ${(campanha.diasPermitidos as number[]).map((d) => NOMES[d]).join(', ')}`
+    );
+    console.log(
+      `  AGORA (${NOMES[hoje]} ${hhmm})  ` +
+        (diaOk && horaOk
+          ? 'dentro da janela — pode enviar'
+          : !diaOk
+            ? `>>> HOJE É ${NOMES[hoje]?.toUpperCase()} E A CAMPANHA NÃO ENVIA NESTE DIA <<<`
+            : '>>> FORA DO HORÁRIO — tudo fica adiado <<<')
+    );
     console.log(
       `  entre etapas    ${campanha.delayMinSegundos}–${campanha.delayMaxSegundos}s`
     );
@@ -341,6 +370,15 @@ async function main(): Promise<void> {
 
   if (!campanha) {
     console.log('  Não há campanha.');
+  } else if (campanha.status !== 'ATIVA') {
+    // Antes de tudo: uma campanha em RASCUNHO nem chega a enfileirar —
+    // `enfileirarCampanha` recusa. Apontar qualquer outra coisa aqui
+    // seria mandar consertar um sintoma.
+    console.log(`  A campanha está ${campanha.status}, não ATIVA.`);
+    console.log('  Nada é enfileirado enquanto ela não for ativada.');
+  } else if (!vinculo) {
+    console.log('  O lead nunca foi enfileirado nesta campanha.');
+    console.log('  Abra a campanha e clique em Enfileirar.');
   } else if (etapasAtivas < 2) {
     console.log(`  A campanha tem ${etapasAtivas} etapa(s) ativa(s).`);
     console.log('  Sem uma etapa 2, não há para onde avançar: a resposta');
