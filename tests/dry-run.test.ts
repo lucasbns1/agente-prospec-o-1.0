@@ -129,3 +129,57 @@ describe('o padrao e sempre seguro', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// O ENVIO QUE NÃO RESPONDE
+//
+// `sendMessage` não tinha tempo limite. O whatsapp-web.js roda sobre um
+// Chromium controlado remotamente e, em algumas conversas — LID
+// principalmente —, a promessa nunca resolve. A mensagem CHEGA no
+// celular e o worker fica pendurado.
+//
+// Visto em uso real: mensagem 2 entregue às 12:19, fila presa em
+// "Processando" indefinidamente. Sem o envio concluir, a etapa não
+// avança e a mensagem 3 nunca nasce.
+// ---------------------------------------------------------------------------
+describe('comTempoLimite', () => {
+  it('devolve o valor quando a promessa responde a tempo', async () => {
+    const { comTempoLimite } = await import('../apps/worker/src/workers/outbound.js');
+    await expect(comTempoLimite(Promise.resolve('ok'), 5)).resolves.toBe('ok');
+  });
+
+  it('desiste quando a promessa nunca resolve', async () => {
+    const { comTempoLimite, EnvioSemResposta } = await import(
+      '../apps/worker/src/workers/outbound.js'
+    );
+    // Uma promessa que nunca resolve é exatamente o caso real: o
+    // Chromium aceitou a mensagem e não devolveu nada.
+    const travada = new Promise<string>(() => {});
+    await expect(comTempoLimite(travada, 0.05)).rejects.toBeInstanceOf(EnvioSemResposta);
+  });
+
+  it('o erro avisa que a mensagem PODE ter saído', async () => {
+    const { comTempoLimite } = await import('../apps/worker/src/workers/outbound.js');
+    const travada = new Promise<string>(() => {});
+    await expect(comTempoLimite(travada, 0.05)).rejects.toThrow(/PODE ter saído/i);
+  });
+
+  it('propaga o erro original quando o envio falha de verdade', async () => {
+    const { comTempoLimite } = await import('../apps/worker/src/workers/outbound.js');
+    // Uma recusa real não pode ser confundida com timeout: os dois
+    // levam a mensagens diferentes para o usuário.
+    await expect(
+      comTempoLimite(Promise.reject(new Error('numero invalido')), 5)
+    ).rejects.toThrow('numero invalido');
+  });
+
+  it('o limite padrão é generoso o bastante para envio lento', async () => {
+    const { SEGUNDOS_ATE_DESISTIR_DO_ENVIO } = await import(
+      '../apps/worker/src/workers/outbound.js'
+    );
+    // Curto demais transformaria envio lento em falha; longo demais
+    // seria indistinguível de travado.
+    expect(SEGUNDOS_ATE_DESISTIR_DO_ENVIO).toBeGreaterThanOrEqual(30);
+    expect(SEGUNDOS_ATE_DESISTIR_DO_ENVIO).toBeLessThanOrEqual(180);
+  });
+});

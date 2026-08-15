@@ -48,6 +48,65 @@ export function decidirDryRun(entrada: {
   return entrada.campanhaDryRun || entrada.mensagemDryRun || global !== 'live';
 }
 
+/**
+ * Quanto esperar o adapter responder antes de desistir.
+ *
+ * ============================================================
+ * O BURACO QUE ISTO FECHA
+ * ============================================================
+ * `sendMessage` nao tinha tempo limite. O `whatsapp-web.js` roda sobre
+ * um Chromium controlado remotamente e, em algumas conversas — LID
+ * principalmente —, a promessa simplesmente nunca resolve. A mensagem
+ * CHEGA no celular do lead e o worker fica pendurado esperando uma
+ * resposta que nao vem.
+ *
+ * Visto em uso real: mensagem 2 entregue as 12:19 no WhatsApp, e a fila
+ * mostrando "Processando" indefinidamente. A sequencia parava ali: sem
+ * o envio concluir, a etapa nao avanca e a 3 nunca nasce.
+ *
+ * A recuperacao de orfas so age depois de 10 minutos — e ela existe
+ * para worker MORTO, nao para worker vivo travado num await. Sem este
+ * limite, o unico jeito de destravar era reiniciar na mao.
+ *
+ * 90 segundos: generoso para um envio lento em maquina carregada, curto
+ * o bastante para nao parecer travado.
+ */
+export const SEGUNDOS_ATE_DESISTIR_DO_ENVIO = 90;
+
+/** Marca um envio que estourou o tempo limite. */
+export class EnvioSemResposta extends Error {
+  constructor(segundos: number) {
+    super(
+      `O WhatsApp não respondeu em ${segundos}s. A mensagem PODE ter saído — ` +
+        `confira a conversa antes de reenviar.`
+    );
+    this.name = 'EnvioSemResposta';
+  }
+}
+
+/**
+ * Corre a promessa contra um relogio.
+ *
+ * O timer e limpo nos dois desfechos: sem isso, um processo que enviou
+ * mil mensagens carregaria mil timers vivos ate o ultimo expirar.
+ */
+export async function comTempoLimite<T>(
+  promessa: Promise<T>,
+  segundos: number
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promessa,
+      new Promise<never>((_, rejeitar) => {
+        timer = setTimeout(() => rejeitar(new EnvioSemResposta(segundos)), segundos * 1000);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface ResultadoProcessamento {
   ignorado?: boolean;
   motivo?: string;
@@ -202,9 +261,9 @@ export function criarWorkerOutbound(
 
       if (dryRun) {
         // O adapter fake registra e loga. Nada sai.
-        resultadoEnvio = await adapter.sendMessage(
-          m.telefoneDestino!,
-          m.textoRenderizado!
+        resultadoEnvio = await comTempoLimite(
+          adapter.sendMessage(m.telefoneDestino!, m.textoRenderizado!),
+          SEGUNDOS_ATE_DESISTIR_DO_ENVIO
         );
         log.info(
           {
@@ -226,10 +285,64 @@ export function criarWorkerOutbound(
         // Isso e de proposito: se o worker decidisse sozinho, existiriam
         // dois lugares dizendo "pode enviar" — e bastaria um deles estar
         // errado. Aqui a decisao final e sempre do mesmo codigo.
-        resultadoEnvio = await adapter.sendMessage(
-          m.telefoneDestino!,
-          m.textoRenderizado!
-        );
+        try {
+          resultadoEnvio = await comTempoLimite(
+            adapter.sendMessage(m.telefoneDestino!, m.textoRenderizado!),
+            SEGUNDOS_ATE_DESISTIR_DO_ENVIO
+          );
+        } catch (err) {
+          // ============================================================
+          // O ENVIO NAO RESPONDEU — E PODE TER SAIDO
+          // ============================================================
+          // O `whatsapp-web.js` as vezes entrega a mensagem e nunca
+          // resolve a promessa. Visto em uso real: mensagem entregue as
+          // 12:19 no celular do lead, fila presa em "Processando".
+          //
+          // FALHOU e nao AGENDADA, de proposito. Devolver para a fila
+          // reenviaria uma mensagem que provavelmente ja chegou — a
+          // mesma frase duas vezes na conversa de um cliente. Um
+          // incomodo seu custa menos que isso.
+          //
+          // Marcar aqui, e nao esperar a varredura de orfas, porque
+          // aquela so age depois de 10 minutos: ela existe para worker
+          // MORTO, nao para worker vivo travado num await.
+          const semResposta = err instanceof EnvioSemResposta;
+          await prisma.outboundMessage.update({
+            where: { id: outboundMessageId },
+            data: {
+              status: 'FALHOU',
+              erro: semResposta
+                ? err.message
+                : `Falha no envio: ${err instanceof Error ? err.message : String(err)}`,
+              processedAt: new Date(),
+              bullJobId: job.id ?? null,
+            },
+          });
+
+          await prisma.leadEvent.create({
+            data: {
+              leadId: m.lead.id,
+              tipo: 'MENSAGEM_FALHOU',
+              descricao: semResposta
+                ? `Etapa ${m.campaignStep.ordem}: o WhatsApp não confirmou o envio. Confira a conversa.`
+                : `Etapa ${m.campaignStep.ordem}: falha no envio`,
+              origem: 'worker',
+            },
+          });
+
+          log.error(
+            { outboundMessageId, etapa: m.campaignStep.ordem, err },
+            semResposta
+              ? 'Envio sem resposta do WhatsApp — marcada FALHOU, sem reenvio automatico'
+              : 'Falha no envio'
+          );
+
+          // Nao relanca: relancar faria o BullMQ retentar, e a reserva
+          // condicional ja recusaria (a mensagem nao esta mais
+          // AGENDADA). Seriam tres tentativas inuteis e tres linhas de
+          // erro no log para um caso que ja foi resolvido aqui.
+          return { status: 'FALHOU', motivo: 'envio_sem_resposta' };
+        }
 
         if (resultadoEnvio.simulado) {
           // O worker achou que era envio real, o adapter simulou. Uma
