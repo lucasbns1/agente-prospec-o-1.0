@@ -28,6 +28,7 @@ import { dentroDaJanela } from '@prospector/domain';
 import { QUEUES } from '@prospector/shared';
 import type { Logger } from 'pino';
 import { getFila, OPCOES_JOB_PADRAO } from '../queues.js';
+import { enfileirarProximaEtapa } from '../services/avancar-etapa.js';
 import type { OutboundJobData } from './outbound.js';
 
 /** De quanto em quanto tempo o despachante olha o banco. */
@@ -124,8 +125,87 @@ async function recuperarOrfas(agora: Date): Promise<void> {
   });
 }
 
+/**
+ * As sequencias que andam sozinhas.
+ *
+ * ============================================================
+ * O BURACO QUE ISTO FECHA
+ * ============================================================
+ * Uma etapa espera de dois jeitos, e sao mecanismos diferentes:
+ *
+ *   `aguardarResposta: true`  — congela ate o lead falar. O avanco
+ *                               nasce da resposta, no pipeline de
+ *                               recebimento.
+ *   `aguardarResposta: false` — anda sozinha, no tempo configurado.
+ *                               Nao depende de resposta nenhuma.
+ *
+ * A SEGUNDA NUNCA EXISTIU. O worker de outbound gravava
+ * `LeadCampaign.status = 'EM_ANDAMENTO'` — e nenhum codigo do sistema
+ * inteiro lia esse status. Da para conferir com um grep: uma escrita,
+ * zero leituras.
+ *
+ * O efeito era o pior possivel: a mensagem 1 saia, o CRM registrava
+ * tudo certo, o quadro mostrava o lead na etapa 1, e a sequencia
+ * simplesmente nunca continuava. Sem erro, sem job pendente, sem nada
+ * na fila apontando o problema.
+ *
+ * ============================================================
+ * POR QUE AQUI, E NAO NUM JOB COM DELAY
+ * ============================================================
+ * Pelo mesmo motivo do resto deste arquivo: o banco e a fonte da
+ * verdade sobre o que falta enviar. Um job dormindo 24h dentro de um
+ * Redis sem persistencia some num restart, e o lead ficaria parado de
+ * novo — trocaria um silencio por outro.
+ *
+ * ============================================================
+ * O QUE ISTO NAO FAZ
+ * ============================================================
+ * Nao envia. Cria a linha da proxima etapa em `outbound_messages` com
+ * o `scheduledAt` calculado pelo delay configurado. Dali para frente e
+ * o mesmo caminho de qualquer outra mensagem — varredura, fila, worker,
+ * quatro barreiras.
+ */
+async function avancarSequenciasAutomaticas(agora: Date): Promise<number> {
+  const candidatos = await prisma.leadCampaign.findMany({
+    where: {
+      // EM_ANDAMENTO e escrito pelo worker de outbound quando a etapa
+      // enviada NAO espera resposta. Ate agora era um estado terminal
+      // por acidente.
+      status: 'EM_ANDAMENTO',
+      aguardandoLiberacao: false,
+      campaign: { status: 'ATIVA' },
+      lead: {
+        optOut: false,
+        status: { notIn: ['OPT_OUT', 'AGUARDANDO_INTERVENCAO'] },
+        // Ja ha mensagem esperando para sair? Entao a proxima etapa ja
+        // foi criada e ainda nao saiu. Criar outra aqui atropelaria a
+        // sequencia — duas mensagens da mesma campanha na fila ao
+        // mesmo tempo, e o lead recebendo duas seguidas.
+        outbound: {
+          none: { status: { in: ['PENDENTE', 'AGENDADA', 'PROCESSANDO'] } },
+        },
+      },
+    },
+    select: { leadId: true, campaignId: true, etapaAtualId: true },
+    take: MAX_POR_VARREDURA,
+  });
+
+  let avancadas = 0;
+  for (const c of candidatos) {
+    const r = await enfileirarProximaEtapa({
+      leadId: c.leadId,
+      campaignId: c.campaignId,
+      etapaAtualId: c.etapaAtualId,
+      agora,
+    });
+    if (r.enfileirou) avancadas += 1;
+  }
+  return avancadas;
+}
+
 export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredura> {
   await recuperarOrfas(agora);
+  await avancarSequenciasAutomaticas(agora);
 
   const vencidas = await prisma.outboundMessage.findMany({
     where: {
