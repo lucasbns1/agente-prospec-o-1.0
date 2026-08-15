@@ -85,9 +85,15 @@ async function main(): Promise<void> {
     console.log(`\n  ETAPAS (${campanha.steps.length}):`);
     for (const s of campanha.steps) {
       const regras = s._count.rules;
+      // `aguardarResposta` decide QUAL das duas cadencias vale, e por
+      // isso e a informacao mais importante desta tela. Sem ela, dois
+      // sintomas identicos ("a mensagem 2 nao veio") tem causas
+      // opostas: uma espera resposta que nao chegou, a outra deveria
+      // ter andado sozinha e nao andou.
       console.log(
         `    ${s.ordem}. ${s.ativo ? 'ativa  ' : 'INATIVA'} ` +
           `| ${regras} regra(s)${regras === 0 ? '  <<< SEM REGRA' : ''}` +
+          `| ${s.aguardarResposta ? 'ESPERA RESPOSTA' : 'anda sozinha'}` +
           `${s.enviarAutomaticamente ? '' : ' | MANUAL'}` +
           `${s.notificarAoChegar ? ' | avisa ao chegar' : ''}`
       );
@@ -167,6 +173,61 @@ async function main(): Promise<void> {
     console.log('  Se você respondeu no WhatsApp, o worker não recebeu o evento.');
   }
 
+  // ------------------------------------------------------------
+  // TESTE DE CLASSIFICACAO
+  //
+  // Roda o texto pelo motor REAL, com o dicionario REAL do banco. Sem
+  // isto, "sera que ele entende 'claro'?" so da para responder olhando
+  // codigo — e o que esta no codigo pode nao ser o que esta no banco
+  // desta maquina.
+  // ------------------------------------------------------------
+  titulo('O MOTOR ENTENDE ESTAS RESPOSTAS?');
+  {
+    const { classificarResposta, PRECEDENCIA_PADRAO } = await import(
+      '../packages/domain/src/rules/motor.js'
+    );
+    const keywords = await prisma.responseKeyword.findMany({ where: { ativo: true } });
+    const termos = keywords.map((k) => ({
+      id: k.id,
+      categoria: k.categoria,
+      termo: k.termo,
+      matchTipo: k.matchTipo,
+      peso: k.peso,
+      ativo: k.ativo,
+      subtipo: k.subtipo,
+      campaignStepId: k.campaignStepId,
+    }));
+
+    const setting = await prisma.setting.findUnique({
+      where: { chave: 'regras.precedencia' },
+    });
+    const precedencia = Array.isArray(setting?.valor)
+      ? (setting.valor as typeof PRECEDENCIA_PADRAO)
+      : PRECEDENCIA_PADRAO;
+
+    console.log(`  (dicionário do banco: ${termos.length} termos ativos)\n`);
+
+    // As ultimas respostas reais primeiro; depois alguns padroes, para
+    // dar referencia de quanto vale cada tipo de "sim".
+    const amostras = [
+      ...recebidas.slice(-3).map((m) => m.texto),
+      'claro!',
+      'quero sim',
+      'pode',
+      'ok',
+    ];
+
+    for (const texto of [...new Set(amostras)]) {
+      const r = classificarResposta(texto, { termos, precedencia, campaignStepId: null });
+      const agiria = r.confianca >= 50;
+      console.log(
+        `  "${texto.slice(0, 40)}"`.padEnd(46) +
+          `${r.categoria} (${r.confianca}) ` +
+          `${agiria ? '-> age sozinho' : '-> CHAMA VOCÊ (confiança < 50)'}`
+      );
+    }
+  }
+
   // --- Contatos desconhecidos ---
   const desconhecidos = await prisma.unknownContact.count();
   if (desconhecidos > 0) {
@@ -212,6 +273,12 @@ async function main(): Promise<void> {
     campanha?.steps.some((s) => s._count.rules === 0) ?? false;
   const etapasAtivas = campanha?.steps.filter((s) => s.ativo).length ?? 0;
 
+  // Qual cadencia esta configurada na etapa em que o lead parou. As
+  // duas falham do mesmo jeito visto de fora ("a mensagem 2 nao veio")
+  // e por motivos opostos.
+  const etapaDoLead = campanha?.steps.find((s) => s.id === vinculo?.etapaAtualId);
+  const esperaResposta = etapaDoLead?.aguardarResposta ?? true;
+
   if (!campanha) {
     console.log('  Não há campanha.');
   } else if (etapasAtivas < 2) {
@@ -227,9 +294,17 @@ async function main(): Promise<void> {
     console.log('  A resposta chegou mas não foi ligada a este lead —');
     console.log('  virou "contato desconhecido". Confira se o telefone do');
     console.log('  lead é o mesmo de onde você respondeu.');
-  } else if (recebidas.length === 0) {
-    console.log('  Nenhuma resposta chegou ao sistema. O worker estava no ar');
-    console.log('  quando você respondeu?');
+  } else if (recebidas.length === 0 && esperaResposta) {
+    console.log('  Nenhuma resposta chegou ao sistema, e a etapa em que o lead');
+    console.log('  está ESPERA RESPOSTA — então a sequência está parada por');
+    console.log('  falta de entrada, não por falha da cadência.');
+    console.log('');
+    console.log('  O worker estava no ar quando você respondeu? Ele só recebe');
+    console.log('  ao vivo; a varredura na reconexão cobre o resto.');
+  } else if (recebidas.length === 0 && !esperaResposta) {
+    console.log('  A etapa em que o lead está ANDA SOZINHA, e mesmo assim a');
+    console.log('  próxima não foi criada. Isto é falha da cadência automática.');
+    console.log(`  Vínculo em: ${vinculo?.status ?? '—'} (esperado: EM_ANDAMENTO)`);
   } else if (campanha.dryRun) {
     console.log('  A campanha está em SIMULAÇÃO. Nada sai de verdade.');
   } else {
