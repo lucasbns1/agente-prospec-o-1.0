@@ -141,6 +141,42 @@ async function main(): Promise<void> {
     console.log(`  ${etapa.nome.padEnd(24)} ${r.count} removido(s)`);
   }
 
+  // ------------------------------------------------------------
+  // A LINHA DO TEMPO TAMBEM PRECISA RECOMECAR
+  // ------------------------------------------------------------
+  // O reset apaga o banco, mas NAO apaga a conversa no WhatsApp — nem
+  // poderia: aquilo e o celular do usuario.
+  //
+  // So que o worker le as conversas ao conectar, para recuperar
+  // respostas que chegaram com ele fora do ar. Sem esta marca, os
+  // "quero sim" e "claro!" dos testes anteriores seriam lidos como
+  // respostas novas, e o lead recem-importado nasceria QUENTE com um
+  // historico que nunca teve com esta campanha.
+  //
+  // Pior no uso real: reimportar uma lista para uma campanha nova faria
+  // cada lead herdar a ultima resposta dada a campanha ANTERIOR — e um
+  // "nao tenho interesse" de tres meses atras encerraria a nova
+  // sequencia antes da primeira mensagem sair.
+  const agora = new Date();
+  await prisma.setting.upsert({
+    where: { chave: 'canal.varredura_desde' },
+    update: { valor: agora.toISOString() },
+    create: {
+      chave: 'canal.varredura_desde',
+      valor: agora.toISOString(),
+      descricao:
+        'A varredura de mensagens perdidas ignora tudo anterior a esta data. ' +
+        'Gravada pelo reset de fabrica.',
+      categoria: 'canal',
+    },
+  });
+  console.log(
+    `\n  linha do tempo           reiniciada em ${agora.toLocaleString('pt-BR')}`
+  );
+  console.log(
+    '  (conversas antigas do WhatsApp deixam de contar como resposta nova)'
+  );
+
   const depois = await contagemAtual(prisma);
   console.log('\nDepois:');
   for (const [k, v] of Object.entries(depois)) {

@@ -63,6 +63,46 @@ const JANELA_INICIAL_HORAS = 24;
  */
 const FOLGA_MINUTOS = 10;
 
+/**
+ * Marca deixada pelo reset de fabrica.
+ *
+ * ============================================================
+ * POR QUE ISTO PRECISA EXISTIR
+ * ============================================================
+ * O reset apaga o banco, mas NAO apaga a conversa no WhatsApp — nem
+ * poderia: aquilo e o celular do usuario, e apagar a conversa de alguem
+ * sem pedir seria inaceitavel.
+ *
+ * So que a varredura le as conversas. Depois de um reset, os "quero
+ * sim" e "claro!" dos testes antigos continuam la, e seriam lidos como
+ * respostas novas: o lead recem-importado nasceria QUENTE, com um
+ * historico de conversa que nunca teve com aquela campanha.
+ *
+ * Pior no uso real: reimportar uma lista para uma campanha nova faria
+ * cada lead herdar a ultima resposta que deu para a campanha ANTERIOR —
+ * e um "nao tenho interesse" de tres meses atras encerraria a nova
+ * sequencia antes da primeira mensagem sair.
+ *
+ * A marca resolve isso sem tocar em nada do usuario: o reset grava
+ * "comece a olhar daqui", e tudo que e mais velho deixa de existir para
+ * o sistema.
+ */
+export const CHAVE_VARREDURA_DESDE = 'canal.varredura_desde';
+
+async function marcaDoReset(): Promise<Date | null> {
+  const s = await prisma.setting.findUnique({
+    where: { chave: CHAVE_VARREDURA_DESDE },
+    select: { valor: true },
+  });
+  if (typeof s?.valor !== 'string') return null;
+
+  const d = new Date(s.valor);
+  // Valor corrompido nao pode virar `Invalid Date` e envenenar a
+  // comparacao — toda data comparada com NaN da false, e a varredura
+  // passaria a ler tudo de novo em silencio.
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export interface ResultadoRecuperacao {
   lidas: number;
   novas: number;
@@ -93,7 +133,15 @@ export async function inicioDaVarredura(agora: Date = new Date()): Promise<Date>
   // nada depois faria a varredura reler meses de conversa a cada
   // reconexao.
   const piso = new Date(agora.getTime() - JANELA_INICIAL_HORAS * 3600_000);
-  return comFolga < piso ? piso : comFolga;
+  const resultado = comFolga < piso ? piso : comFolga;
+
+  // A marca do reset vence os dois. Ela e uma afirmacao explicita —
+  // "o que veio antes disto nao me pertence" — e nenhum calculo de
+  // janela pode passar por cima dela.
+  const marca = await marcaDoReset();
+  if (marca && resultado < marca) return marca;
+
+  return resultado;
 }
 
 /**

@@ -24,7 +24,7 @@
  *
  * Requer Postgres e Redis no ar, migrado e com seed.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
@@ -52,6 +52,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // A marca do reset e um Setting REAL e persistente: rodar
+  // `pnpm reset:fabrica` na maquina deixa ela gravada, e sem limpar
+  // aqui todo teste de janela passaria a comparar com a data do ultimo
+  // reset em vez da que o proprio teste montou.
+  await prisma.setting.deleteMany({ where: { chave: 'canal.varredura_desde' } });
   await prisma.unknownContact.deleteMany();
   await prisma.outboundMessage.deleteMany();
   await prisma.message.deleteMany();
@@ -365,5 +370,144 @@ describe('o caso real: resposta no mesmo minuto do envio, worker reiniciando', (
       where: { leadId: lead.id, campaignStepId: etapas[1]!.id },
     });
     expect(proxima).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A MARCA DO RESET
+//
+// O reset apaga o banco, mas não apaga a conversa no WhatsApp — nem
+// poderia. Sem uma marca, os "quero sim" dos testes anteriores seriam
+// lidos como respostas novas e o lead recém-importado nasceria QUENTE.
+//
+// No uso real é pior: reimportar uma lista para uma campanha nova faria
+// cada lead herdar a última resposta dada à campanha ANTERIOR — e um
+// "não tenho interesse" de três meses atrás encerraria a nova sequência
+// antes da primeira mensagem sair.
+// ---------------------------------------------------------------------------
+describe('a marca deixada pelo reset de fábrica', () => {
+  async function marcar(quando: Date | null): Promise<void> {
+    if (quando === null) {
+      await prisma.setting.deleteMany({ where: { chave: rec.CHAVE_VARREDURA_DESDE } });
+      return;
+    }
+    await prisma.setting.upsert({
+      where: { chave: rec.CHAVE_VARREDURA_DESDE },
+      update: { valor: quando.toISOString() },
+      create: {
+        chave: rec.CHAVE_VARREDURA_DESDE,
+        valor: quando.toISOString(),
+        descricao: 'teste',
+        categoria: 'canal',
+      },
+    });
+  }
+
+  afterEach(async () => {
+    await marcar(null);
+  });
+
+  it('a varredura não olha antes da marca', async () => {
+    const agora = new Date('2026-08-15T12:00:00Z');
+    const reset = new Date('2026-08-15T11:30:00Z');
+    await marcar(reset);
+
+    // Sem a marca seriam 24h para trás.
+    const desde = await rec.inicioDaVarredura(agora);
+    expect(desde.getTime()).toBe(reset.getTime());
+  });
+
+  it('a marca vence até a última mensagem conhecida', async () => {
+    const lead = await criarLead();
+    const agora = new Date('2026-08-15T12:00:00Z');
+    const antesDoReset = new Date('2026-08-15T10:00:00Z');
+    const reset = new Date('2026-08-15T11:30:00Z');
+
+    const conversa = await prisma.conversation.create({
+      data: {
+        id: `${lead.id}-sem-campanha`,
+        leadId: lead.id,
+        chatId: `${lead.telefoneNormalizado}@c.us`,
+        ultimaMensagemEm: antesDoReset,
+      },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        direcao: 'RECEBIDA',
+        status: 'ENTREGUE',
+        texto: 'resposta velha',
+        whatsappMessageId: `wa-velha-${Date.now()}`,
+        recebidaEm: antesDoReset,
+      },
+    });
+    await marcar(reset);
+
+    // A marca é uma afirmação explícita — "o que veio antes disto não me
+    // pertence". Nenhum cálculo de janela pode passar por cima dela.
+    const desde = await rec.inicioDaVarredura(agora);
+    expect(desde.getTime()).toBe(reset.getTime());
+  });
+
+  it('resposta anterior ao reset não é reprocessada', async () => {
+    const lead = await criarLead();
+    const agora = new Date('2026-08-15T12:00:00Z');
+    const reset = new Date('2026-08-15T11:30:00Z');
+    await marcar(reset);
+
+    const velha = entrada(
+      lead.telefoneNormalizado!,
+      'quero sim',
+      new Date('2026-08-15T10:00:00Z')
+    );
+    const { adapter } = adapterCom([velha]);
+
+    const r = await rec.recuperarMensagensPerdidas(adapter, log, agora);
+
+    expect(r.lidas).toBe(0);
+    expect(
+      await prisma.message.count({ where: { leadId: lead.id, direcao: 'RECEBIDA' } })
+    ).toBe(0);
+    // E o lead continua frio: ele não conversou com esta campanha.
+    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(depois.temperatura).toBe('FRIO');
+  });
+
+  it('resposta DEPOIS do reset entra normalmente', async () => {
+    const lead = await criarLead();
+    const agora = new Date('2026-08-15T12:00:00Z');
+    const reset = new Date('2026-08-15T11:30:00Z');
+    await marcar(reset);
+
+    const nova = entrada(
+      lead.telefoneNormalizado!,
+      'quero sim',
+      new Date('2026-08-15T11:45:00Z')
+    );
+    const { adapter } = adapterCom([nova]);
+
+    const r = await rec.recuperarMensagensPerdidas(adapter, log, agora);
+    expect(r.novas).toBe(1);
+  });
+
+  it('marca corrompida é ignorada em vez de quebrar a varredura', async () => {
+    await prisma.setting.upsert({
+      where: { chave: rec.CHAVE_VARREDURA_DESDE },
+      update: { valor: 'isto nao e uma data' },
+      create: {
+        chave: rec.CHAVE_VARREDURA_DESDE,
+        valor: 'isto nao e uma data',
+        descricao: 'teste',
+        categoria: 'canal',
+      },
+    });
+
+    const agora = new Date('2026-08-15T12:00:00Z');
+    // `Invalid Date` numa comparação dá sempre false, e a varredura
+    // passaria a ler tudo de novo sem nenhum sinal.
+    const desde = await rec.inicioDaVarredura(agora);
+    expect(Number.isNaN(desde.getTime())).toBe(false);
+    expect(desde.getTime()).toBe(agora.getTime() - 24 * 3600_000);
   });
 });
