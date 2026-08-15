@@ -444,6 +444,33 @@ export function criarWorkerOutbound(
             },
           });
 
+          // ============================================================
+          // FALHA PRECISA CHEGAR ATE VOCE
+          // ============================================================
+          // Ate agora uma falha de envio so existia na aba Fila. Quem
+          // nao abrisse aquela tela nunca saberia — e a sequencia daquele
+          // lead parava para sempre, em silencio.
+          //
+          // O sino e onde as coisas que exigem decisao aparecem. Uma
+          // mensagem que talvez tenha saido, e que nao sera reenviada
+          // sozinha, e exatamente isso.
+          const quemFalhou =
+            m.lead.empresa ?? m.lead.nomeCompleto ?? 'Lead sem nome';
+          await prisma.notification.create({
+            data: {
+              leadId: m.lead.id,
+              tipo: 'INTERVENCAO_NECESSARIA',
+              nivel: 'ERRO',
+              prioridade: 5,
+              titulo: `Falha no envio da etapa ${m.campaignStep.ordem} — ${quemFalhou}`,
+              mensagem: semResposta
+                ? 'O WhatsApp não confirmou o envio. A mensagem PODE ter saído: ' +
+                  'confira a conversa. A sequência deste lead está parada até você decidir.'
+                : `Não foi possível enviar. A sequência deste lead está parada.`,
+            },
+          });
+          void publicarEvento('notificacao.criada', { leadId: m.lead.id });
+
           log.error(
             { outboundMessageId, etapa: m.campaignStep.ordem, err },
             semResposta

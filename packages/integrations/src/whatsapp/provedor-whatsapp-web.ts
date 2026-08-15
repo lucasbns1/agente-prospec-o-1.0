@@ -24,6 +24,7 @@ import type {
 } from './provedor.js';
 import { exigirPermissaoDeEnvioReal } from './guarda-envio.js';
 import { resolverTelefoneDaMensagem } from './telefone-da-mensagem.js';
+import { acharEnviada, type ConversaVarrida } from './procurar-enviada.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -174,15 +175,36 @@ export async function criarProvedorWhatsAppWeb(
     ): Promise<string | null> {
       const corte = Math.floor(desde.getTime() / 1000);
       try {
-        const chat: any = await cliente.getChatById(chatId);
-        const msgs: any[] = await chat.fetchMessages({ limit: 15 });
+        // A decisao de QUAL mensagem conta e uma funcao pura, testada a
+        // parte. Aqui so se traduz o formato da biblioteca.
+        //
+        // Varre as conversas em vez de abrir pelo id: numa conversa LID
+        // o endereco real e `<identificador>@lid`, nao o telefone, e
+        // `getChatById(telefone@c.us)` devolveria o chat errado — o
+        // mesmo engano que ja custou caro na ENTRADA.
+        void chatId;
 
-        for (const m of msgs) {
-          if (!m?.fromMe) continue;
-          if (Number(m?.timestamp ?? 0) < corte) continue;
-          if (String(m?.body ?? '') !== texto) continue;
-          return String(m?.id?._serialized ?? m?.id ?? '');
+        const chats: any[] = await cliente.getChats();
+        const conversas: ConversaVarrida[] = [];
+
+        for (const chat of chats) {
+          if (chat?.isGroup) continue;
+          if (Number(chat?.timestamp ?? 0) < corte) continue;
+
+          const msgs: any[] = await chat.fetchMessages({ limit: 15 });
+          conversas.push({
+            isGroup: false,
+            timestamp: Number(chat?.timestamp ?? 0),
+            mensagens: msgs.map((m: any) => ({
+              id: String(m?.id?._serialized ?? m?.id ?? ''),
+              timestamp: Number(m?.timestamp ?? 0),
+              fromMe: Boolean(m?.fromMe),
+              body: String(m?.body ?? ''),
+            })),
+          });
         }
+
+        return acharEnviada(conversas, texto, corte);
       } catch (err) {
         // Nao conseguir conferir nao e o mesmo que "nao saiu". Quem
         // chama trata `null` como "nao sei" e escolhe o caminho

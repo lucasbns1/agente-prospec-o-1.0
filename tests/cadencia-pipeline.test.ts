@@ -642,6 +642,21 @@ describe('envio que trava mas chega', () => {
     expect(depois.erro).toMatch(/PODE ter saído/i);
   }, 60_000);
 
+  it('a falha vira notificação — não fica só na aba Fila', async () => {
+    const { adapter } = adapterQueTrava(false);
+    const { lead } = await enviarCom(adapter, false);
+
+    // Antes, uma falha de envio só existia na Fila. Quem não abrisse
+    // aquela tela nunca saberia, e a sequência daquele lead parava em
+    // silêncio.
+    const aviso = await prisma.notification.findFirst({
+      where: { leadId: lead.id },
+    });
+    expect(aviso).not.toBeNull();
+    expect(aviso?.nivel).toBe('ERRO');
+    expect(aviso?.mensagem).toMatch(/PODE ter saído/i);
+  }, 60_000);
+
   it('não reenvia sozinho nem quando não confirmou', async () => {
     const { adapter } = adapterQueTrava(false);
     const { m } = await enviarCom(adapter, false);
