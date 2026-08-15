@@ -205,6 +205,18 @@ async function main(): Promise<void> {
 
     void (async () => {
       try {
+        // `CONECTADO` significa "a sessao autenticou", nao "a pagina
+        // terminou de carregar". Varrer no mesmo segundo derrubava a
+        // recuperacao com um erro opaco vindo de dentro do Chromium —
+        // literalmente `message: "r"`, porque o codigo da pagina esta
+        // minificado.
+        //
+        // O provedor ja tenta de novo por conta propria; esta espera
+        // evita gastar as tentativas com uma pagina que ainda esta
+        // subindo. Nada depende de a varredura ser imediata: ela busca
+        // o que ficou para tras, nao o que esta chegando agora.
+        await new Promise((r) => setTimeout(r, 10_000));
+
         const r = await recuperarMensagensPerdidas(adapter, log);
         if (r.lidas > 0) {
           log.info(

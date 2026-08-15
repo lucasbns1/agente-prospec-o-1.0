@@ -28,6 +28,59 @@ import { acharEnviada, type ConversaVarrida } from './procurar-enviada.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * `getChats()` com tentativas.
+ *
+ * ============================================================
+ * POR QUE ISTO PRECISA EXISTIR
+ * ============================================================
+ * O evento `ready` significa "a sessao autenticou", nao "a pagina
+ * terminou de carregar". Nos primeiros segundos depois dele,
+ * `getChats()` estoura dentro do Chromium com um erro opaco — literal:
+ *
+ *   ERROR (worker): Falha na varredura de mensagens perdidas
+ *     message: "r"
+ *     at Client.getChats (whatsapp-web.js/src/Client.js:1669)
+ *
+ * Um erro chamado "r", porque o codigo da pagina esta minificado.
+ *
+ * Isso derrubava a varredura de mensagens perdidas na conexao. Pior:
+ * `confirmarEnvio` usa a MESMA chamada, e uma falha dela no momento do
+ * envio faria o sistema concluir "nao achei a mensagem" e marcar FALHOU
+ * um envio que deu certo — exatamente o defeito que a confirmacao
+ * existe para evitar.
+ *
+ * Tentar de novo resolve porque a causa e transitoria: a pagina termina
+ * de carregar em poucos segundos. As esperas crescem (2s, 4s, 8s) para
+ * nao martelar uma pagina que ainda esta subindo.
+ */
+async function getChatsComTentativas(
+  cliente: any,
+  log: (m: string, d?: Record<string, unknown>) => void,
+  tentativas = 3
+): Promise<any[]> {
+  let ultimoErro: unknown;
+
+  for (let i = 0; i < tentativas; i += 1) {
+    try {
+      return await cliente.getChats();
+    } catch (err) {
+      ultimoErro = err;
+      const esperar = 2000 * 2 ** i;
+      log('getChats falhou; a pagina do WhatsApp pode ainda estar carregando', {
+        tentativa: i + 1,
+        de: tentativas,
+        proximaEmMs: esperar,
+      });
+      if (i < tentativas - 1) {
+        await new Promise((r) => setTimeout(r, esperar));
+      }
+    }
+  }
+
+  throw ultimoErro;
+}
+
 /** Converte a mensagem da biblioteca para o formato do sistema. */
 function traduzirMensagem(m: any): MensagemProvedor {
   return {
@@ -184,7 +237,7 @@ export async function criarProvedorWhatsAppWeb(
         // mesmo engano que ja custou caro na ENTRADA.
         void chatId;
 
-        const chats: any[] = await cliente.getChats();
+        const chats: any[] = await getChatsComTentativas(cliente, log);
         const conversas: ConversaVarrida[] = [];
 
         for (const chat of chats) {
@@ -234,7 +287,7 @@ export async function criarProvedorWhatsAppWeb(
       const corte = Math.floor(desde.getTime() / 1000);
       const encontradas: MensagemProvedor[] = [];
 
-      const chats: any[] = await cliente.getChats();
+      const chats: any[] = await getChatsComTentativas(cliente, log);
       for (const chat of chats) {
         if (chat?.isGroup) continue;
 
