@@ -508,117 +508,180 @@ export function criarWorkerOutbound(
         }
       }
 
-      const mensagem = await prisma.message.create({
-        data: {
-          conversationId: conversa.id,
-          leadId: m.lead.id,
-          campaignId: m.campaign.id,
-          campaignStepId: m.campaignStep.id,
-          direcao: 'ENVIADA',
-          // SIMULADA e um estado terminal proprio: NAO conta no limite
-          // diario nem nas metricas de "mensagens enviadas".
-          status: resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA',
-          texto: m.textoRenderizado!,
-          textoOriginal: m.textoTemplate,
-          variaveisUsadas: m.variaveisUsadas as Prisma.InputJsonValue,
-          idempotencyKey: m.idempotencyKey,
-          whatsappMessageId: resultadoEnvio.whatsappMessageId,
-          simulada: resultadoEnvio.simulado,
-          enviadaEm: resultadoEnvio.simulado ? null : new Date(),
-        },
-      });
-
+      // ============================================================
+      // A PARTIR DAQUI O TRANSPORTE JA TEVE SUCESSO
+      // ============================================================
+      // O status vai para ENVIADA AGORA, antes de qualquer outra
+      // escrita. Nada do que vier depois — gravar historico, mover o
+      // quadro, criar notificacao, publicar evento — pode transformar
+      // uma mensagem entregue em "FALHOU".
+      //
+      // Antes, a ordem era o contrario: gravava tudo e so entao mudava o
+      // status. Uma falha no meio derrubava o job, o BullMQ retentava, a
+      // reserva encontrava PROCESSANDO e marcava FALHOU — para uma
+      // mensagem que estava no celular do lead.
+      //
+      // "Sucesso de transporte" e "falha de pos-processamento" sao
+      // coisas diferentes e agora tem registros diferentes.
+      const statusFinal = resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA';
       await prisma.outboundMessage.update({
         where: { id: outboundMessageId },
         data: {
-          status: resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA',
+          status: statusFinal,
           processedAt: new Date(),
-          messageId: mensagem.id,
           bullJobId: job.id ?? null,
           dryRun: resultadoEnvio.simulado,
         },
       });
 
-      // --- Move o lead para a coluna desta etapa, no quadro ---
+      // ============================================================
+      // POS-PROCESSAMENTO — NADA AQUI PODE DESFAZER O ENVIO
+      // ============================================================
+      // Gravar historico, mover o quadro, criar notificacao, publicar
+      // evento. Tudo isto e importante, e nada disto e o envio.
       //
-      // Acontece TAMBEM em simulacao, de proposito: o dry-run existe para
-      // ensaiar o fluxo inteiro. Se o quadro so andasse com envio real,
-      // ele ficaria parado justamente na fase em que voce confere se a
-      // sequencia faz sentido.
+      // Se qualquer passo falhar, a mensagem CONTINUA ENVIADA. O erro e
+      // registrado no campo `erro` — com o status intacto — para a tela
+      // poder dizer "Enviada, sincronizacao pendente" em vez de mentir
+      // que falhou.
       //
-      // `updateMany` e nao `update`: o vinculo pode nao existir (mensagem
-      // enfileirada por uma versao anterior), e falhar aqui perderia o
-      // registro de um envio que ja aconteceu.
-      await prisma.leadCampaign.updateMany({
-        where: { leadId: m.lead.id, campaignId: m.campaign.id },
-        data: {
-          etapaAtualId: m.campaignStep.id,
-          etapaAtualOrdem: m.campaignStep.ordem,
-          // Quem decide o proximo estado e a ETAPA, nao o worker: se ela
-          // espera resposta, o lead fica aguardando; senao a sequencia
-          // segue sozinha.
-          status: m.campaignStep.aguardarResposta
-            ? 'AGUARDANDO_RESPOSTA'
-            : 'EM_ANDAMENTO',
-          totalEnviadas: { increment: 1 },
-        },
-      });
-
-      // --- "Me avise quando alguem chegar nesta etapa" ---
-      //
-      // Configurado por etapa. E o que transforma um trabalho manual no
-      // meio da sequencia ("montar a previa do site deste") em algo que
-      // te procura, em vez de depender de voce olhar o quadro.
-      //
-      // Dispara TAMBEM em simulacao: se so avisasse no envio real, voce
-      // descobriria que o aviso nao funciona justamente no dia em que
-      // passou a depender dele.
-      if (m.campaignStep.notificarAoChegar) {
-        const rotuloEtapa =
-          m.campaignStep.nome?.trim() || `Mensagem ${m.campaignStep.ordem}`;
-        const quem = m.lead.empresa ?? m.lead.nomeCompleto ?? 'Lead sem nome';
-
-        await prisma.notification.create({
+      // Nao relanca: relancar derrubaria o job, o BullMQ retentaria, e a
+      // retentativa encontraria a mensagem ja ENVIADA. No melhor caso
+      // seria trabalho jogado fora; no pior, o comportamento antigo de
+      // marcar FALHOU o que ja tinha saido.
+      try {
+        const mensagem = await prisma.message.create({
           data: {
+            conversationId: conversa.id,
             leadId: m.lead.id,
-            tipo: 'PEDIDO_PREVIEW',
-            nivel: 'ALERTA',
-            titulo: m.campaignStep.notificacaoTexto?.trim()
-              ? m.campaignStep.notificacaoTexto.trim()
-              : `Lead chegou em "${rotuloEtapa}"`,
-            mensagem: `${quem} chegou na etapa "${rotuloEtapa}" da campanha ${m.campaign.nome}.`,
-            // Leva direto para a conversa: um aviso sem caminho de volta
-            // faz voce procurar o lead na mao.
-            link: `/conversas/${m.lead.id}`,
-            prioridade: 80,
+            campaignId: m.campaign.id,
+            campaignStepId: m.campaignStep.id,
+            direcao: 'ENVIADA',
+            // SIMULADA e um estado terminal proprio: NAO conta no limite
+            // diario nem nas metricas de "mensagens enviadas".
+            status: resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA',
+            texto: m.textoRenderizado!,
+            textoOriginal: m.textoTemplate,
+            variaveisUsadas: m.variaveisUsadas as Prisma.InputJsonValue,
+            idempotencyKey: m.idempotencyKey,
+            whatsappMessageId: resultadoEnvio.whatsappMessageId,
+            simulada: resultadoEnvio.simulado,
+            enviadaEm: resultadoEnvio.simulado ? null : new Date(),
           },
         });
 
-        await publicarEvento('notificacao.criada', { leadId: m.lead.id });
+        // So o vinculo com a mensagem gravada. O status ja foi decidido
+        // la em cima, quando o transporte teve sucesso.
+        await prisma.outboundMessage.update({
+          where: { id: outboundMessageId },
+          data: { messageId: mensagem.id },
+        });
+
+        // --- Move o lead para a coluna desta etapa, no quadro ---
+        //
+        // Acontece TAMBEM em simulacao, de proposito: o dry-run existe para
+        // ensaiar o fluxo inteiro. Se o quadro so andasse com envio real,
+        // ele ficaria parado justamente na fase em que voce confere se a
+        // sequencia faz sentido.
+        //
+        // `updateMany` e nao `update`: o vinculo pode nao existir (mensagem
+        // enfileirada por uma versao anterior), e falhar aqui perderia o
+        // registro de um envio que ja aconteceu.
+        await prisma.leadCampaign.updateMany({
+          where: { leadId: m.lead.id, campaignId: m.campaign.id },
+          data: {
+            etapaAtualId: m.campaignStep.id,
+            etapaAtualOrdem: m.campaignStep.ordem,
+            // Quem decide o proximo estado e a ETAPA, nao o worker: se ela
+            // espera resposta, o lead fica aguardando; senao a sequencia
+            // segue sozinha.
+            status: m.campaignStep.aguardarResposta
+              ? 'AGUARDANDO_RESPOSTA'
+              : 'EM_ANDAMENTO',
+            totalEnviadas: { increment: 1 },
+          },
+        });
+
+        // --- "Me avise quando alguem chegar nesta etapa" ---
+        //
+        // Configurado por etapa. E o que transforma um trabalho manual no
+        // meio da sequencia ("montar a previa do site deste") em algo que
+        // te procura, em vez de depender de voce olhar o quadro.
+        //
+        // Dispara TAMBEM em simulacao: se so avisasse no envio real, voce
+        // descobriria que o aviso nao funciona justamente no dia em que
+        // passou a depender dele.
+        if (m.campaignStep.notificarAoChegar) {
+          const rotuloEtapa =
+            m.campaignStep.nome?.trim() || `Mensagem ${m.campaignStep.ordem}`;
+          const quem = m.lead.empresa ?? m.lead.nomeCompleto ?? 'Lead sem nome';
+
+          await prisma.notification.create({
+            data: {
+              leadId: m.lead.id,
+              tipo: 'PEDIDO_PREVIEW',
+              nivel: 'ALERTA',
+              titulo: m.campaignStep.notificacaoTexto?.trim()
+                ? m.campaignStep.notificacaoTexto.trim()
+                : `Lead chegou em "${rotuloEtapa}"`,
+              mensagem: `${quem} chegou na etapa "${rotuloEtapa}" da campanha ${m.campaign.nome}.`,
+              // Leva direto para a conversa: um aviso sem caminho de volta
+              // faz voce procurar o lead na mao.
+              link: `/conversas/${m.lead.id}`,
+              prioridade: 80,
+            },
+          });
+
+          await publicarEvento('notificacao.criada', { leadId: m.lead.id });
+        }
+
+        await prisma.leadEvent.create({
+          data: {
+            leadId: m.lead.id,
+            tipo: resultadoEnvio.simulado ? 'MENSAGEM_SIMULADA' : 'MENSAGEM_ENVIADA',
+            descricao: resultadoEnvio.simulado
+              ? `SIMULACAO: mensagem da etapa ${m.campaignStep.ordem} seria enviada`
+              : `Mensagem da etapa ${m.campaignStep.ordem} enviada`,
+            origem: 'worker',
+            dados: {
+              campanha: m.campaign.nome,
+              etapa: m.campaignStep.ordem,
+              dryRun: resultadoEnvio.simulado,
+            } as Prisma.InputJsonValue,
+          },
+        });
+
+        await publicarEvento(
+          resultadoEnvio.simulado ? 'mensagem.simulada' : 'mensagem.enviada',
+          { leadId: m.lead.id, campaignId: m.campaign.id }
+        );
+      } catch (err) {
+        const detalhe = err instanceof Error ? err.message : String(err);
+        await prisma.outboundMessage
+          .update({
+            where: { id: outboundMessageId },
+            data: {
+              erro: `Enviada, mas o pós-processamento falhou: ${detalhe}`,
+            },
+          })
+          // Se ate isto falhar, o banco esta fora — e nao ha o que
+          // gravar em lugar nenhum. O log e o ultimo recurso.
+          .catch(() => undefined);
+
+        log.error(
+          {
+            outboundMessageId,
+            etapa: m.campaignStep.ordem,
+            statusPreservado: statusFinal,
+            err,
+          },
+          'Envio concluído, mas o pós-processamento falhou — status preservado'
+        );
+
+        return { status: statusFinal, simulado: resultadoEnvio.simulado };
       }
 
-      await prisma.leadEvent.create({
-        data: {
-          leadId: m.lead.id,
-          tipo: resultadoEnvio.simulado ? 'MENSAGEM_SIMULADA' : 'MENSAGEM_ENVIADA',
-          descricao: resultadoEnvio.simulado
-            ? `SIMULACAO: mensagem da etapa ${m.campaignStep.ordem} seria enviada`
-            : `Mensagem da etapa ${m.campaignStep.ordem} enviada`,
-          origem: 'worker',
-          dados: {
-            campanha: m.campaign.nome,
-            etapa: m.campaignStep.ordem,
-            dryRun: resultadoEnvio.simulado,
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      await publicarEvento(
-        resultadoEnvio.simulado ? 'mensagem.simulada' : 'mensagem.enviada',
-        { leadId: m.lead.id, campaignId: m.campaign.id }
-      );
-
-      return { status: resultadoEnvio.simulado ? 'SIMULADA' : 'ENVIADA', simulado: resultadoEnvio.simulado };
+      return { status: statusFinal, simulado: resultadoEnvio.simulado };
     },
     {
       connection: opcoesRedis(),
@@ -626,6 +689,32 @@ export function criarWorkerOutbound(
       // uma protecao contra banimento. Processar em paralelo anularia
       // os delays calculados no agendamento.
       concurrency: 1,
+
+      // ============================================================
+      // A TRAVA PRECISA DURAR MAIS QUE O ENVIO
+      // ============================================================
+      // Este e o defeito que produzia o falso FALHOU, e ele nasceu de
+      // dois numeros que ninguem tinha comparado:
+      //
+      //   BullMQ  lockDuration/stalledInterval = 30s (padrao)
+      //   envio   tempo limite                 = 90s
+      //
+      // Um envio lento — que e o normal em conversa LID — passava dos
+      // 30s. O BullMQ concluia que o worker tinha morrido, marcava o job
+      // como travado e o REEXECUTAVA. A reexecucao encontrava a mensagem
+      // em PROCESSANDO e a marcava FALHOU... enquanto a execucao
+      // original ainda estava viva, esperando o WhatsApp, que entregou a
+      // mensagem normalmente.
+      //
+      // Resultado: WhatsApp entregou, CRM disse FALHOU. Nao era erro de
+      // tela — o banco tinha FALHOU mesmo, escrito por um sosia do
+      // proprio job.
+      //
+      // A trava agora cobre o envio inteiro com folga. Enquanto a
+      // execucao estiver viva e dentro dela, nenhum sosia aparece; se o
+      // processo morrer de verdade, a trava expira e a recuperacao age.
+      lockDuration: (SEGUNDOS_ATE_DESISTIR_DO_ENVIO + 60) * 1000,
+      stalledInterval: (SEGUNDOS_ATE_DESISTIR_DO_ENVIO + 60) * 1000,
     }
   );
 }

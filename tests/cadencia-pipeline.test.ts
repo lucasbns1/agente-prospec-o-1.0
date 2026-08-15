@@ -669,3 +669,173 @@ describe('envio que trava mas chega', () => {
     expect(depois.status).not.toBe('AGENDADA');
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// OS DOIS CENÁRIOS QUE PRECISAM ESTAR PROVADOS
+// ---------------------------------------------------------------------------
+describe('WhatsApp envia → erro depois → NÃO marca FALHOU', () => {
+  /**
+   * Adapter que envia com sucesso, como o real faz.
+   */
+  function adapterQueEnvia() {
+    return {
+      modo: 'live' as const,
+      sendMessage: async () => ({
+        sucesso: true,
+        whatsappMessageId: 'wa-entregue-777',
+        simulado: false,
+      }),
+      confirmarEnvio: async () => null,
+      isRegistered: async () => true,
+      getContacts: async () => [],
+      mensagensPerdidas: async () => [],
+      connect: async () => {},
+      disconnect: async () => {},
+      getStatus: () => ({ status: 'CONECTADO', modo: 'live' }),
+      onReady: () => {}, onQr: () => {}, onMessage: () => {},
+      onDisconnected: () => {}, onStatusChange: () => {},
+    } as never;
+  }
+
+  it('envio OK + pós-processamento quebrado = ENVIADA, nunca FALHOU', async () => {
+    const { criarWorkerOutbound } = await import(
+      '../apps/worker/src/workers/outbound.js'
+    );
+    const lead = await criarLead();
+    const { campanha, etapas } = await criarCampanha(true);
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: false },
+    });
+
+    const m = await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `pos-${Date.now()}-${n}`,
+        status: 'AGENDADA',
+        telefoneDestino: lead.telefoneNormalizado,
+        textoRenderizado: 'Olá!',
+        textoTemplate: 'Olá!',
+        variaveisUsadas: {},
+        dryRun: false,
+        scheduledAt: new Date(),
+      },
+    });
+
+    // A quebra do pós-processamento, provocada de propósito: apagar a
+    // etapa faz a criação da Message violar a chave estrangeira, e isso
+    // acontece DEPOIS de o WhatsApp já ter aceitado o envio.
+    //
+    // É a forma mais fiel de reproduzir o caso real, em que o transporte
+    // deu certo e algo posterior falhou.
+    const modoAntes = process.env.WHATSAPP_MODE;
+    process.env.WHATSAPP_MODE = 'live';
+    await workerOutbound.pause();
+
+    const w = criarWorkerOutbound(log, adapterQueEnvia());
+    await w.waitUntilReady();
+    try {
+      const { QUEUES } = await import('@prospector/shared');
+      await despachante.varrer(new Date());
+
+      // Quebra o pós-processamento no instante em que o job já saiu.
+      await prisma.conversation.deleteMany({ where: { leadId: lead.id } });
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE messages ADD CONSTRAINT quebra_proposital CHECK (texto <> 'Olá!')`
+      );
+
+      const fila = filas.getFila(QUEUES.OUTBOUND_SEND);
+      const { QueueEvents } = await import('bullmq');
+      const ev = new QueueEvents(QUEUES.OUTBOUND_SEND, {
+        connection: (await import('../apps/worker/src/redis.js')).opcoesRedis(),
+      });
+      await ev.waitUntilReady();
+      const jobs = await fila.getJobs(['waiting', 'active', 'delayed', 'completed']);
+      await Promise.all(
+        jobs.map((j) => j.waitUntilFinished(ev, 15_000).catch(() => undefined))
+      );
+      await ev.close();
+    } finally {
+      await prisma
+        .$executeRawUnsafe(`ALTER TABLE messages DROP CONSTRAINT IF EXISTS quebra_proposital`)
+        .catch(() => undefined);
+      await w.close();
+      await workerOutbound.resume();
+      if (modoAntes === undefined) delete process.env.WHATSAPP_MODE;
+      else process.env.WHATSAPP_MODE = modoAntes;
+    }
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+
+    // O CRITÉRIO DE ACEITAÇÃO: o WhatsApp entregou, então o CRM diz
+    // ENVIADA. O erro posterior é registrado, não vira falha de envio.
+    expect(depois.status).toBe('ENVIADA');
+    expect(depois.erro).toMatch(/pós-processamento/i);
+  }, 60_000);
+});
+
+describe('M2 enviada → M3 exige intervenção, e NÃO sai sozinha', () => {
+  it('cria notificação, para a cadência e não enfileira a M3', async () => {
+    const avanco = await import('../apps/worker/src/services/avancar-etapa.js');
+    const lead = await criarLead();
+    const { campanha, etapas } = await criarCampanha(true);
+
+    // A M3 é a da prévia: só sai quando você liberar.
+    await prisma.campaignStep.update({
+      where: { id: etapas[2]!.id },
+      data: { enviarAutomaticamente: false, notificarAoChegar: true },
+    });
+
+    // O lead acabou de receber a M2.
+    await prisma.leadCampaign.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        status: 'AGUARDANDO_RESPOSTA',
+        etapaAtualId: etapas[1]!.id,
+        etapaAtualOrdem: 2,
+        totalEnviadas: 2,
+      },
+    });
+
+    const r = await avanco.enfileirarProximaEtapa({
+      leadId: lead.id,
+      campaignId: campanha.id,
+      etapaAtualId: etapas[1]!.id,
+    });
+
+    expect(r.motivo).toBe('ETAPA_MANUAL');
+
+    // 1. NÃO enfileirou nada. Uma linha AGENDADA que ninguém pode
+    //    despachar ficaria na fila fingindo que vai sair.
+    expect(
+      await prisma.outboundMessage.count({
+        where: { leadId: lead.id, campaignStepId: etapas[2]!.id },
+      })
+    ).toBe(0);
+
+    // 2. O lead saiu da automação e está esperando você. `PAUSADO` é o
+    //    status que o quadro lê como "Precisa de você".
+    const vinculo = await prisma.leadCampaign.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(vinculo.status).toBe('PAUSADO');
+    expect(vinculo.aguardandoLiberacao).toBe(true);
+
+    // 3. Você foi avisado.
+    const aviso = await prisma.notification.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(aviso.tipo).toBe('PEDIDO_PREVIEW');
+
+    // 4. E existe uma tarefa — o aviso some da tela; a tarefa fica até
+    //    alguém fazer o trabalho.
+    const tarefa = await prisma.task.findFirst({ where: { leadId: lead.id } });
+    expect(tarefa).not.toBeNull();
+    expect(tarefa?.tipo).toBe('CRIAR_PREVIEW');
+  }, 30_000);
+});

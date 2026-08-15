@@ -255,6 +255,46 @@ export async function enfileirarProximaEtapa(params: {
       nivel: 'ALERTA',
       leadId: lead.id,
     });
+
+    // ============================================================
+    // NOTIFICACAO E TAREFA SAO COISAS DIFERENTES
+    // ============================================================
+    // A notificacao avisa. Ela e lida e some — cumpriu o papel dela.
+    //
+    // A tarefa e o trabalho: "montar a previa deste lead". Ela precisa
+    // sobreviver ao aviso ter sido lido, aparecer na lista de pendencias
+    // e so sumir quando alguem fizer o que ela pede.
+    //
+    // So com a notificacao, um lead pronto para a etapa manual sumia da
+    // vista no momento em que voce clicava no sino.
+    //
+    // `findFirst` antes de criar: o avanco pode ser tentado de novo (uma
+    // segunda resposta do lead, uma varredura), e duas tarefas identicas
+    // para o mesmo trabalho e ruido.
+    const jaTem = await prisma.task.findFirst({
+      where: {
+        leadId: lead.id,
+        tipo: 'CRIAR_PREVIEW',
+        status: { in: ['ABERTA', 'EM_ANDAMENTO'] },
+      },
+      select: { id: true },
+    });
+
+    if (!jaTem) {
+      await prisma.task.create({
+        data: {
+          leadId: lead.id,
+          tipo: 'CRIAR_PREVIEW',
+          prioridade: 'ALTA',
+          titulo: `Preparar a prévia de ${lead.empresa ?? lead.nomeCompleto}`,
+          descricao:
+            `O lead chegou na etapa ${etapa.ordem}, que exige liberação manual. ` +
+            `Prepare o material e libere o envio no quadro da campanha.`,
+        },
+      });
+      void publicarEvento('tarefa.criada', { leadId: lead.id });
+    }
+
     void publicarEvento('dashboard.atualizar');
     return {
       enfileirou: false,
