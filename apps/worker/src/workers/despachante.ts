@@ -71,7 +71,62 @@ function contarEnviosReais(campaignId: string, desde: Date): Promise<number> {
  * Exportada para poder ser chamada direto no teste, sem depender de
  * timer.
  */
+/**
+ * Quanto tempo em PROCESSANDO antes de a mensagem ser considerada orfa.
+ * Generoso de proposito: um envio lento nao pode virar worker morto.
+ */
+const MINUTOS_ATE_ORFA = 10;
+
+/**
+ * Devolve ao mundo o que ficou preso em PROCESSANDO.
+ *
+ * ============================================================
+ * O BURACO QUE ISTO FECHA
+ * ============================================================
+ * A reserva marca PROCESSANDO. Se o worker morrer entre reservar e
+ * terminar — Ctrl+C, queda do Chromium, reinicio — a mensagem fica nesse
+ * estado PARA SEMPRE: a varredura so olha PENDENTE e AGENDADA, e a
+ * reserva so pega quem esta nesses dois. Nada a resgata.
+ *
+ * Visto em uso real: tres mensagens paradas em "Processando" depois de
+ * uma sequencia de reinicios.
+ *
+ * ============================================================
+ * SIMULADA VOLTA; REAL NAO
+ * ============================================================
+ * Uma mensagem de simulacao nao tocou o WhatsApp — devolver para a fila
+ * e seguro.
+ *
+ * Uma REAL e outra coisa. Ha uma janela, pequena mas real, entre o
+ * WhatsApp aceitar a mensagem e o banco registrar isso. Morrer ali e
+ * reenviar mandaria a MESMA mensagem duas vezes para a mesma pessoa.
+ * Por isso ela vira FALHOU com o motivo explicito e espera decisao sua:
+ * um incomodo seu custa menos que uma mensagem duplicada na conversa de
+ * um cliente.
+ */
+async function recuperarOrfas(agora: Date): Promise<void> {
+  const limite = new Date(agora.getTime() - MINUTOS_ATE_ORFA * 60_000);
+
+  await prisma.outboundMessage.updateMany({
+    where: { status: 'PROCESSANDO', dryRun: true, updatedAt: { lt: limite } },
+    data: { status: 'AGENDADA', scheduledAt: agora },
+  });
+
+  await prisma.outboundMessage.updateMany({
+    where: { status: 'PROCESSANDO', dryRun: false, updatedAt: { lt: limite } },
+    data: {
+      status: 'FALHOU',
+      erro:
+        'O worker parou no meio do envio. Pode ter saido ou nao — confira a ' +
+        'conversa no WhatsApp antes de reenviar.',
+      processedAt: agora,
+    },
+  });
+}
+
 export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredura> {
+  await recuperarOrfas(agora);
+
   const vencidas = await prisma.outboundMessage.findMany({
     where: {
       status: { in: ['PENDENTE', 'AGENDADA'] },

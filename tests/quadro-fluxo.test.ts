@@ -440,3 +440,70 @@ describe('enfileirar apenas os leads escolhidos', () => {
   });
 });
 
+
+describe('mensagens órfãs em PROCESSANDO', () => {
+  let varrer: typeof import('../apps/worker/src/workers/despachante.js').varrer;
+
+  beforeAll(async () => {
+    ({ varrer } = await import('../apps/worker/src/workers/despachante.js'));
+  });
+
+  async function presaEmProcessando(dryRun: boolean, minutosAtras: number) {
+    const lead = await criarLead();
+    const campanha = await criarCampanha(1);
+    const etapa = await prisma.campaignStep.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    const m = await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapa.id,
+        idempotencyKey: `orfa-${Date.now()}-${n}-${Math.random()}`,
+        status: 'PROCESSANDO',
+        telefoneDestino: lead.telefoneNormalizado,
+        textoRenderizado: 'Olá!',
+        dryRun,
+      },
+    });
+    // `updatedAt` é automático; o SQL cru é a única forma de envelhecê-lo.
+    await prisma.$executeRawUnsafe(
+      `UPDATE outbound_messages SET updated_at = now() - interval '${minutosAtras} minutes' WHERE id = $1`,
+      m.id
+    );
+    return m;
+  }
+
+  it('simulada presa volta para a fila', async () => {
+    const m = await presaEmProcessando(true, 30);
+
+    // Sem isto, ela ficava em PROCESSANDO para sempre: a varredura só
+    // olha PENDENTE/AGENDADA e nada a resgatava.
+    await varrer(new Date());
+
+    const d = await prisma.outboundMessage.findUniqueOrThrow({ where: { id: m.id } });
+    expect(d.status).not.toBe('PROCESSANDO');
+  });
+
+  it('real presa vira FALHOU, nunca reenviada', async () => {
+    const m = await presaEmProcessando(false, 30);
+
+    await varrer(new Date());
+
+    const d = await prisma.outboundMessage.findUniqueOrThrow({ where: { id: m.id } });
+    // Reenviar poderia mandar a MESMA mensagem duas vezes para a mesma
+    // pessoa. Falhar e pedir decisão custa menos.
+    expect(d.status).toBe('FALHOU');
+    expect(d.erro).toMatch(/confira a conversa/i);
+  });
+
+  it('não mexe em quem acabou de ser reservada', async () => {
+    const m = await presaEmProcessando(true, 1);
+
+    // Um envio lento não pode ser confundido com um worker morto.
+    await varrer(new Date());
+
+    const d = await prisma.outboundMessage.findUniqueOrThrow({ where: { id: m.id } });
+    expect(d.status).toBe('PROCESSANDO');
+  });
+});
