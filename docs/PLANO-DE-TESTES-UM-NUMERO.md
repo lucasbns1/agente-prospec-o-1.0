@@ -28,10 +28,25 @@ mensagens, histórico, tarefas, notificações, contatos desconhecidos.
 de resposta, as configurações e a sessão do WhatsApp. Você não vai
 precisar ler o QR de novo.
 
-Depois: importe **uma planilha com uma linha só** — o seu segundo número.
-As colunas mínimas são `nome` (ou `empresa`) e `telefone`. Se você tiver
-uma coluna de responsável, preencha; se não tiver, deixe em branco — o
-sistema não vai inventar nome de pessoa.
+Depois: importe `docs/exemplos/lead-de-teste.csv`. Já está pronto com o
+seu número:
+
+```csv
+nome,telefone,cidade,bairro,estado,categoria,responsavel
+Studio Teste Prospector,11984110705,São Paulo,Centro,SP,Teste,
+```
+
+Conferido: `11984110705` normaliza para **`5511984110705`** (DDD 11,
+celular). Troque `Studio Teste Prospector` pelo nome que você quiser ver
+na mensagem.
+
+A coluna `responsavel` está **vazia de propósito**. Assim o sistema trata
+"Studio Teste Prospector" como **estabelecimento, não pessoa** — e a
+mensagem não pode sair como "Oi, Studio!". Isso também é um teste.
+
+O número conectado é `5511968662120` e o de destino é `5511984110705`.
+São diferentes; se fossem o mesmo, o WhatsApp trataria como recado para
+si mesmo e nada do fluxo funcionaria.
 
 ---
 
@@ -111,8 +126,26 @@ estavam desligadas desde as fases de simulação:
 Juntas, faziam a mensagem 2 nunca sair. Agora saem — com 18 testes
 automatizados cobrindo os casos.
 
-**Montar antes:** a campanha precisa de **etapa 2**, e a **etapa 1**
-precisa de uma regra: categoria `POSITIVO` → ação `AVANCAR`.
+**Montar antes:** só a **etapa 2**. A regra "POSITIVO → avança" agora
+nasce junto com a etapa.
+
+> **Segundo buraco, achado depois:** `campaign_step_rules` não tinha
+> nenhum caminho para ser preenchida — não há tela, não há rota, o seed
+> não cria. Toda etapa nascia **sem regra nenhuma**. E `decidirAcao`,
+> corretamente, não improvisa: categoria sem regra vira intervenção
+> manual. Resultado: TODA resposta caía em "Precisa de você", inclusive
+> um "sim, quero" perfeito. O motor estava certo e o sistema, inútil.
+>
+> Agora toda etapa nasce com um conjunto padrão conservador:
+>
+> | Resposta | O que acontece |
+> |---|---|
+> | POSITIVO | **avança** — é a única que avança sozinha |
+> | NEGATIVO, OPT_OUT | para a sequência |
+> | PREÇO, DÚVIDA, FALAR_DEPOIS, INTERESSE | chama você |
+>
+> São linhas normais no banco, editáveis. E salvar as etapas de novo
+> **não** sobrescreve o que você ajustar — tem teste para isso.
 
 **Fazer:** repetir o T2 (responder `quero sim`).
 
@@ -197,7 +230,12 @@ a andar quando você retomar.
 
 Duas coisas que sei que estão pendentes e que podem aparecer nos testes:
 
-1. **A coluna de endereço da sua planilha antiga não foi reconhecida** —
+1. **Não há tela para editar as regras de resposta.** Os padrões acima
+   estão no banco e funcionam, mas mudar "PREÇO chama você" para outra
+   coisa hoje só dá por SQL. A tela é o próximo passo natural depois
+   desta bateria.
+
+2. **A coluna de endereço da sua planilha antiga não foi reconhecida** —
    `cidade`, `bairro` e `estado` ficaram vazios nos 80 leads. Se o texto
    da sua etapa usar `{{cidade}}` ou `{{bairro}}`, a mensagem pode ser
    bloqueada por variável ausente. Para o teste com um número só, o mais
@@ -205,7 +243,7 @@ Duas coisas que sei que estão pendentes e que podem aparecer nos testes:
    a **linha de cabeçalho** da planilha real, eu ensino o importador a
    reconhecer ela.
 
-2. **O XLSX do Bing Maps Scraper deu "Falha ao ler o arquivo"** e eu
+3. **O XLSX do Bing Maps Scraper deu "Falha ao ler o arquivo"** e eu
    nunca cheguei a diagnosticar — a API estava fora no momento. Para o
    teste, use CSV.
 
@@ -215,7 +253,8 @@ Duas coisas que sei que estão pendentes e que podem aparecer nos testes:
 
 | | |
 |---|---|
-| Testes automatizados | 1039 (+ 16 E2E) |
+| Testes automatizados | 1054 (+ 16 E2E) |
 | Barreiras de envio | 4, todas de pé |
 | Envio real | liberado (`FASE_PERMITE_ENVIO_REAL = true`) |
 | Avanço por resposta | **implementado agora** |
+| Regras da etapa | **nascem por padrão agora** |

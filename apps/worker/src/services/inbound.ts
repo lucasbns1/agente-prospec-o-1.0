@@ -32,6 +32,7 @@ import {
   type TemplateDisponivel,
   type EfeitoDecisao,
   avaliarAck,
+  acaoDoMotor,
   estadoDeStatus,
   type ResultadoClassificacao,
 } from '@prospector/domain';
@@ -548,7 +549,12 @@ export async function processarMensagemRecebida(
     // "sequência chegou ao fim" na etapa 1.
     temProximaEtapa: await temProximaEtapa(campaignId, campaignStepId),
   }, {
-    regras: regras as unknown as RegraCategoria[],
+    // A tradução importa: o banco fala `StepAction` e o motor fala
+    // `AcaoMotor`. Ver `acaoDoMotor` para o porquê.
+    regras: regras.map((r) => ({
+      ...r,
+      acao: acaoDoMotor(r.acao),
+    })) as unknown as RegraCategoria[],
     templates: templates.map((t) => ({
       templateId: t.templateId,
       categoria: t.categoria,

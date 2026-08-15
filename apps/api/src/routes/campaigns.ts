@@ -14,6 +14,7 @@ import {
   chaveDaColuna,
   STATUS_ENCERRADOS,
   STATUS_ESPERANDO_VOCE,
+  regrasPadraoDaEtapa,
 } from '@prospector/domain';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
@@ -25,6 +26,49 @@ import {
   montarWhere,
   type FiltrosCampanha,
 } from '../services/campaign-service.js';
+
+/**
+ * Da a uma etapa o conjunto padrao de regras, se ela ainda nao tem
+ * nenhuma.
+ *
+ * ============================================================
+ * POR QUE ISTO PRECISA EXISTIR
+ * ============================================================
+ * `decidirAcao` nao improvisa: categoria sem regra vira intervencao
+ * manual. Correto — mas `campaign_step_rules` nao tinha NENHUM caminho
+ * para ser preenchida (nao ha tela, nao ha rota, o seed nao cria). Toda
+ * etapa nascia sem regra, e por isso TODA resposta caia em intervencao,
+ * inclusive um "sim, quero" perfeito. A automacao nunca automatizava.
+ *
+ * ============================================================
+ * SO SEMEIA O QUE ESTA VAZIO
+ * ============================================================
+ * A checagem de `count` nao e otimizacao: sem ela, salvar as etapas
+ * devolveria as regras padrao por cima de qualquer ajuste que voce
+ * tivesse feito. Editar o texto da mensagem 1 desfaria a configuracao
+ * das respostas — e em silencio.
+ */
+async function semearRegras(
+  tx: Prisma.TransactionClient,
+  campaignStepId: string
+): Promise<void> {
+  const existentes = await tx.campaignStepRule.count({ where: { campaignStepId } });
+  if (existentes > 0) return;
+
+  await tx.campaignStepRule.createMany({
+    data: regrasPadraoDaEtapa().map((r) => ({
+      campaignStepId,
+      categoria: r.categoria as never,
+      acao: r.acao as never,
+      novaTemperatura: r.novaTemperatura as never,
+      novoStatus: r.novoStatus as never,
+      criarTarefa: r.criarTarefa,
+      tarefaTipo: (r.criarTarefa ? 'RESPONDER_CLIENTE' : null) as never,
+      tarefaTitulo: r.tarefaTitulo,
+      notificar: r.notificar,
+    })),
+  });
+}
 
 const filtrosSchema = z
   .object({
@@ -432,10 +476,20 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
           if (existente) {
             await tx.campaignStep.update({ where: { id: existente }, data: dados });
           } else {
-            await tx.campaignStep.create({
+            const criada = await tx.campaignStep.create({
               data: { campaignId: id, ordem: e.ordem, ...dados },
+              select: { id: true },
             });
+            await semearRegras(tx, criada.id);
           }
+        }
+
+        // Etapas que ja existiam e nunca receberam regra: o mesmo
+        // problema, so que nas campanhas criadas antes desta correcao.
+        // Sem isto, quem ja tinha campanha continuaria com TODA resposta
+        // caindo em intervencao manual.
+        for (const a of atuais) {
+          if (a.ordem <= etapas.length) await semearRegras(tx, a.id);
         }
       });
 
