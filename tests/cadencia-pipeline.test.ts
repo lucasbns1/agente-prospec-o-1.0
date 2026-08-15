@@ -369,3 +369,115 @@ describe('a garantia que não pode falhar', () => {
     expect(simuladas).toBe(3);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// O ENVIO INTERROMPIDO NO MEIO
+//
+// O BullMQ considera "travado" um job cujo worker sumiu — reinício,
+// Ctrl+C, queda do Chromium — e o reexecuta. A reserva então encontrava
+// o PROCESSANDO que ela mesma tinha deixado, devolvia `count: 0`, e o
+// handler ia embora dizendo "já processada".
+//
+// Resultado visto em uso real, e do jeito mais confuso possível: a
+// mensagem CHEGOU no celular do lead, a fila mostrava "Processando", e
+// o diagnóstico mostrava `outbound_send: concluído 2 | FALHOU 0`. Nada
+// acusava erro em lugar nenhum. Como a etapa nunca concluía, o lead
+// ficava parado e a próxima mensagem nunca nascia.
+// ---------------------------------------------------------------------------
+describe('envio interrompido no meio', () => {
+  async function mensagemPresa(dryRun: boolean) {
+    const lead = await criarLead();
+    const { campanha, etapas } = await criarCampanha(true);
+
+    // Uma linha exatamente como o worker a deixa ao ser interrompido:
+    // reservada, marcada PROCESSANDO, e nunca concluída.
+    const m = await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `presa-${Date.now()}-${n}`,
+        status: 'PROCESSANDO',
+        telefoneDestino: lead.telefoneNormalizado,
+        textoRenderizado: 'oi',
+        textoTemplate: 'oi',
+        variaveisUsadas: {},
+        dryRun,
+      },
+    });
+    return { lead, m };
+  }
+
+  async function reprocessar(outboundMessageId: string): Promise<void> {
+    const { QUEUES } = await import('@prospector/shared');
+    const fila = filas.getFila(QUEUES.OUTBOUND_SEND);
+    const { QueueEvents } = await import('bullmq');
+    const eventos = new QueueEvents(QUEUES.OUTBOUND_SEND, {
+      connection: (await import('../apps/worker/src/redis.js')).opcoesRedis(),
+    });
+    await eventos.waitUntilReady();
+
+    // Sem `jobId` fixo: este é o job que o BullMQ recria ao considerar o
+    // anterior travado.
+    const job = await fila.add('enviar', { outboundMessageId });
+    await job.waitUntilFinished(eventos, 15_000).catch(() => undefined);
+    await eventos.close();
+  }
+
+  it('mensagem REAL presa vira FALHOU, com o motivo escrito', async () => {
+    const { m } = await mensagemPresa(false);
+
+    await reprocessar(m.id);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    // Antes: continuava PROCESSANDO para sempre, com o job marcado
+    // concluído no Redis. Nada acusava o problema.
+    expect(depois.status).toBe('FALHOU');
+    expect(depois.erro).toMatch(/PODE ter saído/i);
+  }, 30_000);
+
+  it('mensagem REAL presa NÃO é reenviada automaticamente', async () => {
+    const { m } = await mensagemPresa(false);
+    await reprocessar(m.id);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    // Devolver para a fila mandaria a mesma frase duas vezes na conversa
+    // de um cliente — e no caso real que originou este código, a
+    // mensagem tinha chegado.
+    expect(depois.status).not.toBe('AGENDADA');
+  }, 30_000);
+
+  it('mensagem SIMULADA presa volta para a fila', async () => {
+    const { m } = await mensagemPresa(true);
+    await reprocessar(m.id);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    // Simulação não tocou o WhatsApp: reenviar é seguro, e o dry-run
+    // existe justamente para ensaiar o fluxo inteiro.
+    expect(depois.status).toBe('AGENDADA');
+  }, 30_000);
+
+  it('mensagem já ENVIADA continua ENVIADA — isso sim é duplicata', async () => {
+    const { m } = await mensagemPresa(false);
+    await prisma.outboundMessage.update({
+      where: { id: m.id },
+      data: { status: 'ENVIADA', processedAt: new Date() },
+    });
+
+    await reprocessar(m.id);
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+    // O caminho antigo continua valendo para o caso que ele realmente
+    // resolvia: outra execução terminou o trabalho.
+    expect(depois.status).toBe('ENVIADA');
+    expect(depois.erro).toBeNull();
+  }, 30_000);
+});

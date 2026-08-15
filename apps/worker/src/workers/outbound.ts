@@ -207,8 +207,68 @@ export function criarWorkerOutbound(
       });
 
       if (reserva.count === 0) {
+        // ============================================================
+        // "NAO CONSEGUI RESERVAR" TEM DOIS SIGNIFICADOS MUITO
+        // DIFERENTES, E TRATA-LOS IGUAL PERDIA A MENSAGEM
+        // ============================================================
+        // Se a mensagem ja foi ENVIADA/SIMULADA/CANCELADA, desistir e
+        // certo: outra execucao terminou o trabalho.
+        //
+        // Mas se ela esta em PROCESSANDO, isto NAO e duplicata — e a
+        // propria mensagem, largada. O BullMQ considera "travado" um job
+        // cujo worker sumiu (reinicio, Ctrl+C, queda do Chromium) e o
+        // reexecuta. A reserva entao encontra o PROCESSANDO que ela
+        // mesma deixou, devolve `count: 0`, e o handler ia embora
+        // dizendo "ja processada" — com o job marcado CONCLUIDO no
+        // Redis e a linha presa em PROCESSANDO no banco, para sempre.
+        //
+        // Visto em uso real, e do jeito mais confuso possivel: a
+        // mensagem 2 CHEGOU no celular do lead, a fila mostrava
+        // "Processando", e o diagnostico mostrava
+        // `outbound_send: concluido 2 | FALHOU 0`. Nada acusava erro em
+        // lugar nenhum. Como a etapa nunca concluia, o lead ficava
+        // parado na etapa 1 e a mensagem 3 nunca nascia.
+        //
+        // A varredura de orfas resolveria — mas so depois de 10
+        // minutos, e ela existe para worker morto. Aqui da para saber
+        // agora.
+        const atual = await prisma.outboundMessage.findUnique({
+          where: { id: outboundMessageId },
+          select: { status: true, dryRun: true },
+        });
+
+        if (atual?.status === 'PROCESSANDO') {
+          // Simulada volta para a fila: nao tocou o WhatsApp, reenviar e
+          // seguro. Real vira FALHOU: pode ter saido — e saiu, no caso
+          // real que originou este codigo. Mandar a mesma frase duas
+          // vezes na conversa de um cliente custa mais que voce ter de
+          // olhar.
+          await prisma.outboundMessage.update({
+            where: { id: outboundMessageId },
+            data: atual.dryRun
+              ? { status: 'AGENDADA', scheduledAt: new Date() }
+              : {
+                  status: 'FALHOU',
+                  erro:
+                    'O envio foi interrompido no meio (worker reiniciado ou ' +
+                    'travado). A mensagem PODE ter saído — confira a conversa ' +
+                    'antes de reenviar.',
+                  processedAt: new Date(),
+                },
+          });
+
+          log.warn(
+            { outboundMessageId, jobId: job.id, dryRun: atual.dryRun },
+            atual.dryRun
+              ? 'Envio simulado interrompido — devolvido para a fila'
+              : 'Envio real interrompido — marcado FALHOU, sem reenvio automatico'
+          );
+
+          return { ignorado: true, motivo: 'envio_interrompido', status: 'FALHOU' };
+        }
+
         log.warn(
-          { outboundMessageId, jobId: job.id },
+          { outboundMessageId, jobId: job.id, status: atual?.status ?? '?' },
           'Mensagem ja processada ou cancelada — nada a fazer'
         );
         return { ignorado: true, motivo: 'ja_processada' };
