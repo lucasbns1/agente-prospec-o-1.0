@@ -17,6 +17,7 @@ import {
   type StatusConexao,
   type ContatoWhatsApp,
 } from './adapter.js';
+import type { MensagemEntrada } from './eventos-canal.js';
 
 export interface FakeAdapterOptions {
   /** Recebe cada linha de log. Por padrao, console.log. */
@@ -95,6 +96,17 @@ export class FakeWhatsAppAdapter implements WhatsAppAdapter {
   }
 
   async getContacts(): Promise<ContatoWhatsApp[]> {
+    return [];
+  }
+
+  /**
+   * Nao ha conversas para varrer numa simulacao.
+   *
+   * Devolver vazio e a resposta honesta: o fake nao guarda historico de
+   * entrada. Inventar mensagens aqui faria os testes de recuperacao
+   * passarem sem que o caminho real fosse exercitado.
+   */
+  async mensagensPerdidas(): Promise<MensagemEntrada[]> {
     return [];
   }
 

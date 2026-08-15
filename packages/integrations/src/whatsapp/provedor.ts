@@ -81,6 +81,29 @@ export interface ProvedorWhatsApp {
    */
   enviar(chatId: string, texto: string): Promise<{ id: string }>;
   numeroExiste(telefone: string): Promise<boolean>;
+
+  /**
+   * Mensagens RECEBIDAS a partir de `desde`, lidas das conversas.
+   *
+   * ============================================================
+   * O BURACO QUE ISTO FECHA
+   * ============================================================
+   * O evento `message` so existe AO VIVO. Se o worker estiver fora do ar
+   * no instante em que o lead responde — reinicio, queda do Chromium,
+   * computador dormindo —, aquele evento nao e reentregue. A mensagem
+   * fica no celular, visivel na conversa, e o sistema nunca soube dela.
+   *
+   * Visto em uso real: a mensagem 1 saiu 01:18:48, o lead respondeu
+   * 01:18, e o worker estava reiniciando naquele instante. A resposta
+   * chegou no WhatsApp e NUNCA entrou no sistema — nem como contato
+   * desconhecido. A sequencia parou para sempre, sem nenhum sinal de
+   * erro em lugar nenhum.
+   *
+   * A varredura na reconexao le o que ficou para tras. A idempotencia
+   * por `provider_message_id` torna o replay seguro: o que ja foi
+   * processado colide na constraint e e descartado.
+   */
+  mensagensDesde(desde: Date, maxPorConversa?: number): Promise<MensagemProvedor[]>;
 }
 
 export interface OpcoesProvedor {

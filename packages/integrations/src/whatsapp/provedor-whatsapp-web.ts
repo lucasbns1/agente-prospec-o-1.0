@@ -147,5 +147,63 @@ export async function criarProvedorWhatsAppWeb(
       const id = await cliente.getNumberId(telefone);
       return id !== null && id !== undefined;
     },
+
+    /**
+     * Le das conversas o que o evento `message` nao entregou.
+     *
+     * Grupos ficam de fora: prospeccao e conversa de um para um, e
+     * varrer grupos traria dezenas de mensagens que nao respondem a nada
+     * nosso.
+     *
+     * Falha numa conversa nao derruba a varredura. Uma conversa com
+     * midia corrompida ou historico grande demais nao pode custar as
+     * respostas de todas as outras.
+     */
+    async mensagensDesde(
+      desde: Date,
+      maxPorConversa = 20
+    ): Promise<MensagemProvedor[]> {
+      const corte = Math.floor(desde.getTime() / 1000);
+      const encontradas: MensagemProvedor[] = [];
+
+      const chats: any[] = await cliente.getChats();
+      for (const chat of chats) {
+        if (chat?.isGroup) continue;
+
+        // `timestamp` do chat e o da ultima mensagem. Conversa parada
+        // antes do corte nao tem nada novo — e `fetchMessages` e caro.
+        if (Number(chat?.timestamp ?? 0) < corte) continue;
+
+        try {
+          const msgs: any[] = await chat.fetchMessages({ limit: maxPorConversa });
+          for (const m of msgs) {
+            if (m?.fromMe) continue;
+            if (Number(m?.timestamp ?? 0) < corte) continue;
+
+            // MESMA resolucao de telefone do caminho ao vivo. Sem ela, a
+            // conversa LID entregaria o identificador de privacidade no
+            // lugar do numero e toda mensagem recuperada cairia em
+            // "contato desconhecido" — trocando um buraco por outro.
+            const { telefone, fonte } = await resolverTelefoneDaMensagem(m);
+            encontradas.push({
+              ...traduzirMensagem(m),
+              telefone,
+              fonteTelefone: fonte,
+            });
+          }
+        } catch (err) {
+          log('Falha ao ler uma conversa na varredura', {
+            chat: String(chat?.id?._serialized ?? '?'),
+            erro: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Ordem cronologica: o pipeline aplica efeitos na ordem em que
+      // recebe, e processar um "pare" antes do "quero" inverteria o
+      // resultado final do lead.
+      encontradas.sort((a, b) => a.timestamp - b.timestamp);
+      return encontradas;
+    },
   };
 }

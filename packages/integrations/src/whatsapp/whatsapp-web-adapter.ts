@@ -398,6 +398,35 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
     return [];
   }
 
+  /**
+   * Lê das conversas o que o evento ao vivo não entregou.
+   *
+   * Aplica os MESMOS filtros do `onMessage` — eco do próprio número e
+   * eventos de sistema. Filtros diferentes fariam a varredura trazer
+   * fantasmas que o caminho ao vivo descarta, e o comportamento do
+   * sistema passaria a depender de o worker estar no ar ou não no
+   * segundo em que a mensagem chegou.
+   */
+  async mensagensPerdidas(desde: Date): Promise<MensagemEntrada[]> {
+    const brutas = await this.provedor.mensagensDesde(desde);
+
+    return brutas
+      .filter((m) => !m.fromMe && !TIPOS_DE_SISTEMA.has(m.type))
+      .map((m) => ({
+        providerMessageId: m.id,
+        chatId: m.from,
+        telefone:
+          m.telefone ??
+          (m.from.endsWith('@lid') ? '' : chatIdParaTelefone(m.from)),
+        texto: m.body ?? '',
+        nomeContato: m.notifyName ?? null,
+        recebidaEm: new Date(m.timestamp * 1000),
+        deMim: false,
+        tipo: m.type,
+        temMidia: m.hasMedia,
+      }));
+  }
+
   // ------------------------------------------------- contrato de eventos
   onReady(h: (s: StatusConexao) => void): void {
     this.hReady.push(h);

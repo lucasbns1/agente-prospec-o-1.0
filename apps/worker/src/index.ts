@@ -20,6 +20,7 @@ import { criarWorkerOutbound } from './workers/outbound.js';
 import { iniciarDespachante } from './workers/despachante.js';
 import { criarWorkerInbound, enfileirarRecebida } from './workers/inbound.js';
 import { processarConfirmacaoEntrega } from './services/inbound.js';
+import { recuperarMensagensPerdidas } from './services/recuperar-perdidas.js';
 import { fecharPublicador } from './redis.js';
 import { publicarEvento } from './events.js';
 import { publicarEstadoCanal, publicarQr, limparQr } from './estado-canal.js';
@@ -178,6 +179,49 @@ async function main(): Promise<void> {
   const batimento = setInterval(() => void publicarEstado(), 30_000);
 
   adapter.onStatusChange((s) => log.info({ status: s.status }, 'Status do WhatsApp mudou'));
+
+  // ============================================================
+  // VARREDURA NA CONEXAO — respostas que chegaram sem ninguem ouvindo
+  // ============================================================
+  // O evento `message` so existe ao vivo. Toda vez que o worker esteve
+  // fora do ar — reinicio, `git pull`, queda do Chromium, computador
+  // dormindo — as respostas daquele intervalo nunca foram entregues, e
+  // nada as buscava depois.
+  //
+  // Aconteceu na validacao real: envio 01:18:48, resposta do lead 01:18,
+  // worker reiniciando naquele instante. A resposta ficou visivel no
+  // WhatsApp e o diagnostico mostrou `RESPOSTAS DELE (0)`. A sequencia
+  // morreu sem erro em lugar nenhum.
+  //
+  // Roda em segundo plano de proposito: ler as conversas leva alguns
+  // segundos, e segurar a inicializacao atrasaria as filas e o
+  // despachante por causa de um trabalho de recuperacao.
+  let jaVarreu = false;
+  adapter.onStatusChange((s) => {
+    if (s.status !== 'CONECTADO' || jaVarreu) return;
+    // Uma vez por processo: o status oscila em reconexoes curtas, e
+    // varrer a cada oscilacao releria as mesmas conversas.
+    jaVarreu = true;
+
+    void (async () => {
+      try {
+        const r = await recuperarMensagensPerdidas(adapter, log);
+        if (r.lidas > 0) {
+          log.info(
+            { ...r, desde: r.desde.toISOString() },
+            r.novas > 0
+              ? 'Varredura recuperou respostas que chegaram com o worker fora do ar'
+              : 'Varredura concluida — nenhuma resposta havia se perdido'
+          );
+        }
+      } catch (err) {
+        // Recuperacao nao e caminho critico: falhar aqui nao pode
+        // impedir o worker de atender o que vier ao vivo.
+        log.error({ err }, 'Falha na varredura de mensagens perdidas');
+      }
+    })();
+  });
+
   await adapter.connect();
 
   if (modo === 'dry-run') {

@@ -102,6 +102,16 @@ export class ProvedorSimulado implements ProvedorWhatsApp {
     return true;
   }
 
+  /**
+   * O provedor simulado nao tem conversas para reler.
+   *
+   * Vazio e a resposta honesta. Devolver mensagens fabricadas faria os
+   * testes de recuperacao passarem sem exercitar o caminho real.
+   */
+  async mensagensDesde(): Promise<MensagemProvedor[]> {
+    return [];
+  }
+
   // ------------------------------------------------------------- controle
   //
   // Os metodos abaixo nao existem no provedor real: sao a alavanca que o

@@ -14,6 +14,7 @@
  * sem reescrever CRM, campanhas e regras.
  */
 import type { WhatsAppStatus, WhatsAppMode } from '@prospector/shared';
+import type { MensagemEntrada } from './eventos-canal.js';
 
 export interface MensagemRecebida {
   /** ID unico da mensagem no WhatsApp. Usado para nao processar 2x. */
@@ -85,6 +86,29 @@ export interface WhatsAppAdapter extends WhatsAppAdapterEvents {
   isRegistered(telefone: string): Promise<boolean>;
 
   getContacts(): Promise<ContatoWhatsApp[]>;
+
+  /**
+   * Respostas recebidas desde `desde`, lidas das conversas.
+   *
+   * ============================================================
+   * POR QUE O `onMessage` NAO BASTA
+   * ============================================================
+   * O evento so existe AO VIVO. Worker fora do ar no instante em que o
+   * lead responde — reinicio, queda do Chromium, computador dormindo — e
+   * aquele evento nunca e reentregue.
+   *
+   * Aconteceu na validacao real: a mensagem 1 saiu 01:18:48, o lead
+   * respondeu 01:18, o worker estava reiniciando naquele instante. A
+   * resposta apareceu no WhatsApp e NUNCA entrou no sistema — nem como
+   * contato desconhecido. A sequencia morreu ali, sem erro em lugar
+   * nenhum.
+   *
+   * Devolve no MESMO formato do `onMessage`, com o telefone ja
+   * resolvido, para quem chama nao precisar saber por onde a mensagem
+   * chegou. A idempotencia por `provider_message_id` torna o replay
+   * seguro.
+   */
+  mensagensPerdidas(desde: Date): Promise<MensagemEntrada[]>;
 }
 
 /** Converte "5519999998888" -> "5519999998888@c.us". */
