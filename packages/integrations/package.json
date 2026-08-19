@@ -13,6 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@google/genai": "^2.17.1",
+    "@prospector/domain": "workspace:*",
     "@prospector/shared": "workspace:*",
     "exceljs": "^4.4.0",
     "papaparse": "^5.5.4",

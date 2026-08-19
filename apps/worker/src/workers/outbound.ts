@@ -22,6 +22,7 @@ import type { Logger } from 'pino';
 import { opcoesRedis } from '../redis.js';
 import { publicarEvento } from '../events.js';
 import { criarNotificacaoIdempotente } from '../services/notificar.js';
+import { dispararGatilho } from '../services/gatilhos-ia.js';
 
 export const FILA_OUTBOUND = 'outbound_send';
 
@@ -731,6 +732,22 @@ export function criarWorkerOutbound(
 
         return { status: statusFinal, simulado: resultadoEnvio.simulado };
       }
+
+      // ============================================================
+      // GATILHO DA IA — DEPOIS DO TRANSPORTE, NUNCA DENTRO DELE
+      // ============================================================
+      // Este ponto e proposital: o status ja esta gravado la em cima, o
+      // pos-processamento ja terminou, e o resultado do job ja esta
+      // decidido. A IA nao consegue influenciar nem atrasar o envio que
+      // acabou de acontecer — ela so decide o que vem DEPOIS.
+      //
+      // `dispararGatilho` engole os proprios erros, entao nao ha
+      // try/catch aqui: o contrato dela e nunca derrubar quem chama.
+      await dispararGatilho({
+        leadId: m.lead.id,
+        campaignId: m.campaign.id,
+        gatilho: 'ETAPA_CONCLUIDA',
+      });
 
       return { status: statusFinal, simulado: resultadoEnvio.simulado };
     },

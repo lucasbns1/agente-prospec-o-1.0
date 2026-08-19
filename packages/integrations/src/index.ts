@@ -23,3 +23,13 @@ export * from './import/column-mapping.js';
 // --- Fontes de lead (Fase P) ---
 export * from './sources/lead-source.js';
 export * from './sources/arquivo-lead-source.js';
+
+// --- Analise por IA (Fase 9) ---
+//
+// `gemini.js` NAO e exportado aqui, pelo mesmo motivo do
+// `provedor-whatsapp-web.js`: ele e o unico arquivo que importa a SDK do
+// Google, e reexporta-lo abriria caminho para o resto do sistema
+// alcanca-la. Quem precisa dele importa pelo caminho completo — hoje so
+// o worker.
+export * from './ai/analisador.js';
+export * from './ai/factory.js';

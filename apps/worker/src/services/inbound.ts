@@ -39,6 +39,7 @@ import {
 import type { MensagemEntrada } from '@prospector/integrations';
 import { publicarEvento } from '../events.js';
 import { criarNotificacaoIdempotente } from './notificar.js';
+import { dispararGatilho } from './gatilhos-ia.js';
 import {
   enfileirarProximaEtapa,
   enfileirarRespostaDeTemplate,
@@ -597,6 +598,26 @@ export async function processarMensagemRecebida(
         acao: decisao.acao,
       } as Prisma.InputJsonValue,
     },
+  });
+
+  // ============================================================
+  // GATILHO DA IA — OBSERVANDO, NAO COMANDANDO
+  // ============================================================
+  // Roda DEPOIS de `aplicarEfeitos`, e com `observarApenas: true`.
+  //
+  // O motor ja decidiu e ja agiu acima. O papel da IA aqui e comparar:
+  // ela le o mesmo retrato e diz o que teria feito, e a divergencia vai
+  // para `ai_decisions`. E dessa tabela que sai a resposta para "vale a
+  // pena dar o comando a ela?".
+  //
+  // `await` e nao `void`: sem esperar, o job terminaria antes da
+  // gravacao e a comparacao se perderia justamente nos casos mais
+  // interessantes, que sao os mais lentos.
+  await dispararGatilho({
+    leadId,
+    campaignId,
+    gatilho: 'MENSAGEM_RECEBIDA',
+    observarApenas: true,
   });
 
   void publicarEvento('mensagem.recebida', {

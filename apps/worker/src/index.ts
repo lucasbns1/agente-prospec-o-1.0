@@ -19,6 +19,8 @@ import { criarWorkerHealth } from './workers/health.js';
 import { criarWorkerOutbound } from './workers/outbound.js';
 import { iniciarDespachante } from './workers/despachante.js';
 import { criarWorkerInbound, enfileirarRecebida } from './workers/inbound.js';
+import { criarAnalisador } from '@prospector/integrations';
+import { configurarIA } from './services/gatilhos-ia.js';
 import { processarConfirmacaoEntrega } from './services/inbound.js';
 import { recuperarMensagensPerdidas } from './services/recuperar-perdidas.js';
 import { fecharPublicador } from './redis.js';
@@ -66,6 +68,47 @@ async function main(): Promise<void> {
 
   inicializarFilas();
   log.info({ filas: TODAS_AS_FILAS }, `${TODAS_AS_FILAS.length} filas registradas`);
+
+  // ============================================================
+  // ORQUESTRACAO POR IA (Fase 9)
+  // ============================================================
+  // Opcional e desligada por padrao. Sem chave ou com GEMINI_ENABLED
+  // ausente, `criarAnalisadorGemini` devolve null e o sistema inteiro se
+  // comporta como antes desta fase — sem chamada de rede, sem custo.
+  //
+  // A chave e lida SO AQUI, no processo do worker. Ela nao e passada
+  // adiante, nao vai para o log e nao entra no banco.
+  const analisadorIa = await criarAnalisador({
+    GEMINI_ENABLED: env.GEMINI_ENABLED,
+    GEMINI_API_KEY: env.GEMINI_API_KEY,
+    GEMINI_MODEL: env.GEMINI_MODEL,
+    GEMINI_TIMEOUT_MS: env.GEMINI_TIMEOUT_MS,
+  });
+
+  configurarIA({
+    analisador: analisadorIa,
+    somenteAnalise: env.AI_ANALYSIS_ONLY,
+    log,
+  });
+
+  if (!analisadorIa) {
+    log.info(
+      { motivo: env.GEMINI_ENABLED ? 'GEMINI_API_KEY vazia' : 'GEMINI_ENABLED=false' },
+      'IA desligada — a cadencia e comandada pelo motor deterministico'
+    );
+  } else if (env.AI_ANALYSIS_ONLY) {
+    log.warn(
+      { modelo: env.GEMINI_MODEL },
+      'IA em MODO SOMBRA — ela analisa e recomenda, mas quem comanda a cadencia ' +
+        'e o motor deterministico. As divergencias vao para a tabela ai_decisions.'
+    );
+  } else {
+    log.warn(
+      { modelo: env.GEMINI_MODEL },
+      'IA ATIVA — as decisoes dela comandam a cadencia (sempre filtradas pela guarda ' +
+        'e pelas quatro barreiras de envio).'
+    );
+  }
 
   // --- WhatsApp ---
   const modo = resolverModo(env.WHATSAPP_MODE);

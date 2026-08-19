@@ -54,6 +54,50 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'])
     .default('info'),
+
+  // ---------------------------------------------------------------------------
+  // GEMINI (Fase 9)
+  // ---------------------------------------------------------------------------
+  //
+  // A CHAVE SO E LIDA NO PROCESSO DO WORKER. A API nao precisa dela, o
+  // frontend nunca a ve, e ela nao e gravada no banco nem em log.
+  //
+  // Todos os padroes sao os seguros: com o .env de antes da Fase 9, a IA
+  // fica desligada e o sistema se comporta exatamente como antes.
+
+  /** Vazio = IA desligada, sem erro. Rodar sem ela e um modo suportado. */
+  GEMINI_API_KEY: z.string().optional(),
+
+  /**
+   * Liga a consulta ao modelo. Desligado por padrao: ninguem deve passar
+   * a gastar chamadas de API por ter feito um `git pull`.
+   */
+  GEMINI_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v.trim().toLowerCase() === 'true'),
+
+  /**
+   * MODO SOMBRA. `true` = a IA analisa e recomenda, mas quem comanda a
+   * cadencia continua sendo o motor deterministico.
+   *
+   * O padrao e `true` DE PROPOSITO, e note que ele e o padrao mesmo com
+   * a IA ligada: acender o modelo e dar o comando a ele sao duas
+   * decisoes separadas. A segunda so deveria acontecer depois de olhar
+   * a tabela `ai_decisions` e ver em quantos casos ele teria acertado.
+   */
+  AI_ANALYSIS_ONLY: z
+    .string()
+    .default('true')
+    .transform((v) => v.trim().toLowerCase() !== 'false'),
+
+  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+
+  /** Passou disto, o motor deterministico assume. */
+  GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(8_000),
+
+  /** Teto de decisoes encadeadas numa execucao. Trava contra laco infinito. */
+  GEMINI_MAX_STEPS: z.coerce.number().int().min(1).max(10).default(3),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -77,3 +121,13 @@ export function carregarEnv(fonte: NodeJS.ProcessEnv = process.env): Env {
 
 export const modoDryRun = (env: Env): boolean =>
   env.WHATSAPP_MODE.trim().toLowerCase() !== 'live';
+
+/**
+ * A IA esta de fato operante?
+ *
+ * Ligada E com chave. Ligar sem chave nao e erro de configuracao — e um
+ * meio-caminho comum (alguem liga a flag antes de conseguir a chave), e
+ * derrubar o worker por isso seria pior do que seguir sem IA.
+ */
+export const iaAtiva = (env: Env): boolean =>
+  env.GEMINI_ENABLED && Boolean(env.GEMINI_API_KEY?.trim());
