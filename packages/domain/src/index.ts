@@ -40,3 +40,14 @@ export * from './dashboard/atencao.js';
 // --- Recebimento (Fase 6A) ---
 export * from './inbound/identificar-lead.js';
 export * from './inbound/confirmacao-entrega.js';
+// --- Orquestracao por IA (Fase 9) ---
+//
+// Tudo aqui e puro: contrato, traducao, guarda e montagem de prompt. A
+// chamada de rede mora em @prospector/integrations e a orquestracao no
+// worker. E essa separacao que permite testar cada invariante de
+// seguranca sem modelo nenhum envolvido.
+export * from './ai/decisao-ia.js';
+export * from './ai/contexto.js';
+export * from './ai/mapear-intent.js';
+export * from './ai/validar-decisao.js';
+export * from './ai/prompt.js';

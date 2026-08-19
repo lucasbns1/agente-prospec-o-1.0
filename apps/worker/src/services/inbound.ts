@@ -37,8 +37,8 @@ import {
   type ResultadoClassificacao,
 } from '@prospector/domain';
 import type { MensagemEntrada } from '@prospector/integrations';
-import { PRIORIDADE_NOTIFICACAO } from '@prospector/shared';
 import { publicarEvento } from '../events.js';
+import { criarNotificacaoIdempotente } from './notificar.js';
 import {
   enfileirarProximaEtapa,
   enfileirarRespostaDeTemplate,
@@ -53,24 +53,24 @@ import {
  * pub/sub do Redis. Compartilhar o codigo exigiria um pacote so para
  * isso, e sao oito linhas.
  */
+/**
+ * Delega para a versao idempotente.
+ *
+ * Antes isto era um `create()` seco, e o mesmo acontecimento — uma
+ * segunda resposta do lead, um job reexecutado — virava dois avisos no
+ * sino. Quem passa `referencia` ganha a protecao; quem nao passa (aviso
+ * avulso, sem acontecimento que o identifique) mantem o comportamento
+ * antigo, que ali e o correto.
+ */
 async function criarNotificacao(dados: {
   tipo: string;
   titulo: string;
   mensagem: string;
   nivel?: 'INFO' | 'SUCESSO' | 'ALERTA' | 'ERRO';
   leadId?: string | null;
+  referencia?: string | null;
 }): Promise<void> {
-  await prisma.notification.create({
-    data: {
-      tipo: dados.tipo as never,
-      titulo: dados.titulo,
-      mensagem: dados.mensagem,
-      nivel: (dados.nivel ?? 'INFO') as never,
-      prioridade: PRIORIDADE_NOTIFICACAO[dados.tipo] ?? 50,
-      leadId: dados.leadId ?? null,
-    },
-  });
-  await publicarEvento('notificacao.criada', { titulo: dados.titulo });
+  await criarNotificacaoIdempotente(dados);
 }
 
 export interface ResultadoInbound {
@@ -233,6 +233,8 @@ async function aplicarEfeitos(
           mensagem: efeito.mensagem,
           nivel: 'ALERTA',
           leadId,
+          // A mensagem que provocou a intervencao e o que a identifica.
+          referencia: `intervencao:${contexto.mensagemRecebidaId}`,
         });
         break;
 
@@ -330,6 +332,7 @@ async function aplicarEfeitos(
               `não foi criada (${r.motivo}). Responda manualmente.`,
             nivel: 'ALERTA',
             leadId,
+            referencia: `template-falhou:${contexto.mensagemRecebidaId}`,
           });
         }
 

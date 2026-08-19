@@ -45,8 +45,8 @@ import {
   chaveIdempotenciaResposta,
   type ContextoLead,
 } from '@prospector/domain';
-import { PRIORIDADE_NOTIFICACAO } from '@prospector/shared';
 import { publicarEvento } from '../events.js';
+import { criarNotificacaoIdempotente, criarTarefaSeNaoExistir } from './notificar.js';
 
 /** Campos do lead necessarios para renderizar a mensagem. */
 const SELECAO_LEAD = {
@@ -143,25 +143,11 @@ async function localizarProximaEtapa(
   });
 }
 
-async function notificar(dados: {
-  tipo: string;
-  titulo: string;
-  mensagem: string;
-  nivel: 'INFO' | 'SUCESSO' | 'ALERTA' | 'ERRO';
-  leadId: string;
-}): Promise<void> {
-  await prisma.notification.create({
-    data: {
-      tipo: dados.tipo as never,
-      titulo: dados.titulo,
-      mensagem: dados.mensagem,
-      nivel: dados.nivel as never,
-      prioridade: PRIORIDADE_NOTIFICACAO[dados.tipo] ?? 50,
-      leadId: dados.leadId,
-    },
-  });
-  await publicarEvento('notificacao.criada', { titulo: dados.titulo });
-}
+// A funcao local `notificar` foi removida: ela era um `create()` seco e
+// deixava o mesmo acontecimento virar dois avisos no sino. A versao
+// idempotente vive em `notificar.ts` e e usada por todos os pontos que
+// avisam alguma coisa. Ver o comentario de la para o porque de a dedupe
+// ser por constraint e nao por consulta.
 
 /**
  * Coloca a proxima etapa da campanha na fila para este lead.
@@ -245,7 +231,7 @@ export async function enfileirarProximaEtapa(params: {
         motivoParada: `Etapa ${etapa.ordem} exige liberação manual`,
       },
     });
-    await notificar({
+    await criarNotificacaoIdempotente({
       tipo: 'PEDIDO_PREVIEW',
       titulo: `${lead.empresa ?? lead.nomeCompleto} chegou na etapa ${etapa.ordem}`,
       mensagem:
@@ -254,6 +240,9 @@ export async function enfileirarProximaEtapa(params: {
           `Prepare a prévia e libere no quadro da campanha.`,
       nivel: 'ALERTA',
       leadId: lead.id,
+      // A etapa e o que identifica o acontecimento. Sem ela, "chegou na
+      // etapa 3" e "chegou na etapa 5" colidiriam e a segunda sumiria.
+      referencia: `etapa-manual:${etapa.id}`,
     });
 
     // ============================================================
@@ -271,29 +260,15 @@ export async function enfileirarProximaEtapa(params: {
     // `findFirst` antes de criar: o avanco pode ser tentado de novo (uma
     // segunda resposta do lead, uma varredura), e duas tarefas identicas
     // para o mesmo trabalho e ruido.
-    const jaTem = await prisma.task.findFirst({
-      where: {
-        leadId: lead.id,
-        tipo: 'CRIAR_PREVIEW',
-        status: { in: ['ABERTA', 'EM_ANDAMENTO'] },
-      },
-      select: { id: true },
+    await criarTarefaSeNaoExistir({
+      leadId: lead.id,
+      tipo: 'CRIAR_PREVIEW',
+      prioridade: 'ALTA',
+      titulo: `Preparar a prévia de ${lead.empresa ?? lead.nomeCompleto}`,
+      descricao:
+        `O lead chegou na etapa ${etapa.ordem}, que exige liberação manual. ` +
+        `Prepare o material e libere o envio no quadro da campanha.`,
     });
-
-    if (!jaTem) {
-      await prisma.task.create({
-        data: {
-          leadId: lead.id,
-          tipo: 'CRIAR_PREVIEW',
-          prioridade: 'ALTA',
-          titulo: `Preparar a prévia de ${lead.empresa ?? lead.nomeCompleto}`,
-          descricao:
-            `O lead chegou na etapa ${etapa.ordem}, que exige liberação manual. ` +
-            `Prepare o material e libere o envio no quadro da campanha.`,
-        },
-      });
-      void publicarEvento('tarefa.criada', { leadId: lead.id });
-    }
 
     void publicarEvento('dashboard.atualizar');
     return {
@@ -385,7 +360,7 @@ export async function enfileirarProximaEtapa(params: {
     });
 
     if (etapa.notificarAoChegar) {
-      await notificar({
+      await criarNotificacaoIdempotente({
         tipo: 'PEDIDO_PREVIEW',
         titulo: `${lead.empresa ?? lead.nomeCompleto} chegou na etapa ${etapa.ordem}`,
         mensagem:
@@ -393,6 +368,7 @@ export async function enfileirarProximaEtapa(params: {
           `A resposta avançou o lead para a etapa ${etapa.ordem}.`,
         nivel: 'INFO',
         leadId: lead.id,
+        referencia: `chegou-etapa:${etapa.id}`,
       });
     }
 

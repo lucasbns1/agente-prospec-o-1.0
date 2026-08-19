@@ -53,3 +53,33 @@ export function chaveIdempotenciaResposta(
   const base = `resposta|${leadId}|${mensagemRecebidaId}`;
   return `out:${createHash('sha256').update(base).digest('hex').slice(0, 40)}`;
 }
+
+/**
+ * Chave de idempotencia de uma NOTIFICACAO.
+ *
+ * ============================================================
+ * O BURACO QUE ISTO FECHA
+ * ============================================================
+ * Ate agora `criarNotificacao` era um `create()` seco. Nada impedia que
+ * o mesmo acontecimento gerasse dois avisos: uma segunda resposta do
+ * lead, uma varredura que repetiu, um job reexecutado pelo BullMQ — e
+ * o sino mostrava o mesmo pedido duas vezes.
+ *
+ * O que identifica uma notificacao nao e o texto dela (que pode mudar
+ * conforme o nome da etapa), e sim O ACONTECIMENTO: este tipo de aviso,
+ * para este lead, por causa deste fato. Duas tentativas de avisar a
+ * mesma coisa produzem a mesma chave, e a segunda colide na UNIQUE.
+ *
+ * `referencia` e o que torna o acontecimento unico dentro do tipo:
+ * o id da etapa, o id da mensagem recebida, o id do envio que falhou.
+ * Sem ela, "lead chegou na etapa 3" e "lead chegou na etapa 5" seriam a
+ * mesma notificacao e a segunda sumiria.
+ */
+export function chaveNotificacao(
+  tipo: string,
+  leadId: string,
+  referencia: string
+): string {
+  const base = `notif|${tipo}|${leadId}|${referencia}`;
+  return `ntf:${createHash('sha256').update(base).digest('hex').slice(0, 40)}`;
+}

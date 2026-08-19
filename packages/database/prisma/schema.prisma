@@ -710,6 +710,7 @@ model Lead {
   outbound      OutboundMessage[]
   importRows    ImportRow[] @relation("LinhaGerouLead")
   duplicouLinhas ImportRow[] @relation("LinhaDuplicouLead")
+  aiDecisions   AiDecision[]
 
   @@index([status])
   @@index([temperatura])
@@ -838,6 +839,7 @@ model Campaign {
   leads         Lead[]
   conversations Conversation[]
   messages      Message[]
+  aiDecisions   AiDecision[]
 
   @@index([status])
   @@map("campaigns")
@@ -988,6 +990,22 @@ model LeadCampaign {
   totalEnviadas  Int @default(0) @map("total_enviadas")
   totalRecebidas Int @default(0) @map("total_recebidas")
 
+  // ---- O que a tela precisa mostrar (Fase 9) ----
+  //
+  // Ate agora o quadro mostrava onde o lead ESTA, mas nao o que vai
+  // acontecer com ele. "Etapa 2, aguardando resposta" nao responde a
+  // pergunta que voce faz olhando a tela: e agora, o que o sistema vai
+  // fazer, e quando?
+
+  /// A acao decidida para este lead: SEND_STEP, WAIT, PAUSE...
+  proximaAcao String? @map("proxima_acao")
+  /// Quando ela acontece. Null = depende de um evento, nao do relogio.
+  proximaAcaoEm DateTime? @map("proxima_acao_em")
+  /// Em portugues, para aparecer na tela sem traducao.
+  proximaAcaoMotivo String? @map("proxima_acao_motivo")
+  /// DESLIGADA | SOMBRA | ATIVA | FALHOU — o estado da IA para este lead.
+  estadoIa String? @map("estado_ia")
+
   iniciadoEm  DateTime? @map("iniciado_em")
   concluidoEm DateTime? @map("concluido_em")
   motivoParada String?  @map("motivo_parada")
@@ -1091,6 +1109,36 @@ model Message {
   /// de acao. O motor ja calculava esse numero; ate agora ele era
   /// descartado.
   confianca Int?
+
+  // ---- Analise da IA (Fase 9) ----
+  //
+  // Preenchidas SO quando o Gemini roda. Todas nulas por padrao: com
+  // GEMINI_ENABLED=false o sistema se comporta exatamente como antes.
+  //
+  // Guardar isto separado da classificacao do motor e o que permite
+  // comparar os dois sem que um contamine o outro. Enquanto
+  // AI_ANALYSIS_ONLY=true, `categoria` continua sendo a palavra final e
+  // estes campos sao so observacao.
+
+  /// Intent granular do modelo, nos 14 valores do enum da IA. Cru, sem
+  /// traducao — a versao mapeada para as 8 categorias vive em `categoria`.
+  aiIntent String? @map("ai_intent")
+  /// 0-100, como o modelo declarou (antes do teto de seguranca).
+  aiConfidence Int? @map("ai_confidence")
+  /// Justificativa curta. E o que aparece na tela quando o sistema pede
+  /// intervencao: "por que voce esta sendo chamado".
+  aiMotivo String? @map("ai_motivo")
+  /// Qual modelo respondeu. Sem isto, comparar resultados depois de
+  /// trocar de versao vira adivinhacao.
+  aiModelo String? @map("ai_modelo")
+  aiLatenciaMs Int? @map("ai_latencia_ms")
+  /// OK | FALHOU | DESLIGADO
+  aiStatus String? @map("ai_status")
+  /// true quando a IA discordou do motor deterministico.
+  ///
+  /// E O CAMPO MAIS IMPORTANTE DO MODO SOMBRA: `WHERE ai_divergiu` e o
+  /// relatorio que diz se ligar a IA de verdade vale a pena.
+  aiDivergiu Boolean? @map("ai_divergiu")
 
   erro          String?
   tentativas    Int       @default(0)
@@ -1203,6 +1251,18 @@ model Notification {
   lida     Boolean           @default(false)
   lidaEm   DateTime?         @map("lida_em")
   createdAt DateTime         @default(now()) @map("created_at")
+
+  /// UNIQUE. O que impede o MESMO acontecimento de virar dois avisos.
+  ///
+  /// Ate a Fase 9 isto nao existia: `criarNotificacao` era um `create()`
+  /// seco. Uma segunda resposta do lead, uma varredura repetida ou um job
+  /// reexecutado pelo BullMQ produziam o aviso de novo, e o sino mostrava
+  /// o mesmo pedido duas vezes.
+  ///
+  /// Nulo e permitido de proposito: avisos avulsos (um erro pontual, um
+  /// aviso do sistema) nao tem acontecimento que os identifique, e no
+  /// PostgreSQL varios NULL nao colidem numa UNIQUE.
+  chaveIdempotencia String? @unique @map("chave_idempotencia")
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
   lead Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
@@ -1322,4 +1382,75 @@ model Job {
   @@index([fila, status])
   @@index([agendadoPara])
   @@map("jobs")
+}
+
+// =============================================================================
+// 14. TRILHA DE DECISOES DA IA (Fase 9)
+// =============================================================================
+
+/// Uma linha por vez que a IA foi consultada.
+///
+/// ============================================================
+/// POR QUE UMA TABELA, E NAO SO LOG
+/// ============================================================
+/// Log serve para investigar um caso. Esta tabela serve para responder
+/// uma pergunta diferente, que so o acumulado responde:
+///
+///   "Em 200 decisoes, quantas vezes a IA teria feito algo diferente do
+///    motor? E dessas, quantas teriam sido melhores?"
+///
+/// Sem isso, ligar `AI_ANALYSIS_ONLY=false` seria um ato de fe. Com
+/// isso, e uma decisao com numeros: `WHERE divergiu = true` e o
+/// relatorio inteiro.
+///
+/// Guarda o que foi DECIDIDO e o que foi EXECUTADO separadamente, porque
+/// sao coisas diferentes: em modo sombra a IA decide e o motor executa,
+/// e a guarda pode recusar uma decisao mesmo com a IA no comando.
+model AiDecision {
+  id String @id @default(uuid())
+
+  leadId     String  @map("lead_id")
+  campaignId String? @map("campaign_id")
+  /// Ordem da etapa alvo, quando havia uma.
+  etapaOrdem Int?    @map("etapa_ordem")
+
+  /// MENSAGEM_RECEBIDA | ETAPA_CONCLUIDA | ACK_FINAL | OPERADOR_LIBEROU | ENVIO_FALHOU
+  gatilho String
+
+  /// O que a IA pediu.
+  acaoIa     String? @map("acao_ia")
+  intentIa   String? @map("intent_ia")
+  confianca  Int?
+  motivo     String?
+
+  /// O que o motor deterministico teria feito com a mesma entrada.
+  /// E a base da comparacao do modo sombra.
+  acaoMotor String? @map("acao_motor")
+
+  /// true quando as duas discordaram.
+  divergiu Boolean @default(false)
+
+  /// O que o sistema REALMENTE fez. Pode diferir de `acaoIa` por dois
+  /// motivos: modo sombra (o motor manda) ou a guarda ter recusado.
+  acaoExecutada String? @map("acao_executada")
+  /// Preenchido quando a guarda recusou. Ex: PULO_DE_ETAPA.
+  motivoRejeicao String? @map("motivo_rejeicao")
+
+  /// true quando a IA nao respondeu e o sistema caiu no motor.
+  fallback Boolean @default(false)
+  /// Por que falhou. NUNCA contem a chave de API.
+  erro     String?
+
+  modelo     String?
+  latenciaMs Int?    @map("latencia_ms")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, createdAt])
+  @@index([divergiu])
+  @@index([createdAt])
+  @@map("ai_decisions")
 }

@@ -21,6 +21,7 @@ import type { WhatsAppAdapter } from '@prospector/integrations';
 import type { Logger } from 'pino';
 import { opcoesRedis } from '../redis.js';
 import { publicarEvento } from '../events.js';
+import { criarNotificacaoIdempotente } from '../services/notificar.js';
 
 export const FILA_OUTBOUND = 'outbound_send';
 
@@ -667,23 +668,22 @@ export function criarWorkerOutbound(
             m.campaignStep.nome?.trim() || `Mensagem ${m.campaignStep.ordem}`;
           const quem = m.lead.empresa ?? m.lead.nomeCompleto ?? 'Lead sem nome';
 
-          await prisma.notification.create({
-            data: {
-              leadId: m.lead.id,
-              tipo: 'PEDIDO_PREVIEW',
-              nivel: 'ALERTA',
-              titulo: m.campaignStep.notificacaoTexto?.trim()
-                ? m.campaignStep.notificacaoTexto.trim()
-                : `Lead chegou em "${rotuloEtapa}"`,
-              mensagem: `${quem} chegou na etapa "${rotuloEtapa}" da campanha ${m.campaign.nome}.`,
-              // Leva direto para a conversa: um aviso sem caminho de volta
-              // faz voce procurar o lead na mao.
-              link: `/conversas/${m.lead.id}`,
-              prioridade: 80,
-            },
+          // Idempotente pela etapa: se este job for reexecutado — e o
+          // BullMQ reexecuta, foi assim que o falso FALHOU nasceu — o
+          // aviso nao aparece duas vezes no sino.
+          await criarNotificacaoIdempotente({
+            leadId: m.lead.id,
+            tipo: 'PEDIDO_PREVIEW',
+            nivel: 'ALERTA',
+            titulo: m.campaignStep.notificacaoTexto?.trim()
+              ? m.campaignStep.notificacaoTexto.trim()
+              : `Lead chegou em "${rotuloEtapa}"`,
+            mensagem: `${quem} chegou na etapa "${rotuloEtapa}" da campanha ${m.campaign.nome}.`,
+            // Leva direto para a conversa: um aviso sem caminho de volta
+            // faz voce procurar o lead na mao.
+            link: `/conversas/${m.lead.id}`,
+            referencia: `chegou-etapa:${m.campaignStep.id}`,
           });
-
-          await publicarEvento('notificacao.criada', { leadId: m.lead.id });
         }
 
         await prisma.leadEvent.create({
