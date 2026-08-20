@@ -221,7 +221,7 @@ exportado do índice do package — mesma disciplina do
 ## Custo
 
 Uma chamada por evento real, algo como 3–5 por lead ao longo de uma
-campanha inteira. Com `gemini-2.5-flash` e `temperature: 0`.
+campanha inteira. Com `gemini-3.6-flash` e `temperature: 0`.
 
 O modo sombra **paga** por essas chamadas — ele economiza risco, não
 dinheiro.

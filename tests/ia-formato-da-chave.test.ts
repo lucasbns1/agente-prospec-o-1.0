@@ -13,10 +13,13 @@
  *    WhatsApp. O ultimo teste deste arquivo e so sobre isso.
  */
 import { describe, it, expect } from 'vitest';
-import { conferirFormatoDaChave, TAMANHO_AI_STUDIO } from '../scripts/formato-da-chave.js';
+import { conferirFormatoDaChave, TAMANHO_MAXIMO } from '../scripts/formato-da-chave.js';
 
-/** Uma chave com a forma certa: `AIza` + 35 caracteres = 39. */
-const CHAVE_BOA = 'AIza' + 'B'.repeat(TAMANHO_AI_STUDIO - 4);
+/** Uma chave com a forma antiga: `AIza` + 35 caracteres = 39. */
+const CHAVE_BOA = 'AIza' + 'B'.repeat(35);
+
+/** Uma chave recem-criada de verdade: 53 caracteres, e valida. */
+const CHAVE_NOVA = 'AIza' + 'C'.repeat(49);
 
 describe('conferirFormatoDaChave', () => {
   it('nao reclama de uma chave bem formada', () => {
@@ -24,14 +27,26 @@ describe('conferirFormatoDaChave', () => {
 
     expect(r.problemas).toEqual([]);
     expect(r.pareceAiStudio).toBe(true);
-    expect(r.comprimento).toBe(TAMANHO_AI_STUDIO);
+    expect(r.comprimento).toBe(39);
+  });
+
+  it('nao reclama de uma chave NOVA, de 53 caracteres', () => {
+    // O caso que fez esta regra ser afrouxada. A checagem exigia 39
+    // caracteres exatos e teria acusado de errada uma chave que acabara
+    // de comecar a funcionar. Acusar o que esta certo e pior que nao
+    // checar nada: manda a pessoa desfazer o acerto.
+    const r = conferirFormatoDaChave(CHAVE_NOVA);
+
+    expect(r.comprimento).toBe(53);
+    expect(r.problemas).toEqual([]);
+    expect(r.pareceAiStudio).toBe(true);
   });
 
   it('ignora espaco nas pontas, que o .env costuma deixar', () => {
     const r = conferirFormatoDaChave(`  ${CHAVE_BOA}\n`);
 
     expect(r.problemas).toEqual([]);
-    expect(r.comprimento).toBe(TAMANHO_AI_STUDIO);
+    expect(r.comprimento).toBe(39);
   });
 
   it('pega a chave entre aspas', () => {
@@ -75,6 +90,7 @@ describe('conferirFormatoDaChave', () => {
     expect(r.comprimento).toBe(104);
     expect(r.pareceAiStudio).toBe(false);
     expect(r.problemas.join(' ')).toContain('104 caracteres');
+    expect(104).toBeGreaterThan(TAMANHO_MAXIMO);
   });
 
   it('trata chave vazia sem quebrar', () => {

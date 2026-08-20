@@ -22,8 +22,25 @@
  * Por isso da para testa-la de verdade, com chaves fabricadas.
  */
 
-/** Tamanho de uma chave do Google AI Studio. */
-export const TAMANHO_AI_STUDIO = 39;
+/**
+ * Faixa de tamanho aceitavel para uma chave do AI Studio.
+ *
+ * ============================================================
+ * POR QUE UMA FAIXA, E NAO O NUMERO 39
+ * ============================================================
+ * A primeira versao disto exigia exatamente 39 caracteres, que era o
+ * tamanho das chaves antigas. Uma chave nova, recem-criada e VALIDA, veio
+ * com 53 — e a checagem teria dito ao dono que a chave dele estava
+ * errada, no exato momento em que ela passou a funcionar.
+ *
+ * Um diagnostico que acusa o que esta certo e pior que nenhum: manda a
+ * pessoa desfazer o que deu certo. Entao a regra ficou frouxa de
+ * proposito. O que realmente separa chave de nao-chave e o prefixo
+ * `AIza`; o tamanho so serve para pegar coisa absurda, como um comando de
+ * PowerShell inteiro colado no lugar da chave.
+ */
+export const TAMANHO_MINIMO = 30;
+export const TAMANHO_MAXIMO = 80;
 
 /** Como toda chave do AI Studio comeca. */
 const PREFIXO_AI_STUDIO = 'AIza';
@@ -76,14 +93,15 @@ export function conferirFormatoDaChave(bruta: string): FormatoDaChave {
 
   // --- A forma em si ---
   const temPrefixo = chave.startsWith(PREFIXO_AI_STUDIO);
-  const temTamanho = chave.length === TAMANHO_AI_STUDIO;
+  const temTamanho = chave.length >= TAMANHO_MINIMO && chave.length <= TAMANHO_MAXIMO;
 
   if (!temPrefixo && ocorrencias === 0) {
     problemas.push(`nao comeca com "${PREFIXO_AI_STUDIO}" — toda chave do AI Studio comeca`);
   }
   if (!temTamanho) {
     problemas.push(
-      `tem ${chave.length} caracteres; as do AI Studio tem ${TAMANHO_AI_STUDIO}`
+      `tem ${chave.length} caracteres, fora da faixa esperada ` +
+        `(${TAMANHO_MINIMO} a ${TAMANHO_MAXIMO})`
     );
   }
 

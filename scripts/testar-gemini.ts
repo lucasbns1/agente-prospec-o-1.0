@@ -50,7 +50,7 @@ async function main(): Promise<void> {
 
   const ligada = process.env.GEMINI_ENABLED?.trim().toLowerCase() === 'true';
   const temChave = Boolean(process.env.GEMINI_API_KEY?.trim());
-  const modelo = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+  const modelo = process.env.GEMINI_MODEL ?? 'gemini-3.6-flash';
   const sombra = process.env.AI_ANALYSIS_ONLY?.trim().toLowerCase() !== 'false';
 
   console.log(`GEMINI_ENABLED    : ${ligada ? 'true' : 'false'}`);
@@ -141,8 +141,8 @@ async function main(): Promise<void> {
         // porque e ela que responde "e agora?".
         console.log('Sua chave nao tem o formato de uma API key do AI Studio');
         console.log('(os motivos estao logo no comeco desta saida).');
-        console.log('Pegue uma em https://aistudio.google.com/apikey — ela vem com');
-        console.log('39 caracteres e comeca com "AIza".\n');
+        console.log('Pegue uma em https://aistudio.google.com/apikey — ela comeca');
+        console.log('com "AIza" e vem numa linha unica, sem aspas.\n');
         console.log('IMPORTANTE: mesmo com isto falhando, a cadencia funciona.');
         console.log('O motor deterministico assume e nada para.\n');
         process.exitCode = 1;

@@ -38,7 +38,7 @@ import type { AnalisadorDeCadencia, OrigemDaFalha, ResultadoAnalise } from './an
 
 export interface OpcoesGemini {
   apiKey: string;
-  /** Ex: "gemini-2.5-flash". */
+  /** Ex: "gemini-3.6-flash". */
   modelo: string;
   /** Prazo total da chamada. Padrao 8000 ms. */
   timeoutMs?: number;

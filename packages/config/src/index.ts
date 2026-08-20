@@ -94,7 +94,7 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v.trim().toLowerCase() === 'true'),
 
-  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  GEMINI_MODEL: z.string().default('gemini-3.6-flash'),
 
   /** Passou disto, o motor deterministico assume. */
   GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(8_000),

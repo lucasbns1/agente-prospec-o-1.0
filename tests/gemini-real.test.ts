@@ -99,7 +99,7 @@ describe.skipIf(!LIGADO)('Gemini real (GEMINI_TESTE_REAL=true)', () => {
     const a = await criarAnalisador({
       GEMINI_ENABLED: true,
       GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-      GEMINI_MODEL: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+      GEMINI_MODEL: process.env.GEMINI_MODEL ?? 'gemini-3.6-flash',
       GEMINI_TIMEOUT_MS: 20_000,
     });
     if (!a) throw new Error('Nao foi possivel criar o analisador');

@@ -37,7 +37,7 @@ export async function criarAnalisador(
   const { AnalisadorGemini } = await import('./gemini.js');
   return new AnalisadorGemini({
     apiKey: cfg.GEMINI_API_KEY,
-    modelo: cfg.GEMINI_MODEL ?? 'gemini-2.5-flash',
+    modelo: cfg.GEMINI_MODEL ?? 'gemini-3.6-flash',
     timeoutMs: cfg.GEMINI_TIMEOUT_MS,
   });
 }

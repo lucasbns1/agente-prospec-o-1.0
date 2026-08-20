@@ -333,8 +333,10 @@ tem a ver com a sua chave:
 | `Isto e um DEFEITO DO PROSPECTOR, nao da sua chave` | Quebrou no nosso código, antes da rede | **Não troque a chave.** Mande as linhas de pilha que ele imprime |
 
 Antes de gastar a chamada, o script também confere o **formato** da chave —
-sem imprimir nada do conteúdo dela. Uma chave do AI Studio tem **39
-caracteres** e começa com **`AIza`**. Se a sua não tiver essa forma, ele
+sem imprimir nada do conteúdo dela. Toda chave do AI Studio começa com
+**`AIza`**; o tamanho varia conforme a época em que ela foi criada (as
+antigas têm 39 caracteres, as novas passam de 50), então a checagem só
+reclama de coisa absurda. Se a sua não tiver essa forma, ele
 diz o motivo: aspas no `.env`, o `GEMINI_API_KEY=` colado junto, a chave
 colada duas vezes, um token OAuth (`ya29.…`) ou um JSON de conta de
 serviço no lugar da API key. Todos esses produzem o mesmo
@@ -346,6 +348,15 @@ estourou com `Cannot read properties of undefined (reading 'length')` —
 antes de qualquer chamada sair. O script, na época, sugeria trocar uma
 chave que estava perfeita. Hoje `pnpm test` e `pnpm typecheck` pegam isso
 antes de você.
+
+### `no longer available to new users` (HTTP 404)
+
+A chave está boa — quem saiu de linha foi o modelo. O Google aposenta
+modelos antigos para contas novas, e a própria mensagem diz qual usar no
+lugar. Troque `GEMINI_MODEL` no `.env` pelo nome que ela indicar e rode
+`pnpm ia:testar` de novo.
+
+O padrão do projeto é `gemini-3.6-flash`.
 
 ### A IA está ligada mas nada muda no comportamento
 
