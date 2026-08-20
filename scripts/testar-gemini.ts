@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 // O contexto fabricado mora num arquivo proprio para que a suite de
 // testes consiga monta-lo tambem. Ver o cabecalho de la.
 import { contextoDeTeste } from './contexto-de-teste.js';
+import { conferirFormatoDaChave } from './formato-da-chave.js';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.resolve(aqui, '../.env') });
@@ -62,14 +63,30 @@ async function main(): Promise<void> {
   console.log(`AI_ANALYSIS_ONLY  : ${sombra ? 'true (modo sombra)' : 'false (IA no comando)'}`);
   console.log('');
 
+  // O Google responde "API key not valid" para chave revogada e para
+  // texto que nunca foi chave. Aqui da para separar os dois casos sem
+  // gastar a chamada — e sem a chave aparecer na tela.
+  if (temChave) {
+    const formato = conferirFormatoDaChave(process.env.GEMINI_API_KEY!);
+    if (formato.problemas.length > 0) {
+      console.log('A CHAVE NAO TEM O FORMATO DE UMA API KEY DO AI STUDIO:');
+      for (const p of formato.problemas) console.log(`  - ${p}`);
+      console.log('');
+      console.log('A chamada vai ser feita mesmo assim, para voce ver a resposta');
+      console.log('do Google. Mas o mais provavel e que ela seja recusada.\n');
+    }
+  }
+
   if (!ligada) {
     console.log('A IA esta DESLIGADA. Ponha GEMINI_ENABLED=true no .env para testar.\n');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   if (!temChave) {
     console.log('Falta a GEMINI_API_KEY no .env.');
     console.log('Pegue a sua em: https://aistudio.google.com/apikey\n');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const { criarAnalisador } = await import('../packages/integrations/src/index.js');
@@ -82,7 +99,8 @@ async function main(): Promise<void> {
 
   if (!analisador) {
     console.log('Nao foi possivel criar o analisador.\n');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log('Fazendo UMA chamada de verdade ao Gemini...\n');
@@ -117,6 +135,19 @@ async function main(): Promise<void> {
       console.log('Costuma ser modelo trocado ou limite de token.\n');
       console.log(`Confira GEMINI_MODEL (esta "${modelo}").\n`);
     } else {
+      const formato = conferirFormatoDaChave(process.env.GEMINI_API_KEY ?? '');
+      if (formato.problemas.length > 0) {
+        // Nao repete a lista: ela ja saiu la em cima. Repete a conclusao,
+        // porque e ela que responde "e agora?".
+        console.log('Sua chave nao tem o formato de uma API key do AI Studio');
+        console.log('(os motivos estao logo no comeco desta saida).');
+        console.log('Pegue uma em https://aistudio.google.com/apikey — ela vem com');
+        console.log('39 caracteres e comeca com "AIza".\n');
+        console.log('IMPORTANTE: mesmo com isto falhando, a cadencia funciona.');
+        console.log('O motor deterministico assume e nada para.\n');
+        process.exitCode = 1;
+        return;
+      }
       console.log('O que costuma causar isso:');
       console.log('  - chave invalida ou revogada     -> gere outra em aistudio.google.com/apikey');
       console.log('  - sem internet ou atras de proxy -> teste abrir o site acima no navegador');
@@ -126,7 +157,8 @@ async function main(): Promise<void> {
 
     console.log('IMPORTANTE: mesmo com isto falhando, a cadencia funciona.');
     console.log('O motor deterministico assume e nada para.\n');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const d = r.decisao;
@@ -161,5 +193,5 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error('\n[FALHA]', err instanceof Error ? err.message : err, '\n');
-  process.exit(1);
+  process.exitCode = 1;
 });

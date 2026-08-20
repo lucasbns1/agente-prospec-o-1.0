@@ -332,6 +332,14 @@ tem a ver com a sua chave:
 | `A chave FUNCIONA — a chamada foi e voltou` | Chegou resposta, mas fora do formato | Confira `GEMINI_MODEL`; costuma ser modelo trocado |
 | `Isto e um DEFEITO DO PROSPECTOR, nao da sua chave` | Quebrou no nosso código, antes da rede | **Não troque a chave.** Mande as linhas de pilha que ele imprime |
 
+Antes de gastar a chamada, o script também confere o **formato** da chave —
+sem imprimir nada do conteúdo dela. Uma chave do AI Studio tem **39
+caracteres** e começa com **`AIza`**. Se a sua não tiver essa forma, ele
+diz o motivo: aspas no `.env`, o `GEMINI_API_KEY=` colado junto, a chave
+colada duas vezes, um token OAuth (`ya29.…`) ou um JSON de conta de
+serviço no lugar da API key. Todos esses produzem o mesmo
+`API key not valid` genérico do Google.
+
 O terceiro caso já aconteceu de verdade: o contexto fabricado do script
 ficou sem um campo que o `ContextoCadencia` havia ganhado, e `montarPrompt`
 estourou com `Cannot read properties of undefined (reading 'length')` —
