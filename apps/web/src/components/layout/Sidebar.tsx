@@ -11,6 +11,7 @@ import {
   Radar,
   QrCode,
   KanbanSquare,
+  Brain,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +24,7 @@ const NAVEGACAO = [
   { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
   { para: '/tarefas', rotulo: 'Tarefas', icone: CheckSquare },
   { para: '/notificacoes', rotulo: 'Notificações', icone: Bell },
+  { para: '/ia', rotulo: 'IA', icone: Brain },
   { para: '/canal', rotulo: 'WhatsApp', icone: QrCode },
 ];
 

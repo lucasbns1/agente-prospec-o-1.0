@@ -13,6 +13,7 @@ import { EstadoCampanhas } from '@/pages/EstadoCampanhas';
 import { QuadroCampanha } from '@/pages/QuadroCampanha';
 import { Tarefas } from '@/pages/Tarefas';
 import { Notificacoes } from '@/pages/Notificacoes';
+import { IA } from '@/pages/IA';
 import { Conversas } from '@/pages/Conversas';
 import { Canal } from '@/pages/Canal';
 import { useUsuario } from '@/hooks/useAuth';
@@ -55,6 +56,7 @@ function AppAutenticado({
                 <Route path="/estado/:id" element={<QuadroCampanha />} />
                 <Route path="/tarefas" element={<Tarefas />} />
                 <Route path="/notificacoes" element={<Notificacoes />} />
+                <Route path="/ia" element={<IA />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route
                   path="*"

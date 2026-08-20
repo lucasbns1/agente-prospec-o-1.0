@@ -1,13 +1,16 @@
 /**
- * Le o banco e entrega o retrato para a deteccao.
+ * A reconciliacao no worker: le, detecta e age.
  *
  * ============================================================
- * A DIVISAO DE TRABALHO
+ * A DIVISAO DE TRABALHO, EM TRES PEDACOS
  * ============================================================
- * Este arquivo LE. `packages/domain/src/reconciliacao/deteccao.ts`
- * DECIDE o que e problema. Separados porque decidir precisa ser testavel
- * sem banco: produzir de verdade um "job concluido sem mensagem"
- * exigiria matar um worker no instante exato entre duas escritas.
+ *   `@prospector/database`  LE o banco (a API tambem usa)
+ *   `@prospector/domain`    DECIDE o que e problema (puro, testavel)
+ *   este arquivo            AGE e agenda a passada periodica
+ *
+ * Decidir precisa ser testavel sem banco: produzir de verdade um "job
+ * concluido sem mensagem" exigiria matar um worker no instante exato
+ * entre duas escritas.
  *
  * ============================================================
  * NAO CONSERTA NADA SOZINHO
@@ -20,24 +23,14 @@
  * sobre se o WhatsApp recebeu: reenviar as cegas manda a MESMA mensagem
  * duas vezes para um cliente seu.
  */
-import { prisma } from '@prospector/database';
+import { lerRetratoParaConferir, cancelarPendentesDeOptOut } from '@prospector/database';
 import {
   detectarInconsistencias,
   resumirInconsistencias,
   type Inconsistencia,
-  type RetratoParaConferir,
 } from '@prospector/domain';
 import type { Logger } from 'pino';
 import { publicarEvento } from '../events.js';
-
-/**
- * Quantos leads a varredura olha por vez.
- *
- * A reconciliacao roda em segundo plano, e nao pode competir por banco
- * com o envio. Um teto baixo mantem cada passada barata; o que sobrar
- * aparece na proxima.
- */
-const MAX_POR_PASSADA = 500;
 
 export interface ResultadoReconciliacao {
   achados: Inconsistencia[];
@@ -50,122 +43,15 @@ export interface ResultadoReconciliacao {
 export async function reconciliar(
   opcoes: { agora?: Date; corrigirOptOut?: boolean } = {}
 ): Promise<ResultadoReconciliacao> {
-  const agora = opcoes.agora ?? new Date();
-
-  const [ordens, mensagens, posicoes] = await Promise.all([
-    prisma.outboundMessage.findMany({
-      take: MAX_POR_PASSADA,
-      orderBy: { updatedAt: 'desc' },
-      select: {
-        id: true,
-        leadId: true,
-        campaignId: true,
-        status: true,
-        erro: true,
-        dryRun: true,
-        updatedAt: true,
-        messageId: true,
-        campaignStep: { select: { ordem: true } },
-      },
-    }),
-    prisma.message.findMany({
-      take: MAX_POR_PASSADA,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        leadId: true,
-        campaignId: true,
-        direcao: true,
-        status: true,
-        whatsappMessageId: true,
-        campaignStep: { select: { ordem: true } },
-      },
-    }),
-    prisma.leadCampaign.findMany({
-      take: MAX_POR_PASSADA,
-      orderBy: { updatedAt: 'desc' },
-      select: {
-        leadId: true,
-        campaignId: true,
-        etapaAtualOrdem: true,
-        status: true,
-        aguardandoLiberacao: true,
-        lead: {
-          select: {
-            optOut: true,
-            tasks: {
-              where: { status: { in: ['ABERTA', 'EM_ANDAMENTO'] } },
-              select: { id: true },
-              take: 1,
-            },
-            notifications: {
-              where: { lida: false },
-              select: { id: true },
-              take: 1,
-            },
-          },
-        },
-      },
-    }),
-  ]);
-
-  const retrato: RetratoParaConferir = {
-    agora,
-    ordens: ordens.map((o) => ({
-      id: o.id,
-      leadId: o.leadId,
-      campaignId: o.campaignId,
-      etapaOrdem: o.campaignStep?.ordem ?? null,
-      status: o.status,
-      erro: o.erro,
-      dryRun: o.dryRun,
-      atualizadoEm: o.updatedAt,
-      messageId: o.messageId,
-    })),
-    mensagens: mensagens.map((m) => ({
-      id: m.id,
-      leadId: m.leadId,
-      campaignId: m.campaignId,
-      etapaOrdem: m.campaignStep?.ordem ?? null,
-      direcao: m.direcao as 'ENVIADA' | 'RECEBIDA',
-      status: m.status,
-      whatsappMessageId: m.whatsappMessageId,
-    })),
-    posicoes: posicoes.map((p) => ({
-      leadId: p.leadId,
-      campaignId: p.campaignId,
-      etapaAtualOrdem: p.etapaAtualOrdem,
-      status: p.status,
-      aguardandoLiberacao: p.aguardandoLiberacao,
-      leadEmOptOut: p.lead.optOut,
-      temTarefaAberta: p.lead.tasks.length > 0,
-      temAvisoPendente: p.lead.notifications.length > 0,
-    })),
-  };
-
+  const retrato = await lerRetratoParaConferir(opcoes.agora ?? new Date());
   const achados = detectarInconsistencias(retrato);
 
-  // ============================================================
-  // A UNICA CORRECAO AUTOMATICA
-  // ============================================================
-  // Nao e conveniencia — e a diferenca entre "o sistema tem um bug" e
-  // "o sistema mandou mensagem para quem pediu para parar".
   let canceladasPorOptOut = 0;
   if (opcoes.corrigirOptOut !== false) {
-    const idsParaCancelar = achados
+    const ids = achados
       .filter((a) => a.tipo === 'ENVIO_PENDENTE_APOS_OPT_OUT')
       .flatMap((a) => a.ids);
-
-    if (idsParaCancelar.length > 0) {
-      const r = await prisma.outboundMessage.updateMany({
-        // PROCESSANDO fica DE FORA: ali o envio pode ja estar em curso, e
-        // reescrever o status atropelaria o worker que esta trabalhando.
-        // Aquele caso continua sendo relatado para voce decidir.
-        where: { id: { in: idsParaCancelar }, status: { in: ['PENDENTE', 'AGENDADA'] } },
-        data: { status: 'CANCELADA', erro: 'Cancelada pela reconciliacao: lead em opt-out' },
-      });
-      canceladasPorOptOut = r.count;
-    }
+    canceladasPorOptOut = await cancelarPendentesDeOptOut(ids);
   }
 
   return { achados, resumo: resumirInconsistencias(achados), canceladasPorOptOut };

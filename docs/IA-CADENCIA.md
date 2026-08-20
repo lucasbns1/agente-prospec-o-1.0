@@ -27,11 +27,51 @@ Três estados, no `.env`:
 | `GEMINI_ENABLED` | `AI_ANALYSIS_ONLY` | O que acontece |
 |---|---|---|
 | `false` | (ignorado) | **Desligada.** Sistema idêntico ao de antes da Fase 9. Zero chamadas de rede, zero custo. |
+| `true` | `false` *(padrão)* | **Ativa.** As decisões da IA comandam — sempre filtradas pela guarda e pelas quatro barreiras de envio. |
 | `true` | `true` | **Sombra.** A IA analisa e recomenda; quem comanda é o motor determinístico. As divergências vão para `ai_decisions`. |
-| `true` | `false` | **Ativa.** As decisões da IA comandam — sempre filtradas pela guarda e pelas quatro barreiras de envio. |
 
-**Sombra é o padrão, mesmo com a IA ligada.** Acender o modelo e dar o
-comando a ele são duas decisões separadas.
+**Ligar o Gemini significa dar o comando a ele.** O modo sombra continua
+inteiro para quem quiser observar antes de liberar — só deixou de ser o
+padrão.
+
+## Onde a IA comanda, e onde não comanda
+
+| Gatilho | Quem conduz |
+|---|---|
+| `MENSAGEM_RECEBIDA` | a IA executa a cadência; o motor pula `AVANCAR_ETAPA` e `ENVIAR_TEMPLATE` |
+| `ETAPA_CONCLUIDA` | a IA |
+| `ACK_FINAL` | a IA |
+| `OPERADOR_LIBEROU` | a IA |
+| **opt-out detectado pelo dicionário** | **sempre o motor** |
+
+Essa última linha é a que importa: se o dicionário classificou `OPT_OUT`,
+os efeitos acontecem qualquer que seja a opinião da IA. Ela pode
+**detectar** um opt-out que o dicionário não pegou; nunca pode **desfazer**
+um que ele pegou.
+
+## Reconciliação
+
+Uma passada por hora procura onde o banco discorda de si mesmo:
+
+| Tipo | Gravidade |
+|---|---|
+| `ORFA_EM_PROCESSAMENTO` (envio real) | crítica |
+| `ETAPA_DUPLICADA` | crítica |
+| `MENSAGEM_DUPLICADA` | crítica |
+| `ENVIO_PENDENTE_APOS_OPT_OUT` | crítica |
+| `POS_PROCESSAMENTO_FALHOU` | atenção |
+| `ENVIO_SEM_MENSAGEM` | atenção |
+| `ETAPA_ATUAL_INCORRETA` | atenção |
+| `INTERVENCAO_SEM_AVISO` | atenção |
+
+**Detecta, não conserta** — uma exceção: mensagem pendente para lead em
+opt-out é cancelada na hora. Não há cenário em que deixar aquilo na fila
+seja certo. `PROCESSANDO` fica de fora até ali, porque o envio pode estar
+em curso.
+
+Onde há dúvida sobre se o WhatsApp recebeu, a sugestão nunca é "reenvie".
+
+Ver em: `pnpm auditoria`, ou na tela **IA** do sistema.
 
 ### Quando sair do modo sombra
 

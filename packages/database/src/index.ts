@@ -43,3 +43,10 @@ export async function checkDatabaseConnection(): Promise<boolean> {
 // depender de @prisma/client diretamente.
 export * from '@prisma/client';
 export { PrismaClient } from '@prisma/client';
+
+// --- Reconciliacao (Fase 9) ---
+//
+// A CONSULTA mora aqui, e nao no worker, porque a API tambem precisa
+// dela e os dois apps nao se importam. Quem DECIDE o que e problema e
+// `detectarInconsistencias`, funcao pura em @prospector/domain.
+export * from './reconciliacao.js';
