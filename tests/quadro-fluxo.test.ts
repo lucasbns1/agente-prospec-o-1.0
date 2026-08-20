@@ -467,8 +467,27 @@ describe('mensagens órfãs em PROCESSANDO', () => {
       },
     });
     // `updatedAt` é automático; o SQL cru é a única forma de envelhecê-lo.
+    //
+    // ============================================================
+    // O `AT TIME ZONE 'UTC'` NÃO É ENFEITE
+    // ============================================================
+    // A coluna é `timestamp` SEM fuso, e o Prisma sempre grava e lê como
+    // UTC. Mas o `now()` do Postgres é `timestamptz`, e convertê-lo para
+    // `timestamp` usa o fuso da SESSÃO. Num banco em America/Sao_Paulo
+    // ele grava 21:58 e o Prisma relê isso como 21:58 UTC — três horas
+    // no passado.
+    //
+    // O efeito aparecia só fora do UTC: este teste passava aqui e
+    // falhava numa máquina brasileira, porque "1 minuto atrás" virava
+    // "181 minutos atrás" e a mensagem entrava no corte de 10 minutos
+    // da varredura de órfãs.
+    //
+    // Só o SQL cru tem esse problema: a escrita normal do Prisma faz
+    // round-trip exato em qualquer fuso — foi verificado.
     await prisma.$executeRawUnsafe(
-      `UPDATE outbound_messages SET updated_at = now() - interval '${minutosAtras} minutes' WHERE id = $1`,
+      `UPDATE outbound_messages
+          SET updated_at = (now() AT TIME ZONE 'UTC') - interval '${minutosAtras} minutes'
+        WHERE id = $1`,
       m.id
     );
     return m;
