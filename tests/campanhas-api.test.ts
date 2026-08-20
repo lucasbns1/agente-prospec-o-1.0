@@ -281,7 +281,10 @@ describe('enfileirarCampanha — idempotencia', () => {
 
     expect(primeira.criadas).toBe(1);
     expect(segunda.criadas).toBe(0);
-    expect(segunda.jaExistiam).toBe(1);
+    // A segunda passada ATUALIZA a linha que ja existia — texto, horario
+    // e modo de envio sao recalculados. Nao cria nada: a invariante que
+    // importa e a contagem de linhas logo abaixo.
+    expect(segunda.atualizadas).toBe(1);
     expect(await prisma.outboundMessage.count()).toBe(1);
   });
 

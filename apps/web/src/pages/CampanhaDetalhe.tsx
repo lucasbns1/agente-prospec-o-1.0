@@ -419,7 +419,7 @@ function Previa({ campanha }: { campanha: Campanha }) {
 
   const enfileirar = useMutation({
     mutationFn: () =>
-      post<{ criadas: number; jaExistiam: number; bloqueadas: number }>(
+      post<{ criadas: number; atualizadas: number; jaExistiam: number; bloqueadas: number }>(
         `/api/campaigns/${campanha.id}/enfileirar`,
         selecionados.size > 0 ? { leadIds: [...selecionados] } : undefined
       ),
@@ -536,7 +536,7 @@ function Previa({ campanha }: { campanha: Campanha }) {
         )}
         {enfileirar.isSuccess && (
           <span className="text-sm text-[var(--color-sucesso)]">
-            {enfileirar.data.criadas} criadas, {enfileirar.data.jaExistiam} já
+            {enfileirar.data.criadas} criadas, {enfileirar.data.atualizadas} atualizadas, {enfileirar.data.jaExistiam} já
             existiam, {enfileirar.data.bloqueadas} bloqueadas.
           </span>
         )}

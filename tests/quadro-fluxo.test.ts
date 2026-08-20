@@ -319,7 +319,10 @@ describe('reenfileirar depois de pausar', () => {
     // voltava a rodar, e não havia saída pela interface.
     const r = await servico.enfileirarCampanha(campanha.id);
 
-    expect(r.criadas).toBe(1);
+    // `atualizadas`, e nao `criadas`: a linha ja existia e foi revivida.
+    // Dizer "criada" quando nada foi criado esconderia a diferenca entre
+    // um lead novo entrando na campanha e um antigo voltando a andar.
+    expect(r.atualizadas).toBe(1);
     expect(r.jaExistiam).toBe(0);
 
     const m = await prisma.outboundMessage.findFirstOrThrow({
@@ -330,6 +333,87 @@ describe('reenfileirar depois de pausar', () => {
     // deixou de valer.
     expect(m.erro).toBeNull();
     expect(m.tentativas).toBe(0);
+  });
+
+  // ============================================================
+  // O BECO SEM SAÍDA QUE ISTO FECHA
+  // ============================================================
+  // Relatado em uso real, com o print da tela: a campanha aparecia
+  // "liberada para envio real" e a fila continuava com o selo Dry-run,
+  // sem nenhuma forma de sair disso pela interface.
+  //
+  // A mensagem estava AGENDADA — fora da lista de status revivíveis —,
+  // então reenfileirar respondia "já existia" e não tocava nela. E mesmo
+  // se estivesse CANCELADA, o `dryRun` não era atualizado.
+  it('liberar a campanha e reenfileirar tira o dry-run de uma AGENDADA', async () => {
+    await criarLead();
+    const campanha = await criarCampanha(1);
+
+    // 1. A campanha nasce em simulação, sempre. A mensagem herda isso.
+    await servico.enfileirarCampanha(campanha.id);
+    const antes = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(antes.status).toBe('AGENDADA');
+    expect(antes.dryRun).toBe(true);
+
+    // 2. Você desliga a simulação nas configurações.
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: false },
+    });
+
+    // 3. E reenfileira — que é o caminho que a própria tela recomenda.
+    const r = await servico.enfileirarCampanha(campanha.id);
+    expect(r.atualizadas).toBe(1);
+    expect(r.jaExistiam).toBe(0);
+
+    const depois = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(depois.dryRun).toBe(false);
+    expect(depois.status).toBe('AGENDADA');
+    // Continua sendo UMA mensagem: reviver não é duplicar.
+    expect(await prisma.outboundMessage.count({ where: { campaignId: campanha.id } })).toBe(1);
+  });
+
+  // O caminho inverso também tem que funcionar: religar a simulação e
+  // reenfileirar volta a mensagem para o modo seguro.
+  it('religar a simulação também vale para o que está agendado', async () => {
+    await criarLead();
+    const campanha = await criarCampanha(1);
+    await prisma.campaign.update({ where: { id: campanha.id }, data: { dryRun: false } });
+    await servico.enfileirarCampanha(campanha.id);
+
+    await prisma.campaign.update({ where: { id: campanha.id }, data: { dryRun: true } });
+    await servico.enfileirarCampanha(campanha.id);
+
+    const m = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(m.dryRun).toBe(true);
+  });
+
+  // A barreira que NÃO pode ceder: uma mensagem que já saiu não volta
+  // atrás, qualquer que seja o modo da campanha agora.
+  it('uma SIMULADA não vira envio real por reenfileiramento', async () => {
+    await criarLead();
+    const campanha = await criarCampanha(1);
+    await servico.enfileirarCampanha(campanha.id);
+
+    await prisma.outboundMessage.updateMany({
+      where: { campaignId: campanha.id },
+      data: { status: 'SIMULADA', processedAt: new Date() },
+    });
+    await prisma.campaign.update({ where: { id: campanha.id }, data: { dryRun: false } });
+
+    await servico.enfileirarCampanha(campanha.id);
+
+    const m = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: campanha.id },
+    });
+    expect(m.status).toBe('SIMULADA');
+    expect(m.dryRun).toBe(true);
   });
 
   it('NUNCA revive uma mensagem já enviada ou simulada', async () => {
@@ -367,7 +451,7 @@ describe('reenfileirar depois de pausar', () => {
     });
 
     const r = await servico.enfileirarCampanha(campanha.id);
-    expect(r.criadas).toBe(1);
+    expect(r.atualizadas).toBe(1);
 
     const m = await prisma.outboundMessage.findFirstOrThrow({
       where: { campaignId: campanha.id },

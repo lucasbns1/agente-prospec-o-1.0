@@ -343,6 +343,16 @@ export { chaveIdempotencia };
 
 export interface ResultadoEnfileiramento {
   criadas: number;
+  /**
+   * Linhas que ja existiam e foram ATUALIZADAS: texto re-renderizado,
+   * horario recalculado, modo de envio herdado da campanha de novo.
+   *
+   * Separado de `criadas` porque a diferenca importa na tela. "1 criada"
+   * quando nada foi criado e impreciso; "1 ja existia" quando a mensagem
+   * mudou de modo de envio e pior — foi assim que um usuario ficou preso
+   * numa fila em dry-run achando que o reenfileiramento nao fazia nada.
+   */
+  atualizadas: number;
   bloqueadas: number;
   jaExistiam: number;
   detalhes: Array<{
@@ -396,7 +406,7 @@ export async function enfileirarCampanha(
   if (!campanha) throw new Error('Campanha nao encontrada');
 
   const resultado: ResultadoEnfileiramento = {
-    criadas: 0, bloqueadas: 0, jaExistiam: 0, detalhes: [],
+    criadas: 0, atualizadas: 0, bloqueadas: 0, jaExistiam: 0, detalhes: [],
   };
 
   // --- Guardas de campanha ---
@@ -603,10 +613,29 @@ export async function enfileirarCampanha(
         // uma ENVIADA ou SIMULADA seria mandar de novo para quem ja
         // recebeu — o unico erro que este arquivo inteiro existe para
         // evitar. O banco garante isso no `where`, nao a aplicacao.
+        //
+        // ============================================================
+        // PENDENTE E AGENDADA TAMBEM ENTRAM NA LISTA
+        // ============================================================
+        // Antes so CANCELADA e BLOQUEADA eram revividas, e isso criava um
+        // beco sem saida com nome e sobrenome:
+        //
+        //   1. voce cria a campanha (ela nasce em simulacao, sempre);
+        //   2. enfileira o lead -> a mensagem nasce dryRun: true;
+        //   3. percebe, vai em Configuracoes e DESLIGA a simulacao;
+        //   4. reenfileira... e nada muda.
+        //
+        // A mensagem estava AGENDADA, fora da lista, e o reenfileiramento
+        // respondia "ja existia" sem tocar nela. A campanha aparecia
+        // liberada na tela e a fila continuava com o selo Dry-run, para
+        // sempre, sem nenhuma saida pela interface.
+        //
+        // AGENDADA e PENDENTE nao sairam para lugar nenhum: atualizar e
+        // seguro. ENVIADA, SIMULADA e PROCESSANDO continuam intocaveis.
         const revividas = await prisma.outboundMessage.updateMany({
           where: {
             idempotencyKey,
-            status: { in: ['CANCELADA', 'BLOQUEADA'] },
+            status: { in: ['CANCELADA', 'BLOQUEADA', 'PENDENTE', 'AGENDADA'] },
           },
           data: {
             status: motivoBloqueio ? 'BLOQUEADA' : 'AGENDADA',
@@ -619,6 +648,19 @@ export async function enfileirarCampanha(
             textoTemplate: template,
             variaveisUsadas: variaveis as Prisma.InputJsonValue,
             scheduledAt,
+            // ============================================================
+            // O CAMPO QUE FALTAVA
+            // ============================================================
+            // Sem esta linha, uma mensagem revivida guardava para sempre o
+            // modo com que nasceu. Liberar a campanha e reenfileirar era o
+            // caminho que a propria tela recomenda ("as mensagens ja na
+            // fila mantem o modo com que nasceram") — e ele nao levava a
+            // lugar nenhum.
+            //
+            // Herda da campanha, como na criacao. A barreira #4 continua
+            // existindo: ela so passou a refletir a decisao ATUAL em vez
+            // de uma decisao congelada que ninguem conseguia mudar.
+            dryRun: campanha.dryRun,
             erro: null,
             processedAt: null,
             tentativas: 0,
@@ -633,10 +675,11 @@ export async function enfileirarCampanha(
               resultado: 'BLOQUEADA', motivo: detalhe,
             });
           } else {
-            resultado.criadas++;
+            resultado.atualizadas++;
             resultado.detalhes.push({
               leadId: lead.id, empresa: lead.empresa ?? lead.nomeCompleto,
-              resultado: 'CRIADA', motivo: 'Reenfileirada apos cancelamento',
+              resultado: 'CRIADA',
+              motivo: 'Reenfileirada: texto, horario e modo de envio atualizados',
             });
           }
           continue;
