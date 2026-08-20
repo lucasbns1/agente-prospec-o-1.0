@@ -1,0 +1,24 @@
+{
+  // ============================================================
+  // POR QUE `scripts/` PRECISA DE UM TSCONFIG SO PARA ELE
+  // ============================================================
+  // `pnpm typecheck` percorre os workspaces. `scripts/` nao e um
+  // workspace — mora na raiz, que nao declara os packages. Resultado: os
+  // scripts eram os UNICOS arquivos .ts do repositorio que ninguem
+  // conferia, e `tsx` apaga os tipos sem olhar para eles.
+  //
+  // Foi assim que `pnpm ia:testar` passou a quebrar com "Cannot read
+  // properties of undefined": o contexto fabricado ficou sem um campo
+  // que o `ContextoCadencia` tinha ganhado, e o compilador — que teria
+  // apontado a linha exata — nunca foi chamado.
+  //
+  // Os scripts importam os packages por caminho relativo (`../packages/
+  // domain/src/index.js`), entao o compilador puxa o codigo-fonte deles
+  // junto. `skipLibCheck` ja vem da base e segura o custo disso.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts"]
+}

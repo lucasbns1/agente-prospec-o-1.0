@@ -306,6 +306,57 @@ Riscos reais e as mitigações já previstas no sistema:
 
 ---
 
+## Gemini / IA
+
+### Como sei se minha chave funciona?
+
+```powershell
+pnpm ia:testar
+```
+
+Faz **uma** chamada de verdade ao Gemini com um cenário fabricado. Não toca
+no banco, não cria lead, não envia nada — rodar dez vezes não muda nada no
+sistema. A chave nunca aparece na tela; o script só mostra o tamanho dela.
+
+Toda a suíte de testes usa um analisador **falso**, de propósito. Então
+`pnpm ia:testar` é o único lugar onde a chave real é exercitada.
+
+### `pnpm ia:testar` falhou — devo trocar a chave?
+
+Depende do que ele imprimiu. O script separa três casos, e só o primeiro
+tem a ver com a sua chave:
+
+| O que aparece | O que é | O que fazer |
+|---|---|---|
+| A mensagem da API (ex.: `API key not valid (HTTP 400)`) | A chamada saiu e o Google recusou | Gere outra chave, confira `GEMINI_MODEL`, confira internet/proxy |
+| `A chave FUNCIONA — a chamada foi e voltou` | Chegou resposta, mas fora do formato | Confira `GEMINI_MODEL`; costuma ser modelo trocado |
+| `Isto e um DEFEITO DO PROSPECTOR, nao da sua chave` | Quebrou no nosso código, antes da rede | **Não troque a chave.** Mande as linhas de pilha que ele imprime |
+
+O terceiro caso já aconteceu de verdade: o contexto fabricado do script
+ficou sem um campo que o `ContextoCadencia` havia ganhado, e `montarPrompt`
+estourou com `Cannot read properties of undefined (reading 'length')` —
+antes de qualquer chamada sair. O script, na época, sugeria trocar uma
+chave que estava perfeita. Hoje `pnpm test` e `pnpm typecheck` pegam isso
+antes de você.
+
+### A IA está ligada mas nada muda no comportamento
+
+Confira `AI_ANALYSIS_ONLY` no `.env`:
+
+- `true` → **modo sombra**: a IA opina, a decisão é gravada em
+  `ai_decisions`, e quem comanda continua sendo o motor determinístico.
+- `false` → a IA comanda a cadência, sempre atrás da guarda.
+
+`pnpm ia:testar` imprime esse valor logo no começo.
+
+### A IA falhou e a cadência parou
+
+Não para. Quando a análise falha — rede, prazo, JSON inválido — o motor
+determinístico assume. E o fallback **nunca envia**: uma ação de envio
+vira `CREATE_INTERVENTION`, que cai na sua mão. Ver `docs/IA-CADENCIA.md`.
+
+---
+
 ## Frontend
 
 ### Página em branco

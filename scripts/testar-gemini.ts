@@ -17,113 +17,31 @@
 import { config } from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-// Import por caminho relativo, como os demais scripts da pasta: a raiz
-// do monorepo nao declara os packages como dependencia, entao
-// `@prospector/...` nao resolve daqui.
-import type { ContextoCadencia } from '../packages/domain/src/index.js';
+// O contexto fabricado mora num arquivo proprio para que a suite de
+// testes consiga monta-lo tambem. Ver o cabecalho de la.
+import { contextoDeTeste } from './contexto-de-teste.js';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.resolve(aqui, '../.env') });
 
 /**
- * Um lead fabricado: mensagem 1 entregue, lead respondeu "claro, pode
- * mandar", mensagem 2 ainda sem envio.
+ * Tira a frase de dentro do JSON que a SDK devolve como mensagem.
  *
- * A resposta certa e obvia para um humano — SEND_STEP na etapa 2 — e e
- * justamente por isso que serve de teste: se o modelo devolver outra
- * coisa, o problema nao e a chave.
+ * A coluna `erro` de `ai_decisions` guarda o texto inteiro de proposito —
+ * la o detalhe vale. Aqui na tela, um bloco JSON de tres linhas so
+ * esconde o "API key not valid" que e a unica coisa que interessa ler.
+ *
+ * Nao lanca em nada: se o formato mudar, mostra o texto cru.
  */
-function contextoDeTeste(): ContextoCadencia {
-  const agora = new Date();
-  return {
-    gatilho: 'MENSAGEM_RECEBIDA',
-    campanha: {
-      id: 'teste',
-      nome: 'Prospeccao de sites',
-      status: 'ATIVA',
-      dentroDaJanela: true,
-    },
-    sequencia: [
-      {
-        ordem: 1,
-        nome: 'Abordagem',
-        texto: 'Oi, é o {{empresa}} aí do {{bairro}}?',
-        aguardarResposta: true,
-        enviarAutomaticamente: true,
-        delaySegundos: 0,
-      },
-      {
-        ordem: 2,
-        nome: 'Proposta',
-        texto: 'Vi vocês no Google e reparei que ainda não têm um site...',
-        aguardarResposta: true,
-        enviarAutomaticamente: true,
-        delaySegundos: 120,
-      },
-      {
-        ordem: 3,
-        nome: 'Prévia',
-        texto: 'Montei uma ideia rápida de como poderia ficar...',
-        aguardarResposta: false,
-        enviarAutomaticamente: false,
-        delaySegundos: 120,
-      },
-    ],
-    lead: {
-      id: 'teste',
-      nome: null,
-      empresa: 'Studio Teste Prospector',
-      bairro: 'Centro',
-      cidade: 'São Paulo',
-      optOut: false,
-      status: 'AGUARDANDO_RESPOSTA',
-      temperatura: 'MORNO',
-    },
-    posicao: {
-      etapaAtualOrdem: 1,
-      statusNaCampanha: 'AGUARDANDO_RESPOSTA',
-      aguardandoLiberacao: false,
-      proximoEnvioEm: null,
-    },
-    envios: [
-      {
-        ordem: 1,
-        statusOutbound: 'ENVIADA',
-        statusMensagem: 'ENTREGUE',
-        enviadaEm: new Date(agora.getTime() - 300_000).toISOString(),
-        erro: null,
-        dryRun: false,
-      },
-    ],
-    respostas: [
-      {
-        texto: 'claro, pode mandar',
-        recebidaEm: new Date(agora.getTime() - 60_000).toISOString(),
-        categoriaDoMotor: 'POSITIVO',
-        confiancaDoMotor: 85,
-      },
-    ],
-    conversa: [
-      {
-        direcao: 'ENVIADA',
-        texto: 'Oi! É do Studio Teste Prospector aí do Centro?',
-        quando: new Date(agora.getTime() - 300_000).toISOString(),
-        status: 'ENTREGUE',
-      },
-      {
-        direcao: 'RECEBIDA',
-        texto: 'claro, pode mandar',
-        quando: new Date(agora.getTime() - 60_000).toISOString(),
-        status: 'ENTREGUE',
-        categoriaDoMotor: 'POSITIVO',
-      },
-    ],
-    regras: [{ categoria: 'POSITIVO', acao: 'AVANCAR' }],
-    relogio: {
-      agora: agora.toISOString(),
-      segundosDesdeUltimoEnvio: 300,
-    },
-  };
+function legivel(erro: string): string {
+  try {
+    const j = JSON.parse(erro) as { error?: { message?: string; code?: number } };
+    const msg = j.error?.message;
+    if (!msg) return erro;
+    return j.error?.code ? `${msg} (HTTP ${j.error.code})` : msg;
+  } catch {
+    return erro;
+  }
 }
 
 async function main(): Promise<void> {
@@ -172,13 +90,40 @@ async function main(): Promise<void> {
 
   if (!r.ok) {
     console.log('--- FALHOU ---\n');
-    console.log(`erro     : ${r.erro}`);
+    console.log(`erro     : ${legivel(r.erro)}`);
     console.log(`latencia : ${r.latenciaMs}ms\n`);
-    console.log('O que costuma causar isso:');
-    console.log('  - chave invalida ou revogada     -> gere outra em aistudio.google.com/apikey');
-    console.log('  - sem internet ou atras de proxy -> teste abrir o site acima no navegador');
-    console.log(`  - modelo inexistente             -> confira GEMINI_MODEL (esta "${modelo}")`);
-    console.log('  - tempo esgotado                 -> aumente GEMINI_TIMEOUT_MS\n');
+
+    // A origem muda o conselho inteiro. Antes o script sugeria trocar a
+    // chave para QUALQUER falha — inclusive para um bug nosso, com a
+    // chave perfeita.
+    if (r.origem === 'CODIGO') {
+      console.log('Isto e um DEFEITO DO PROSPECTOR, nao da sua chave.');
+      console.log('A chamada nem chegou ao Google. Nao troque a chave.\n');
+      if (r.pilha) {
+        console.log('Onde quebrou:');
+        console.log(
+          r.pilha
+            .split('\n')
+            .slice(0, 6)
+            .map((l) => `  ${l.trim()}`)
+            .join('\n')
+        );
+        console.log('');
+      }
+      console.log('Mande estas linhas para quem cuida do codigo.\n');
+    } else if (r.origem === 'RESPOSTA') {
+      console.log('A chave FUNCIONA — a chamada foi e voltou. O que veio e que');
+      console.log('nao serviu: resposta vazia ou fora do formato combinado.');
+      console.log('Costuma ser modelo trocado ou limite de token.\n');
+      console.log(`Confira GEMINI_MODEL (esta "${modelo}").\n`);
+    } else {
+      console.log('O que costuma causar isso:');
+      console.log('  - chave invalida ou revogada     -> gere outra em aistudio.google.com/apikey');
+      console.log('  - sem internet ou atras de proxy -> teste abrir o site acima no navegador');
+      console.log(`  - modelo inexistente             -> confira GEMINI_MODEL (esta "${modelo}")`);
+      console.log('  - tempo esgotado                 -> aumente GEMINI_TIMEOUT_MS\n');
+    }
+
     console.log('IMPORTANTE: mesmo com isto falhando, a cadencia funciona.');
     console.log('O motor deterministico assume e nada para.\n');
     process.exit(1);

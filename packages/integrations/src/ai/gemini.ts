@@ -34,7 +34,7 @@ import {
   ACAO_IA,
   type ContextoCadencia,
 } from '@prospector/domain';
-import type { AnalisadorDeCadencia, ResultadoAnalise } from './analisador.js';
+import type { AnalisadorDeCadencia, OrigemDaFalha, ResultadoAnalise } from './analisador.js';
 
 export interface OpcoesGemini {
   apiKey: string;
@@ -165,26 +165,63 @@ export class AnalisadorGemini implements AnalisadorDeCadencia {
           erro: 'O modelo devolveu resposta vazia',
           modelo: this.modelo,
           latenciaMs,
+          origem: 'RESPOSTA',
         };
       }
 
       const r = interpretarRespostaIA(texto);
       if (!r.ok) {
-        return { ok: false, erro: r.erro, modelo: this.modelo, latenciaMs };
+        return {
+          ok: false,
+          erro: r.erro,
+          modelo: this.modelo,
+          latenciaMs,
+          origem: 'RESPOSTA',
+        };
       }
 
       return { ok: true, decisao: r.decisao, modelo: this.modelo, latenciaMs };
     } catch (err) {
       // Nao relanca: quem chama precisa poder cair no motor sem
       // try/catch. Falhar aqui e um evento previsto do sistema.
+      const origem = classificar(err);
       return {
         ok: false,
         erro: redigir(err instanceof Error ? err.message : String(err), this.apiKey),
         modelo: this.modelo,
         latenciaMs: Date.now() - comeco,
+        origem,
+        // A pilha so acompanha bug nosso. Numa falha de API ela sempre
+        // aponta para dentro da SDK e nao ajuda ninguem.
+        ...(origem === 'CODIGO' && err instanceof Error && err.stack
+          ? { pilha: redigir(err.stack, this.apiKey) }
+          : {}),
       };
     }
   }
+}
+
+/**
+ * "A API recusou" ou "quebrou aqui dentro"?
+ *
+ * ============================================================
+ * A REGRA E POR EXCLUSAO, E DE PROPOSITO
+ * ============================================================
+ * `TypeError`, `ReferenceError` e `RangeError` sao, na pratica, sempre
+ * bug de programa: um campo que faltou no objeto, uma funcao que nao
+ * existe, um indice fora. Nenhum servidor remoto produz isso do outro
+ * lado do fio.
+ *
+ * O resto — `ApiError` da SDK, erro de rede, o nosso "Tempo esgotado" —
+ * cai em API. Errar para o lado de API e o erro barato: a pessoa confere
+ * chave e internet e nao acha nada, e volta. Errar para o lado de CODIGO
+ * mandaria alguem cacar um bug que nao existe.
+ */
+function classificar(err: unknown): OrigemDaFalha {
+  if (err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError) {
+    return 'CODIGO';
+  }
+  return 'API';
 }
 
 /**
