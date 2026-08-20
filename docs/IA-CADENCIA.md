@@ -111,26 +111,31 @@ a hora" — uma pergunta de aritmética.
 
 A IA é consultada quando algo **acontece**:
 
-| Gatilho | Onde | Modo |
-|---|---|---|
-| `MENSAGEM_RECEBIDA` | `inbound.ts`, depois de `aplicarEfeitos` | observador |
-| `ETAPA_CONCLUIDA` | `outbound.ts`, depois do status persistido | normal |
-| `ACK_FINAL` | quando chega ENTREGUE/LIDA | normal |
-| `OPERADOR_LIBEROU` | liberação manual no quadro | normal |
-| `ENVIO_FALHOU` | falha real de envio | normal |
+| Gatilho | Onde |
+|---|---|
+| `MENSAGEM_RECEBIDA` | `inbound.ts`, antes de `aplicarEfeitos` |
+| `ETAPA_CONCLUIDA` | `outbound.ts`, depois do status persistido |
+| `ACK_FINAL` | quando chega ENTREGUE/LIDA |
+| `OPERADOR_LIBEROU` | liberação manual no quadro |
+| `ENVIO_FALHOU` | falha real de envio |
 
 Entre eventos, quem conta o tempo é o `scheduledAt` no banco e o poller —
 como sempre foi.
 
-### Por que `MENSAGEM_RECEBIDA` é observador
+### Como motor e IA não colidem em `MENSAGEM_RECEBIDA`
 
-Naquele caminho, `processarMensagemRecebida` **já** rodou o motor de
-regras e **já** aplicou os efeitos. Se o orquestrador executasse também, o
-mesmo evento produziria a ação duas vezes.
+Naquele caminho os dois olham o mesmo evento. Se ambos agissem, a etapa
+avançaria duas vezes — mensagem dobrada não sairia (a UNIQUE barra), mas
+tarefa, notificação e mudança de status aconteceriam em dobro, e a trilha
+passaria a mentir sobre quem decidiu.
 
-Então ali ele entra só para comparar: lê o mesmo retrato, diz o que teria
-feito, grava a divergência. Dar o comando desse caminho à IA é o passo
-seguinte, e depende de olhar os dados do modo sombra primeiro.
+A solução é cirúrgica: a IA decide **antes**, e `aplicarEfeitos` recebe
+`iaConduz`, que pula exatamente **dois** efeitos — `AVANCAR_ETAPA` e
+`ENVIAR_TEMPLATE`. Todo o resto do motor continua valendo: opt-out,
+status, temperatura, snooze, parada de sequência, intervenção, tarefa e
+histórico.
+
+O motor deixou de ser o **condutor**. Nunca deixou de ser a **barreira**.
 
 ## As camadas de proteção contra envio duplicado
 
