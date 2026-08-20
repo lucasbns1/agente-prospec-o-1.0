@@ -127,11 +127,125 @@ console.log('FILA');
 console.log(linha('mensagens canceladas', canceladas));
 console.log(linha('mensagens bloqueadas', bloqueadas));
 
+// =============================================================================
+// INTELIGENCIA ARTIFICIAL (Fase 9)
+// =============================================================================
+//
+// Le `ai_decisions`, que e a trilha de toda vez que a IA foi consultada.
+// Com o Gemini desligado a tabela fica vazia e este bloco nao aparece —
+// e a ausencia dele ja e a informacao.
+
+const decisoesIa = await prisma.aiDecision.count();
+
+if (decisoesIa > 0) {
+  const [porAcao, divergencias, fallbacks, rejeitadas, latencia, ultima] = await Promise.all([
+    prisma.aiDecision.groupBy({ by: ['acaoExecutada'], _count: true }),
+    prisma.aiDecision.count({ where: { divergiu: true } }),
+    prisma.aiDecision.count({ where: { fallback: true } }),
+    prisma.aiDecision.groupBy({
+      by: ['motivoRejeicao'],
+      where: { motivoRejeicao: { not: null } },
+      _count: true,
+    }),
+    prisma.aiDecision.aggregate({ _avg: { latenciaMs: true }, _max: { latenciaMs: true } }),
+    prisma.aiDecision.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, modelo: true },
+    }),
+  ]);
+
+  console.log('');
+  console.log('INTELIGENCIA ARTIFICIAL');
+  console.log(linha('decisoes registradas', decisoesIa));
+  console.log(linha('  divergiram do motor', divergencias));
+  // Fallback nao e defeito: e o sistema seguindo em frente sem a IA.
+  // Vira sinal de alerta quando e a maioria.
+  console.log(linha('  cairam no motor (fallback)', fallbacks));
+  console.log(`  modelo                              ${ultima?.modelo ?? '(nenhum)'}`);
+  if (latencia._avg.latenciaMs !== null) {
+    console.log(
+      `  latencia media / maxima             ${Math.round(latencia._avg.latenciaMs)}ms / ${latencia._max.latenciaMs}ms`
+    );
+  }
+
+  console.log('');
+  console.log('  ACOES EXECUTADAS');
+  for (const a of porAcao.sort((x, y) => y._count - x._count)) {
+    console.log(linha(`    ${a.acaoExecutada ?? '(nenhuma)'}`, a._count));
+  }
+
+  if (rejeitadas.length > 0) {
+    // A guarda barrando decisao da IA. Aparecer aqui e o sistema
+    // funcionando — o que importa e QUAL barreira, e com que frequencia.
+    console.log('');
+    console.log('  RECUSADAS PELA GUARDA');
+    for (const r of rejeitadas.sort((x, y) => y._count - x._count)) {
+      console.log(linha(`    ${r.motivoRejeicao}`, r._count));
+    }
+  }
+
+  if (fallbacks > 0) {
+    const erros = await prisma.aiDecision.groupBy({
+      by: ['erro'],
+      where: { fallback: true, erro: { not: null } },
+      _count: true,
+      take: 5,
+    });
+    console.log('');
+    console.log('  POR QUE A IA FALHOU');
+    for (const e of erros.sort((x, y) => y._count - x._count)) {
+      console.log(linha(`    ${(e.erro ?? '').slice(0, 60)}`, e._count));
+    }
+  }
+} else {
+  console.log('');
+  console.log('INTELIGENCIA ARTIFICIAL');
+  console.log('  Nenhuma decisao registrada (Gemini desligado ou ainda sem eventos).');
+}
+
+// =============================================================================
+// RECONCILIACAO
+// =============================================================================
+//
+// Onde o banco discorda de si mesmo. Roda a deteccao AGORA, sem esperar
+// a passada horaria do worker — e sem corrigir nada, nem mesmo o
+// opt-out: uma auditoria que muda o que audita nao serve para auditar.
+
+const { reconciliar } = await import('../src/services/reconciliacao.js');
+const rec = await reconciliar({ corrigirOptOut: false });
+
+console.log('');
+console.log('RECONCILIACAO');
+console.log(linha('criticas', rec.resumo.CRITICA));
+console.log(linha('atencao', rec.resumo.ATENCAO));
+console.log(linha('informativas', rec.resumo.INFO));
+
+if (rec.achados.length === 0) {
+  console.log('  Nada fora do lugar.');
+} else {
+  for (const g of ['CRITICA', 'ATENCAO', 'INFO'] as const) {
+    const doNivel = rec.achados.filter((a) => a.gravidade === g);
+    if (doNivel.length === 0) continue;
+    console.log('');
+    console.log(`  ${g}`);
+    for (const a of doNivel.slice(0, 20)) {
+      console.log(`    [${a.tipo}] ${a.descricao}`);
+      console.log(`      lead ${a.leadId} -> ${a.sugestao}`);
+    }
+    if (doNivel.length > 20) {
+      console.log(`    ... e mais ${doNivel.length - 20}`);
+    }
+  }
+}
+
 console.log('');
 if (enviadasReais === 0 && comIdWhatsApp === 0) {
   console.log('  Nenhuma mensagem real foi enviada.');
 } else {
   console.log('  ATENCAO: existe envio real registrado.');
+}
+if (rec.resumo.CRITICA > 0) {
+  console.log(`  ATENCAO: ${rec.resumo.CRITICA} inconsistencia(s) CRITICA(s) — leia acima.`);
 }
 console.log('');
 

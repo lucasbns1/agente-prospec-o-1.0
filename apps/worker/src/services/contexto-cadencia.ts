@@ -30,6 +30,15 @@ import { dentroDaJanela, type ContextoCadencia, type GatilhoCadencia } from '@pr
  */
 const MAX_RESPOSTAS = 8;
 
+/**
+ * Quantas linhas da conversa inteira entram no retrato.
+ *
+ * Maior que `MAX_RESPOSTAS` porque conta os dois sentidos: uma
+ * prospeccao de tres etapas com resposta em cada uma ja da seis linhas,
+ * e cortar antes disso esconderia justamente o comeco da conversa.
+ */
+const MAX_CONVERSA = 20;
+
 export interface ResultadoContexto {
   contexto: ContextoCadencia | null;
   /** Preenchido quando nao deu para montar. */
@@ -169,16 +178,44 @@ export async function montarContexto(params: {
     };
   });
 
-  // --- As respostas do lead ---
-  const recebidas = await prisma.message.findMany({
-    where: { leadId: params.leadId, direcao: 'RECEBIDA' },
-    orderBy: { recebidaEm: 'desc' },
-    take: MAX_RESPOSTAS,
-    select: { texto: true, recebidaEm: true, createdAt: true, categoria: true, confianca: true },
+  // --- A conversa: os dois sentidos ---
+  //
+  // UMA consulta para os dois, e nao duas: a ordem cronologica entre o
+  // que saiu e o que chegou e o que torna a conversa legivel, e juntar
+  // duas listas ordenadas separadamente por campos diferentes
+  // (`recebidaEm` e `enviadaEm`) daria uma sequencia embaralhada.
+  const linhas = await prisma.message.findMany({
+    where: { leadId: params.leadId },
+    orderBy: { createdAt: 'desc' },
+    take: MAX_CONVERSA,
+    select: {
+      direcao: true,
+      texto: true,
+      status: true,
+      recebidaEm: true,
+      enviadaEm: true,
+      createdAt: true,
+      categoria: true,
+      confianca: true,
+    },
   });
 
-  const respostas = recebidas
-    .reverse() // mais recentes por ultimo: e assim que se le uma conversa
+  // Mais recentes por ultimo: e assim que se le uma conversa.
+  const cronologica = [...linhas].reverse();
+
+  const conversa = cronologica.map((m) => ({
+    direcao: m.direcao as 'ENVIADA' | 'RECEBIDA',
+    texto: m.texto,
+    quando: (m.recebidaEm ?? m.enviadaEm ?? m.createdAt).toISOString(),
+    status: m.status,
+    ...(m.direcao === 'RECEBIDA'
+      ? { categoriaDoMotor: m.categoria ?? 'DESCONHECIDO' }
+      : {}),
+  }));
+
+  const respostas = cronologica
+    .filter((m) => m.direcao === 'RECEBIDA')
+    .slice(-MAX_RESPOSTAS)
     .map((m) => ({
       texto: m.texto,
       recebidaEm: (m.recebidaEm ?? m.createdAt).toISOString(),
@@ -251,6 +288,7 @@ export async function montarContexto(params: {
       },
       envios,
       respostas,
+      conversa,
       regras: regras.map((r) => ({ categoria: r.categoria, acao: r.acao })),
       relogio: {
         agora: agora.toISOString(),

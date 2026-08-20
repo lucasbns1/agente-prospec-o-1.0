@@ -793,3 +793,117 @@ describe('a garantia que vale para o arquivo inteiro', () => {
     expect(reais).toBe(0);
   });
 });
+
+// =============================================================================
+// A IA NO COMANDO DO CAMINHO DE RESPOSTA
+// =============================================================================
+//
+// O que muda em relacao aos casos acima: aqui o evento entra por
+// `processarMensagemRecebida`, o mesmo caminho que uma resposta de
+// verdade percorre. E ali que motor e IA poderiam colidir.
+
+describe('mensagem recebida com a IA conduzindo', () => {
+  it('a IA executa a cadencia e o motor NAO enfileira em dobro', async () => {
+    const { lead, campanha, etapas } = await cenario();
+
+    // A etapa 1 ja saiu; o lead responde.
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `cmd-${lead.id}-1`,
+        status: 'ENVIADA',
+        textoRenderizado: 'Mensagem 1',
+        processedAt: new Date(),
+        dryRun: true,
+      },
+    });
+    await prisma.leadCampaign.updateMany({
+      where: { leadId: lead.id },
+      data: { etapaAtualId: etapas[0]!.id, etapaAtualOrdem: 1, status: 'AGUARDANDO_RESPOSTA' },
+    });
+
+    const gatilhos = await import('../apps/worker/src/services/gatilhos-ia.js');
+    const inbound = await import('../apps/worker/src/services/inbound.js');
+
+    const ia = new AnalisadorFalso(decide({ acao: 'SEND_STEP', etapaOrdem: 2 }));
+    gatilhos.configurarIA({ analisador: ia, somenteAnalise: false, log });
+
+    try {
+      const r = await inbound.processarMensagemRecebida({
+        providerMessageId: `wa-cmd-${lead.id}`,
+        chatId: '5511980000001@c.us',
+        telefone: (await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } }))
+          .telefoneNormalizado!,
+        texto: 'claro, pode mandar',
+        nomeContato: null,
+        recebidaEm: new Date(),
+        deMim: false,
+        tipo: 'chat',
+        temMidia: false,
+      });
+      expect(r.processada).toBe(true);
+    } finally {
+      gatilhos.desconfigurarIA();
+    }
+
+    // UMA ordem para a etapa 2, nao duas: o motor pulou AVANCAR_ETAPA
+    // porque a IA conduziu.
+    const daEtapa2 = await prisma.outboundMessage.findMany({
+      where: { leadId: lead.id, campaignStepId: etapas[1]!.id },
+    });
+    expect(daEtapa2).toHaveLength(1);
+
+    // E a IA foi de fato consultada, com o estado real na mao.
+    expect(ia.chamadas).toBe(1);
+    expect(ia.ultimoContexto?.envios.some((e) => e.ordem === 1)).toBe(true);
+  });
+
+  it('o contexto entregue traz a conversa nos DOIS sentidos', async () => {
+    const { lead, campanha, etapas } = await cenario();
+
+    const conversa = await prisma.conversation.create({
+      data: { id: `${lead.id}-${campanha.id}`, leadId: lead.id, campaignId: campanha.id },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        direcao: 'ENVIADA',
+        status: 'ENTREGUE',
+        texto: 'Oi! É do Studio aí do Centro?',
+        enviadaEm: new Date(Date.now() - 120_000),
+      },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        campaignId: campanha.id,
+        direcao: 'RECEBIDA',
+        status: 'ENTREGUE',
+        texto: 'claro, pode mandar',
+        categoria: 'POSITIVO',
+        confianca: 85,
+        recebidaEm: new Date(),
+      },
+    });
+
+    const ia = new AnalisadorFalso(decide({ acao: 'WAIT' }));
+    await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      opcoes(ia)
+    );
+
+    const c = ia.ultimoContexto!.conversa;
+    expect(c).toHaveLength(2);
+    // Ordem cronologica: o que perguntamos vem antes da resposta. Sem
+    // isso, "pode mandar" ficaria sem referente.
+    expect(c[0]?.direcao).toBe('ENVIADA');
+    expect(c[1]?.direcao).toBe('RECEBIDA');
+    expect(c[1]?.categoriaDoMotor).toBe('POSITIVO');
+  });
+});

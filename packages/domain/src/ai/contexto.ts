@@ -76,6 +76,29 @@ export interface RespostaContexto {
   confiancaDoMotor: number;
 }
 
+/**
+ * Uma linha da conversa, nos dois sentidos.
+ *
+ * ============================================================
+ * POR QUE O QUE NOS ENVIAMOS TAMBEM PRECISA IR
+ * ============================================================
+ * So com as respostas do lead, "pode mandar" fica sem referente: mandar
+ * o que? O modelo teria que adivinhar a que pergunta aquilo responde, e
+ * adivinhar e exatamente o que nao queremos.
+ *
+ * Com os dois lados, a conversa se le como conversa — e a decisao passa
+ * a considerar o que ja foi dito, nao so a ultima frase.
+ */
+export interface LinhaConversa {
+  direcao: 'ENVIADA' | 'RECEBIDA';
+  texto: string;
+  quando: string;
+  /** ENVIADA | ENTREGUE | LIDA | FALHOU | SIMULADA... */
+  status: string;
+  /** So nas recebidas: o que o dicionario achou. */
+  categoriaDoMotor?: string;
+}
+
 export interface ContextoCadencia {
   gatilho: GatilhoCadencia;
 
@@ -118,6 +141,16 @@ export interface ContextoCadencia {
 
   /** As respostas do lead, mais recentes por ultimo. */
   respostas: RespostaContexto[];
+
+  /**
+   * A conversa inteira, nos dois sentidos, mais recente por ultimo.
+   *
+   * Redundante com `respostas` de proposito: aquele campo alimenta as
+   * regras (categoria e confianca do motor), este alimenta a leitura da
+   * IA. Juntar os dois num so obrigaria um deles a carregar campos que
+   * nao usa.
+   */
+  conversa: LinhaConversa[];
 
   /** As regras configuradas para a etapa atual. */
   regras: { categoria: string; acao: string }[];

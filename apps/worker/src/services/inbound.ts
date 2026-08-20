@@ -39,7 +39,7 @@ import {
 import type { MensagemEntrada } from '@prospector/integrations';
 import { publicarEvento } from '../events.js';
 import { criarNotificacaoIdempotente } from './notificar.js';
-import { dispararGatilho } from './gatilhos-ia.js';
+import { dispararGatilho, iaComanda } from './gatilhos-ia.js';
 import {
   enfileirarProximaEtapa,
   enfileirarRespostaDeTemplate,
@@ -166,6 +166,27 @@ async function aplicarEfeitos(
     campaignId: string | null;
     campaignStepId: string | null;
     mensagemRecebidaId: string;
+    /**
+     * true = a IA esta conduzindo a cadencia neste evento.
+     *
+     * ============================================================
+     * O QUE ESTE SINALIZADOR PROTEGE
+     * ============================================================
+     * Quando a IA comanda, ela ja executou (ou vai executar) a decisao
+     * de cadencia. Aplicar tambem os efeitos AVANCAR_ETAPA e
+     * ENVIAR_TEMPLATE do motor faria os dois agirem sobre o mesmo
+     * evento.
+     *
+     * Mensagem dobrada nao sairia — a UNIQUE do banco barra o segundo
+     * enfileiramento. Mas os efeitos colaterais aconteceriam duas
+     * vezes, e a trilha passaria a mentir sobre quem decidiu.
+     *
+     * SO estes dois sao pulados. Tudo o mais continua valendo:
+     * opt-out, status, temperatura, snooze, parada de sequencia,
+     * intervencao, tarefa e historico. O motor nunca deixa de ser a
+     * barreira determinista — ele deixa de ser o CONDUTOR.
+     */
+    iaConduz?: boolean;
   }
 ): Promise<void> {
   for (const efeito of efeitos) {
@@ -292,6 +313,7 @@ async function aplicarEfeitos(
       // quatro barreiras seguem entre isto e o WhatsApp.
       // -------------------------------------------------------------
       case 'AVANCAR_ETAPA': {
+        if (contexto.iaConduz) break;
         if (!contexto.campaignId) break;
         const r = await enfileirarProximaEtapa({
           leadId,
@@ -313,6 +335,7 @@ async function aplicarEfeitos(
       }
 
       case 'ENVIAR_TEMPLATE': {
+        if (contexto.iaConduz) break;
         const r = await enfileirarRespostaDeTemplate({
           leadId,
           campaignId: contexto.campaignId,
@@ -569,12 +592,52 @@ export async function processarMensagemRecebida(
     campaignStepId,
   });
 
-  // --- 8. Aplicar os efeitos ---
+  // ============================================================
+  // 8. QUEM CONDUZ ESTE EVENTO?
+  // ============================================================
+  // A IA roda ANTES dos efeitos, e nao depois, porque o resultado dela
+  // decide se o motor conduz a cadencia ou apenas registra.
+  //
+  // A ordem importa para uma coisa em especial: o opt-out. Se o motor
+  // classificou OPT_OUT, os efeitos dele — registrar, cancelar jobs,
+  // marcar o lead — acontecem de qualquer forma logo abaixo, qualquer
+  // que seja a opiniao da IA. A IA pode DETECTAR um opt-out que o
+  // dicionario nao pegou; ela nunca pode desfazer um que ele pegou.
+  const conduzida = iaComanda() && campaignId !== null;
+
+  if (conduzida) {
+    await dispararGatilho({
+      leadId,
+      campaignId,
+      gatilho: 'MENSAGEM_RECEBIDA',
+      // Executa de verdade: enfileira a etapa, cria a intervencao,
+      // encerra por opt-out. Nao e mais observacao.
+      observarApenas: false,
+    });
+  }
+
+  // --- 9. Aplicar os efeitos do motor ---
+  //
+  // Sempre roda. Quando a IA conduz, os dois efeitos de cadencia
+  // (AVANCAR_ETAPA e ENVIAR_TEMPLATE) sao pulados — ver `iaConduz`.
   await aplicarEfeitos(leadId, decisao.efeitos, {
     campaignId,
     campaignStepId,
     mensagemRecebidaId: mensagem.id,
+    iaConduz: conduzida,
   });
+
+  // Com a IA desligada ou em modo sombra, ela entra aqui so para
+  // observar e gravar a comparacao. `dispararGatilho` nao faz nada
+  // quando nao ha analisador configurado.
+  if (!conduzida) {
+    await dispararGatilho({
+      leadId,
+      campaignId,
+      gatilho: 'MENSAGEM_RECEBIDA',
+      observarApenas: true,
+    });
+  }
 
   await prisma.lead.update({
     where: { id: leadId },
@@ -598,26 +661,6 @@ export async function processarMensagemRecebida(
         acao: decisao.acao,
       } as Prisma.InputJsonValue,
     },
-  });
-
-  // ============================================================
-  // GATILHO DA IA — OBSERVANDO, NAO COMANDANDO
-  // ============================================================
-  // Roda DEPOIS de `aplicarEfeitos`, e com `observarApenas: true`.
-  //
-  // O motor ja decidiu e ja agiu acima. O papel da IA aqui e comparar:
-  // ela le o mesmo retrato e diz o que teria feito, e a divergencia vai
-  // para `ai_decisions`. E dessa tabela que sai a resposta para "vale a
-  // pena dar o comando a ela?".
-  //
-  // `await` e nao `void`: sem esperar, o job terminaria antes da
-  // gravacao e a comparacao se perderia justamente nos casos mais
-  // interessantes, que sao os mais lentos.
-  await dispararGatilho({
-    leadId,
-    campaignId,
-    gatilho: 'MENSAGEM_RECEBIDA',
-    observarApenas: true,
   });
 
   void publicarEvento('mensagem.recebida', {

@@ -59,6 +59,26 @@ export function iaEstaLigada(): boolean {
 }
 
 /**
+ * A IA esta COMANDANDO, e nao apenas observando?
+ *
+ * ============================================================
+ * QUEM PERGUNTA ISTO, E POR QUE
+ * ============================================================
+ * `processarMensagemRecebida` precisa saber, ANTES de aplicar os efeitos
+ * do motor, se a cadencia vai ser conduzida por ele ou pela IA. Sem essa
+ * pergunta os dois agiriam sobre o mesmo evento: o motor avancaria a
+ * etapa e a IA avancaria de novo.
+ *
+ * A UNIQUE do banco barraria o segundo enfileiramento, entao nao sairia
+ * mensagem dobrada — mas os efeitos colaterais (tarefa, notificacao,
+ * mudanca de status) aconteceriam duas vezes, e o log ficaria mentindo
+ * sobre quem decidiu o que.
+ */
+export function iaComanda(): boolean {
+  return analisador !== null && !somenteAnalise;
+}
+
+/**
  * Acorda o orquestrador por causa de um evento.
  *
  * Devolve void e engole qualquer erro de proposito: quem chama esta no

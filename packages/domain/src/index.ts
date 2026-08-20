@@ -51,3 +51,9 @@ export * from './ai/contexto.js';
 export * from './ai/mapear-intent.js';
 export * from './ai/validar-decisao.js';
 export * from './ai/prompt.js';
+// --- Reconciliacao (Fase 9) ---
+//
+// Deteccao pura: recebe um retrato ja lido e diz onde o banco discorda
+// de si mesmo. Nao corrige nada — quando ha duvida sobre se o WhatsApp
+// recebeu, reenviar automaticamente pode duplicar mensagem.
+export * from './reconciliacao/deteccao.js';

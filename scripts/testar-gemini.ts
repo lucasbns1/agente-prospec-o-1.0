@@ -103,6 +103,21 @@ function contextoDeTeste(): ContextoCadencia {
         confiancaDoMotor: 85,
       },
     ],
+    conversa: [
+      {
+        direcao: 'ENVIADA',
+        texto: 'Oi! É do Studio Teste Prospector aí do Centro?',
+        quando: new Date(agora.getTime() - 300_000).toISOString(),
+        status: 'ENTREGUE',
+      },
+      {
+        direcao: 'RECEBIDA',
+        texto: 'claro, pode mandar',
+        quando: new Date(agora.getTime() - 60_000).toISOString(),
+        status: 'ENTREGUE',
+        categoriaDoMotor: 'POSITIVO',
+      },
+    ],
     regras: [{ categoria: 'POSITIVO', acao: 'AVANCAR' }],
     relogio: {
       agora: agora.toISOString(),

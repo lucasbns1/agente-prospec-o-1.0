@@ -81,15 +81,18 @@ const envSchema = z.object({
    * MODO SOMBRA. `true` = a IA analisa e recomenda, mas quem comanda a
    * cadencia continua sendo o motor deterministico.
    *
-   * O padrao e `true` DE PROPOSITO, e note que ele e o padrao mesmo com
-   * a IA ligada: acender o modelo e dar o comando a ele sao duas
-   * decisoes separadas. A segunda so deveria acontecer depois de olhar
-   * a tabela `ai_decisions` e ver em quantos casos ele teria acertado.
+   * O padrao e `false`: ligar o Gemini significa dar o comando a ele.
+   * Quem quiser observar antes de liberar poe `true` explicitamente e
+   * acompanha a tabela `ai_decisions` — o modo sombra continua inteiro,
+   * so deixou de ser o padrao.
+   *
+   * Isto so tem efeito com GEMINI_ENABLED=true. Sem chave, o valor daqui
+   * e irrelevante e o motor deterministico conduz tudo.
    */
   AI_ANALYSIS_ONLY: z
     .string()
-    .default('true')
-    .transform((v) => v.trim().toLowerCase() !== 'false'),
+    .default('false')
+    .transform((v) => v.trim().toLowerCase() === 'true'),
 
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
 

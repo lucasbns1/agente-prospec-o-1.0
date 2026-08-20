@@ -21,6 +21,7 @@ import { iniciarDespachante } from './workers/despachante.js';
 import { criarWorkerInbound, enfileirarRecebida } from './workers/inbound.js';
 import { criarAnalisador } from '@prospector/integrations';
 import { configurarIA } from './services/gatilhos-ia.js';
+import { iniciarReconciliacao } from './services/reconciliacao.js';
 import { processarConfirmacaoEntrega } from './services/inbound.js';
 import { recuperarMensagensPerdidas } from './services/recuperar-perdidas.js';
 import { fecharPublicador } from './redis.js';
@@ -309,6 +310,12 @@ async function main(): Promise<void> {
   // mensagens agendadas ficariam paradas no banco para sempre.
   const pararDespachante = iniciarDespachante(log);
 
+  // A rede de seguranca: uma vez por hora ela confere se o que o banco
+  // acha que aconteceu bate com o que aconteceu. Nao conserta nada
+  // sozinha — a unica excecao e cancelar mensagem pendente de lead em
+  // opt-out, que nao tem cenario em que deixar la seja certo.
+  const pararReconciliacao = iniciarReconciliacao(log);
+
   await publicarEstado();
   log.info('Worker pronto. Aguardando jobs.');
 
@@ -322,6 +329,7 @@ async function main(): Promise<void> {
       // Para de despachar antes de fechar os workers, senao a ultima
       // varredura criaria jobs que ninguem vai consumir.
       pararDespachante();
+      pararReconciliacao();
       clearInterval(batimento);
       // Fecha os workers primeiro: eles terminam o job em andamento antes
       // de parar, para nao deixar trabalho pela metade.

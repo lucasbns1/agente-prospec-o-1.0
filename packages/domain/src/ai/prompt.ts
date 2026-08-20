@@ -146,6 +146,28 @@ export function montarPrompt(ctx: ContextoCadencia): string {
   }
   linhas.push('');
 
+  // A conversa nos dois sentidos. Sem o que NOS mandamos, "pode mandar"
+  // fica sem referente e o modelo teria que adivinhar a que pergunta
+  // aquilo responde.
+  linhas.push('A CONVERSA ATE AGORA:');
+  if (ctx.conversa.length === 0) {
+    linhas.push('  (nada foi trocado ainda)');
+  } else {
+    // `linha` e nao `l`: o `l` de cima e o lead, e sombrear ali daria um
+    // texto que compila e mente.
+    for (const linha of ctx.conversa) {
+      const quem = linha.direcao === 'ENVIADA' ? 'NOS' : 'LEAD';
+      const extra =
+        linha.direcao === 'ENVIADA'
+          ? ` [${linha.status}]`
+          : linha.categoriaDoMotor
+            ? ` [dicionario: ${linha.categoriaDoMotor}]`
+            : '';
+      linhas.push(`  ${quem}: "${encurtar(linha.texto, 300)}"${extra}`);
+    }
+  }
+  linhas.push('');
+
   linhas.push('RESPOSTAS DO LEAD:');
   const recentes = ctx.respostas.slice(-MAX_RESPOSTAS);
   if (recentes.length === 0) {
