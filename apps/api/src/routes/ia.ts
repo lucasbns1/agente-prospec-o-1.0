@@ -133,6 +133,9 @@ export async function rotasIa(app: FastifyInstance): Promise<void> {
         modelo: true,
         latenciaMs: true,
         etapaOrdem: true,
+        // O estado que a IA estava vendo. E o que responde "por que ela
+        // decidiu isso?" quando a decisao parecer errada.
+        contextoResumo: true,
         lead: { select: { id: true, empresa: true, nomeCompleto: true } },
         campaign: { select: { id: true, nome: true } },
       },

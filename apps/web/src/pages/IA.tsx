@@ -63,6 +63,7 @@ interface Decisao {
   modelo: string | null;
   latenciaMs: number | null;
   etapaOrdem: number | null;
+  contextoResumo: Record<string, unknown> | null;
   lead: { id: string; empresa: string | null; nomeCompleto: string | null } | null;
   campaign: { id: string; nome: string } | null;
 }
@@ -315,6 +316,20 @@ export function IA() {
                       )}
                       {d.erro && (
                         <div className="mt-1 text-xs text-red-600">erro: {d.erro}</div>
+                      )}
+
+                      {/* O estado que ela estava vendo. Fechado por
+                          padrão: só interessa quando a decisão parece
+                          errada — e aí é a primeira coisa a olhar. */}
+                      {d.contextoResumo && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs text-muted-foreground">
+                            o que a IA estava vendo
+                          </summary>
+                          <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs">
+                            {JSON.stringify(d.contextoResumo, null, 2)}
+                          </pre>
+                        </details>
                       )}
                     </div>
                   ))}

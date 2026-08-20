@@ -19,6 +19,7 @@ import { criarWorkerHealth } from './workers/health.js';
 import { criarWorkerOutbound } from './workers/outbound.js';
 import { iniciarDespachante } from './workers/despachante.js';
 import { criarWorkerInbound, enfileirarRecebida } from './workers/inbound.js';
+import { criarWorkerOrquestracao } from './workers/orquestracao.js';
 import { criarAnalisador } from '@prospector/integrations';
 import { configurarIA } from './services/gatilhos-ia.js';
 import { iniciarReconciliacao } from './services/reconciliacao.js';
@@ -295,6 +296,9 @@ async function main(): Promise<void> {
     criarWorkerHealth(log),
     criarWorkerOutbound(log, adapter),
     criarWorkerInbound(log),
+    // Consome os pedidos que a API enfileira quando voce libera uma
+    // intervencao. Sem ele, o gatilho OPERADOR_LIBEROU existia so no tipo.
+    criarWorkerOrquestracao(log),
   ];
 
   for (const w of workers) {

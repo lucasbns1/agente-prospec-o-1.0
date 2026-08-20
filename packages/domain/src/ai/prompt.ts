@@ -183,6 +183,16 @@ export function montarPrompt(ctx: ContextoCadencia): string {
   }
   linhas.push('');
 
+  if (ctx.tarefasPendentes.length > 0) {
+    // Pedir intervencao para um lead que ja tem tarefa aberta produz o
+    // mesmo pedido duas vezes com palavras diferentes.
+    linhas.push('O OPERADOR JA TEM TAREFA ABERTA PARA ESTE LEAD:');
+    for (const t of ctx.tarefasPendentes) {
+      linhas.push(`  - [${t.tipo}] ${t.titulo} (desde ${t.criadaEm})`);
+    }
+    linhas.push('');
+  }
+
   if (ctx.regras.length > 0) {
     linhas.push('REGRAS CONFIGURADAS PARA A ETAPA ATUAL:');
     for (const r of ctx.regras) {

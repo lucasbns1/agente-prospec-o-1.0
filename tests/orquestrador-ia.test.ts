@@ -576,12 +576,21 @@ describe('intervencao humana', () => {
 // FALLBACK — a cadencia nao para porque a IA parou
 // =============================================================================
 
-describe('quando a IA falha, o motor deterministico assume', () => {
+describe('quando a IA falha, o sistema NAO arrisca uma mensagem', () => {
+  // ============================================================
+  // A REGRA QUE ESTES TESTES DEFENDEM
+  // ============================================================
+  // Com a IA ligada, ela e quem decide. Se ela nao respondeu, o sistema
+  // nao sabe o que o lead disse — sabe so o que o dicionario achou, que
+  // e exatamente a limitacao que motivou liga-la.
+  //
+  // Mandar a proxima mensagem nesse estado e apostar, e mensagem enviada
+  // nao volta atras. Um lead esperando meia hora a mais volta.
   it.each([
     ['timeout', 'Tempo esgotado (8000ms)'],
     ['JSON invalido', 'JSON fora do contrato — intent: valor invalido'],
     ['resposta vazia', 'O modelo devolveu resposta vazia'],
-  ])('%s -> a etapa 1 e enfileirada do mesmo jeito', async (_nome, erro) => {
+  ])('%s -> nada e enviado e a cadencia para para voce decidir', async (_nome, erro) => {
     const { lead, campanha } = await cenario();
     const ia = new AnalisadorFalso(falha(erro));
 
@@ -591,33 +600,65 @@ describe('quando a IA falha, o motor deterministico assume', () => {
     );
 
     expect(r?.fallback).toBe(true);
-    expect(r?.acaoExecutada).toBe('SEND_STEP');
-    expect(await envios(lead.id)).toHaveLength(1);
+    // O motor QUERIA enviar; o sistema recusou por falta da IA.
+    expect(r?.acaoMotor).toBe('SEND_STEP');
+    expect(r?.acaoExecutada).toBe('CREATE_INTERVENTION');
+    expect(await envios(lead.id)).toHaveLength(0);
+
+    // E voce e avisado — silencio aqui seria um lead parado sem motivo
+    // visivel.
+    expect(await prisma.notification.count()).toBe(1);
 
     const trilha = await prisma.aiDecision.findFirstOrThrow();
     expect(trilha.fallback).toBe(true);
     expect(trilha.erro).toBe(erro);
     expect(trilha.acaoIa).toBeNull();
+    // Distingue "a guarda recusou a IA" de "o sistema nao arriscou sem ela".
+    expect(trilha.motivoRejeicao).toBe('FALLBACK_NAO_ENVIA');
   });
 
-  it('com a IA desligada o resultado e identico ao do fallback', async () => {
-    const a = await cenario();
-    await orq.orquestrarCadencia(
-      { leadId: a.lead.id, campaignId: a.campanha.id, gatilho: 'ETAPA_CONCLUIDA' },
-      opcoes(null)
-    );
-    const semIa = await envios(a.lead.id);
+  // Acoes que so silenciam nao arriscam nada, entao o fallback as executa
+  // normalmente.
+  it('uma acao que nao envia passa mesmo com a IA fora do ar', async () => {
+    const { lead, campanha, etapas } = await cenario();
+    // Tudo ja enviado: o motor decide WAIT.
+    for (const [i, etapa] of etapas.entries()) {
+      await prisma.outboundMessage.create({
+        data: {
+          leadId: lead.id,
+          campaignId: campanha.id,
+          campaignStepId: etapa.id,
+          idempotencyKey: `fb-${lead.id}-${i}`,
+          status: 'ENVIADA',
+          textoRenderizado: `Mensagem ${i + 1}`,
+          processedAt: new Date(),
+          dryRun: true,
+        },
+      });
+    }
 
-    const b = await cenario();
-    await orq.orquestrarCadencia(
-      { leadId: b.lead.id, campaignId: b.campanha.id, gatilho: 'ETAPA_CONCLUIDA' },
+    const r = await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'ETAPA_CONCLUIDA' },
       opcoes(new AnalisadorFalso(falha('caiu')))
     );
-    const comFalha = await envios(b.lead.id);
 
-    expect(semIa.map((e) => e.campaignStep?.ordem)).toEqual(
-      comFalha.map((e) => e.campaignStep?.ordem)
+    expect(r?.acaoExecutada).toBe('WAIT');
+    expect(await prisma.notification.count()).toBe(0);
+  });
+
+  // A distincao que importa: com a IA DESLIGADA o motor e o dono do
+  // sistema, nao um substituto de emergencia. O comportamento e o de
+  // antes da Fase 9.
+  it('com a IA DESLIGADA o motor envia normalmente', async () => {
+    const { lead, campanha } = await cenario();
+
+    const r = await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'ETAPA_CONCLUIDA' },
+      opcoes(null)
     );
+
+    expect(r?.acaoExecutada).toBe('SEND_STEP');
+    expect(await envios(lead.id)).toHaveLength(1);
   });
 
   it('a IA desligada nao grava nada em ai_decisions', async () => {

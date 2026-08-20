@@ -11,6 +11,7 @@ import { prisma, Prisma } from '@prospector/database';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 import { eventsBus } from '../lib/events-bus.js';
+import { pedirOrquestracao } from '../lib/pedir-orquestracao.js';
 
 const idSchema = z.object({ id: z.string().uuid() });
 
@@ -314,6 +315,29 @@ export async function rotasConversas(app: FastifyInstance): Promise<void> {
         status: 'EM_CAMPANHA',
       });
       eventsBus.publicar('dashboard.atualizar');
+
+      // ============================================================
+      // PEDE AO ORQUESTRADOR PARA REAVALIAR
+      // ============================================================
+      // Retomar nao e "mande a proxima mensagem" — e "pode continuar".
+      // Entre a intervencao ter nascido e voce libera-la, o lead pode ter
+      // respondido de novo, pedido para parar, ou a campanha pode ter
+      // sido pausada.
+      //
+      // Quem decide o que "continuar" significa AGORA e o orquestrador,
+      // olhando o estado atual. Com a IA desligada o pedido nao faz nada
+      // e o despachante cuida, como sempre fez.
+      //
+      // `await` sem try/catch: `pedirOrquestracao` nunca lanca.
+      await pedirOrquestracao({
+        leadId,
+        campaignId: vinculo.campaign.id,
+        gatilho: 'OPERADOR_LIBEROU',
+        // O evento e "este lead foi liberado nesta campanha". Um
+        // duplo-clique produz um job so.
+        referencia: `${leadId}-${vinculo.campaign.id}-${Date.now()}`,
+        log: request.log,
+      });
 
       return {
         lead: atualizado,

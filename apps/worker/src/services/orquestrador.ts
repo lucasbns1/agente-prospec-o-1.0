@@ -39,6 +39,7 @@
  */
 import { prisma, Prisma } from '@prospector/database';
 import {
+  ACOES_QUE_ENVIAM,
   validarDecisao,
   proximaEtapaEsperada,
   etapaDaOrdem,
@@ -251,6 +252,47 @@ async function executar(
 // A TRILHA
 // -----------------------------------------------------------------------------
 
+/**
+ * O que a IA estava vendo, em forma compacta.
+ *
+ * ============================================================
+ * RESUMO, E NAO O PROMPT INTEIRO
+ * ============================================================
+ * O texto da conversa ja vive em `messages`. Copia-lo para
+ * `ai_decisions` encheria o banco com o mesmo conteudo e espalharia
+ * dados do lead por mais uma tabela — e a pergunta que a trilha precisa
+ * responder nao e "o que o lead escreveu", e sim "qual era o ESTADO
+ * quando ela decidiu".
+ *
+ * Estes campos sao os que mudam a decisao. Se algum parecer errado
+ * depois, o problema esta no contexto, nao no modelo.
+ */
+function resumirContexto(ctx: ContextoCadencia): Record<string, unknown> {
+  return {
+    campanhaStatus: ctx.campanha.status,
+    dentroDaJanela: ctx.campanha.dentroDaJanela,
+    etapaAtual: ctx.posicao.etapaAtualOrdem,
+    statusNaCampanha: ctx.posicao.statusNaCampanha,
+    aguardandoLiberacao: ctx.posicao.aguardandoLiberacao,
+    proximaEsperada: proximaEtapaEsperada(ctx),
+    leadOptOut: ctx.lead.optOut,
+    // Por etapa: o que o banco dizia. E daqui que sai a resposta para
+    // "por que ela achou que a etapa 2 podia sair?".
+    envios: ctx.envios.map((e) => ({
+      ordem: e.ordem,
+      outbound: e.statusOutbound,
+      mensagem: e.statusMensagem,
+    })),
+    totalRespostas: ctx.respostas.length,
+    // A ultima resposta e a que mais pesa na decisao. As anteriores estao
+    // em `messages`, com carimbo de tempo.
+    ultimaResposta: ctx.respostas.at(-1)?.texto?.slice(0, 200) ?? null,
+    categoriaDoMotor: ctx.respostas.at(-1)?.categoriaDoMotor ?? null,
+    tarefasAbertas: ctx.tarefasPendentes.length,
+    segundosDesdeUltimoEnvio: ctx.relogio.segundosDesdeUltimoEnvio,
+  };
+}
+
 async function gravarDecisao(dados: {
   ctx: ContextoCadencia;
   decisaoIa: DecisaoIA | null;
@@ -282,6 +324,7 @@ async function gravarDecisao(dados: {
         erro: dados.erro,
         modelo: dados.modelo,
         latenciaMs: dados.latenciaMs,
+        contextoResumo: resumirContexto(dados.ctx) as Prisma.InputJsonValue,
       },
     });
   } catch (err) {
@@ -355,6 +398,32 @@ export async function orquestrarCadencia(
 
   // --- A IA falhou: fallback deterministico ---
   if (!analise.ok) {
+    // ============================================================
+    // O FALLBACK NAO ENVIA
+    // ============================================================
+    // Quando a IA esta ligada, ela e quem decide. Se ela nao respondeu, o
+    // sistema NAO SABE o que o lead disse — sabe apenas o que o
+    // dicionario achou, que e exatamente a limitacao que motivou ligar a
+    // IA.
+    //
+    // Mandar a proxima mensagem nesse estado e apostar. E uma mensagem
+    // enviada nao volta atras, enquanto um lead esperando meia hora a
+    // mais volta.
+    //
+    // Entao acoes que ENVIAM viram intervencao: a cadencia para, uma
+    // tarefa nasce e voce e avisado. Acoes que apenas silenciam (WAIT,
+    // PAUSE, STOP) passam normalmente — elas nao arriscam nada.
+    //
+    // Com a IA DESLIGADA isto nao se aplica: ali o motor e o dono do
+    // sistema, nao um substituto de emergencia, e o comportamento e o de
+    // antes da Fase 9.
+    const arriscada = ACOES_QUE_ENVIAM.includes(motor.acao);
+    const acaoSegura: AcaoIA = arriscada ? 'CREATE_INTERVENTION' : motor.acao;
+    const motivoSeguro = arriscada
+      ? `A IA nao respondeu (${analise.erro}) e a proxima acao seria ${motor.acao}. ` +
+        'A cadencia parou para voce decidir, em vez de arriscar uma mensagem.'
+      : motor.motivo;
+
     opcoes.log.warn(
       {
         evento: 'AI_ANALYSIS_FAILED',
@@ -368,21 +437,24 @@ export async function orquestrarCadencia(
       'A IA nao respondeu; seguindo com o motor deterministico'
     );
 
-    const resultado = await executar(ctx, motor.acao, null, motor.motivo, null, observarApenas);
+    const resultado = await executar(ctx, acaoSegura, null, motivoSeguro, null, observarApenas);
     await registrarProximaAcao({
       leadId: ctx.lead.id,
       campaignId: ctx.campanha.id,
-      acao: motor.acao,
-      motivo: motor.motivo,
+      acao: acaoSegura,
+      motivo: motivoSeguro,
       estadoIa: 'FALHOU',
     });
     await gravarDecisao({
       ctx,
       decisaoIa: null,
       acaoMotor: motor.acao,
-      acaoExecutada: motor.acao,
-      motivoRejeicao: null,
-      divergiu: false,
+      acaoExecutada: acaoSegura,
+      // Nao e a guarda recusando uma decisao da IA — e o sistema
+      // escolhendo nao arriscar sem ela. Fica registrado para a auditoria
+      // conseguir separar as duas coisas.
+      motivoRejeicao: arriscada ? 'FALLBACK_NAO_ENVIA' : null,
+      divergiu: arriscada,
       fallback: true,
       erro: analise.erro,
       modelo: analise.modelo,
@@ -393,11 +465,11 @@ export async function orquestrarCadencia(
       modo,
       decisaoIa: null,
       acaoMotor: motor.acao,
-      acaoExecutada: motor.acao,
-      divergiu: false,
+      acaoExecutada: acaoSegura,
+      divergiu: arriscada,
       fallback: true,
       resultado,
-      detalhe: `IA indisponivel (${analise.erro}); motor decidiu: ${motor.motivo}`,
+      detalhe: motivoSeguro,
     };
   }
 

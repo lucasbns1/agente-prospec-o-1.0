@@ -152,6 +152,22 @@ export interface ContextoCadencia {
    */
   conversa: LinhaConversa[];
 
+  /**
+   * O que ainda esta na sua mao.
+   *
+   * ============================================================
+   * POR QUE A IA PRECISA SABER DISSO
+   * ============================================================
+   * Sem esta lista, o modelo pode pedir intervencao para um lead que ja
+   * tem uma tarefa aberta esperando exatamente por isso — e voce recebe
+   * o mesmo pedido duas vezes com palavras diferentes.
+   *
+   * `aguardandoLiberacao` diz que a cadencia esta congelada;
+   * `tarefasPendentes` diz POR QUE, e o que voce ja foi convidado a
+   * fazer a respeito.
+   */
+  tarefasPendentes: { tipo: string; titulo: string; criadaEm: string }[];
+
   /** As regras configuradas para a etapa atual. */
   regras: { categoria: string; acao: string }[];
 

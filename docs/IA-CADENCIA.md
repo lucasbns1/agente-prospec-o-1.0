@@ -111,13 +111,25 @@ a hora" — uma pergunta de aritmética.
 
 A IA é consultada quando algo **acontece**:
 
-| Gatilho | Onde |
+| Gatilho | Onde dispara |
 |---|---|
 | `MENSAGEM_RECEBIDA` | `inbound.ts`, antes de `aplicarEfeitos` |
 | `ETAPA_CONCLUIDA` | `outbound.ts`, depois do status persistido |
-| `ACK_FINAL` | quando chega ENTREGUE/LIDA |
-| `OPERADOR_LIBEROU` | liberação manual no quadro |
-| `ENVIO_FALHOU` | falha real de envio |
+| `ACK_FINAL` | `inbound.ts`, no ACK ENTREGUE ou LIDA |
+| `ENVIO_FALHOU` | `outbound.ts` (transporte) e `inbound.ts` (ACK de falha) |
+| `OPERADOR_LIBEROU` | API enfileira → worker `orquestracao.ts` consome |
+
+`ACK_FINAL` só dispara em **ENTREGUE** e **LIDA**. `ENVIADA` fica de
+fora: ela chega segundos depois do envio, e a decisão de "o que vem
+agora" já foi tomada em `ETAPA_CONCLUIDA` — disparar ali dobraria as
+chamadas ao modelo para a mesma resposta.
+
+`OPERADOR_LIBEROU` atravessa processos: a liberação acontece na API e o
+orquestrador vive no worker. A ponte é a fila `advance_campaign`, que
+existia desde a Fase 1 sem consumidor. Se o Redis estiver fora, o pedido
+se perde — e tudo bem: o destravamento já mudou o banco, e a varredura do
+despachante encontra o lead livre. O gatilho é o caminho **rápido**, não
+o único.
 
 Entre eventos, quem conta o tempo é o `scheduledAt` no banco e o poller —
 como sempre foi.
@@ -173,15 +185,28 @@ uma ação manual sua.
 
 ## Quando o Gemini falha
 
-Timeout, JSON inválido, resposta vazia, API fora do ar, chave errada: em
-todos os casos o motor determinístico (`decidirSemIA`) assume e a cadência
-continua. Fica registrado:
+Timeout, JSON inválido, resposta vazia, API fora do ar, chave errada: o
+motor determinístico assume — **mas não envia**.
 
-- no log, como `AI_ANALYSIS_FAILED` (com modelo, latência, erro — **nunca
-  a chave**);
-- em `ai_decisions`, com `fallback = true`.
+| O que o motor decidiria | O que acontece |
+|---|---|
+| `SEND_STEP`, `RETRY_SEND`, `RESUME`, `ADVANCE_STEP` | vira `CREATE_INTERVENTION`: a cadência para e você é avisado |
+| `WAIT`, `PAUSE`, `STOP_CAMPAIGN`, `NOTIFY_OPERATOR` | executa normalmente |
 
-Uma campanha não para porque um modelo remoto ficou indisponível.
+**Por quê:** com a IA ligada, ela é quem decide. Se ela não respondeu, o
+sistema não sabe o que o lead disse — sabe só o que o dicionário achou,
+que é exatamente a limitação que motivou ligá-la. Mandar a próxima
+mensagem nesse estado é apostar, e mensagem enviada não volta atrás. Um
+lead esperando meia hora a mais volta.
+
+Isso vale **só quando a IA está ligada e falhou**. Com `GEMINI_ENABLED=false`
+o motor é o dono do sistema, não um substituto de emergência, e o
+comportamento é o de antes da Fase 9.
+
+Fica registrado no log como `AI_ANALYSIS_FAILED` (com modelo, latência e
+erro — **nunca a chave**) e em `ai_decisions` com `fallback = true` e
+`motivo_rejeicao = FALLBACK_NAO_ENVIA`, que distingue "a guarda recusou a
+IA" de "o sistema não arriscou sem ela".
 
 ## A chave
 

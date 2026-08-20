@@ -53,8 +53,14 @@ export interface ResultadoValidacao {
   explicacao: string;
 }
 
-/** As acoes que resultam em mensagem saindo para o lead. */
-const ACOES_QUE_ENVIAM: readonly AcaoIA[] = [
+/**
+ * As acoes que resultam em mensagem saindo para o lead.
+ *
+ * Exportada porque o orquestrador precisa da MESMA lista para decidir se
+ * o fallback pode agir. Duas listas separadas divergiriam, e a divergencia
+ * apareceria como uma mensagem saindo quando nao devia.
+ */
+export const ACOES_QUE_ENVIAM: readonly AcaoIA[] = [
   'SEND_STEP',
   'ADVANCE_STEP',
   'RETRY_SEND',

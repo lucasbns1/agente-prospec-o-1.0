@@ -1444,6 +1444,17 @@ model AiDecision {
   modelo     String?
   latenciaMs Int?    @map("latencia_ms")
 
+  /// O RESUMO do que a IA estava vendo quando decidiu.
+  ///
+  /// Sem isto a trilha responde "decidiu SEND_STEP na etapa 2", mas nao
+  /// "com base em que". Quando uma decisao parecer errada, a primeira
+  /// pergunta e sempre essa.
+  ///
+  /// Resumo, e nao o prompt inteiro: o texto da conversa ja vive em
+  /// `messages`, e duplica-lo aqui encheria o banco com o mesmo conteudo
+  /// e espalharia dados do lead por mais uma tabela.
+  contextoResumo Json? @map("contexto_resumo")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)

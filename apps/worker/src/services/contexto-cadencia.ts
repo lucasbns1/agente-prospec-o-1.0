@@ -223,6 +223,17 @@ export async function montarContexto(params: {
       confiancaDoMotor: m.confianca ?? 0,
     }));
 
+  // --- O que ainda esta na sua mao ---
+  //
+  // Sem isto a IA pediria intervencao para um lead que ja tem tarefa
+  // aberta esperando por exatamente aquilo.
+  const tarefas = await prisma.task.findMany({
+    where: { leadId: params.leadId, status: { in: ['ABERTA', 'EM_ANDAMENTO'] } },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+    select: { tipo: true, titulo: true, createdAt: true },
+  });
+
   // --- As regras da etapa atual ---
   const regras = leadCampaign?.etapaAtualId
     ? await prisma.campaignStepRule.findMany({
@@ -289,6 +300,11 @@ export async function montarContexto(params: {
       envios,
       respostas,
       conversa,
+      tarefasPendentes: tarefas.map((t) => ({
+        tipo: t.tipo,
+        titulo: t.titulo,
+        criadaEm: t.createdAt.toISOString(),
+      })),
       regras: regras.map((r) => ({ categoria: r.categoria, acao: r.acao })),
       relogio: {
         agora: agora.toISOString(),

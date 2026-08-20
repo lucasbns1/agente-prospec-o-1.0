@@ -43,6 +43,7 @@ function contexto(over: Partial<ContextoCadencia> = {}): ContextoCadencia {
     envios: [],
     respostas: [],
     conversa: [],
+    tarefasPendentes: [],
     regras: [],
     relogio: { agora: '2026-08-19T14:00:00.000Z', segundosDesdeUltimoEnvio: null },
     ...over,

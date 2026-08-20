@@ -705,7 +705,7 @@ export async function processarConfirmacaoEntrega(dados: {
 }): Promise<{ aplicado: boolean; motivo: string; estado?: string }> {
   const mensagem = await prisma.message.findUnique({
     where: { whatsappMessageId: dados.providerMessageId },
-    select: { id: true, leadId: true, status: true, simulada: true },
+    select: { id: true, leadId: true, status: true, simulada: true, campaignId: true },
   });
 
   if (!mensagem) {
@@ -752,6 +752,35 @@ export async function processarConfirmacaoEntrega(dados: {
     leadId: mensagem.leadId,
     estado: veredicto.novoEstado,
   });
+
+  // ============================================================
+  // GATILHO DA IA — SO NO ACK TERMINAL
+  // ============================================================
+  // ENTREGUE e LIDA sao os dois estados que significam "chegou". Sao
+  // eles que autorizam a cadencia a pensar na proxima etapa: antes
+  // disso, o que existe e uma mensagem que saiu daqui, nao uma que
+  // chegou la.
+  //
+  // ENVIADA fica DE FORA de proposito. Ela chega segundos depois do
+  // envio, e a decisao de "o que vem agora" ja foi tomada no gatilho
+  // ETAPA_CONCLUIDA. Disparar aqui tambem dobraria as chamadas ao
+  // modelo para responder exatamente a mesma coisa.
+  //
+  // FALHOU tem gatilho proprio: la a pergunta e outra — reenviar,
+  // pausar ou chamar voce.
+  if (veredicto.novoEstado === 'ENTREGUE' || veredicto.novoEstado === 'LIDA') {
+    await dispararGatilho({
+      leadId: mensagem.leadId,
+      campaignId: mensagem.campaignId,
+      gatilho: 'ACK_FINAL',
+    });
+  } else if (veredicto.novoEstado === 'FALHOU') {
+    await dispararGatilho({
+      leadId: mensagem.leadId,
+      campaignId: mensagem.campaignId,
+      gatilho: 'ENVIO_FALHOU',
+    });
+  }
 
   return {
     aplicado: true,

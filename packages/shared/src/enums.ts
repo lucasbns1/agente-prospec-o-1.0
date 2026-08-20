@@ -188,6 +188,20 @@ export const QUEUES = {
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
+/**
+ * Gatilhos que a API pode pedir ao orquestrador do worker.
+ *
+ * Vive aqui, e nao no dominio, porque quem precisa concordar sobre estes
+ * nomes sao os dois APPS — e eles nao se importam. `@prospector/shared` e
+ * o unico lugar que os dois alcancam.
+ *
+ * A lista e menor que a de `GatilhoCadencia`: a API so sabe de coisas que
+ * VOCE faz. Os outros gatilhos (mensagem recebida, etapa concluida, ACK,
+ * falha) nascem dentro do proprio worker.
+ */
+export const GATILHOS_ORQUESTRACAO = ['OPERADOR_LIBEROU'] as const;
+export type GatilhoOrquestracao = (typeof GATILHOS_ORQUESTRACAO)[number];
+
 /** Variaveis aceitas nos templates de mensagem. */
 export const TEMPLATE_VARIAVEIS = [
   'primeiro_nome',

@@ -1,0 +1,12 @@
+-- =============================================================================
+-- O CONTEXTO USADO, GRAVADO JUNTO COM A DECISAO
+--
+-- Sem isto, a trilha respondia "a IA decidiu SEND_STEP na etapa 2" — mas
+-- nao "com base em que". Quando a decisao parecer errada, a primeira
+-- pergunta e sempre: o que ela estava vendo?
+--
+-- Guardamos o RESUMO, nao o prompt inteiro: o texto completo da conversa
+-- ja vive em `messages`, e duplica-lo aqui encheria o banco com o mesmo
+-- conteudo e espalharia dados do lead por mais uma tabela.
+-- =============================================================================
+ALTER TABLE "ai_decisions" ADD COLUMN "contexto_resumo" JSONB;
