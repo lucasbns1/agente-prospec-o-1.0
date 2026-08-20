@@ -26,6 +26,7 @@
     "db:reset": "pnpm --filter @prospector/database reset",
     "reset:fabrica": "tsx scripts/reset-fabrica.ts",
     "diagnostico": "tsx scripts/diagnostico-lead.ts",
+    "ia:testar": "tsx scripts/testar-gemini.ts",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
