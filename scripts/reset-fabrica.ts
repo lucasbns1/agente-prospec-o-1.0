@@ -59,6 +59,10 @@ function etapasDeLimpeza(
   prisma: Prisma
 ): Array<{ nome: string; apagar: () => Promise<{ count: number }> }> {
   return [
+    // Antes de tudo o que tem FK para lead/campanha. A trilha da IA
+    // precisa ir junto: sem isto, o reset deixaria as decisoes da rodada
+    // anterior no banco e a tela da IA misturaria dois testes.
+    { nome: 'decisões da IA', apagar: () => prisma.aiDecision.deleteMany() },
     { nome: 'contatos desconhecidos', apagar: () => prisma.unknownContact.deleteMany() },
     { nome: 'fila de envio', apagar: () => prisma.outboundMessage.deleteMany() },
     { nome: 'mensagens', apagar: () => prisma.message.deleteMany() },
