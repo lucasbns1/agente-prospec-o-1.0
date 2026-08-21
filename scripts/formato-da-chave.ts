@@ -1,59 +1,48 @@
 /**
- * O que da para saber sobre uma chave sem olhar para ela.
+ * Os erros de copiar-e-colar que estragam uma GEMINI_API_KEY.
  *
  * ============================================================
- * POR QUE ISTO EXISTE
+ * O QUE ESTA FUNCAO APRENDEU A NAO FAZER
  * ============================================================
- * "API key not valid" e a resposta do Google, e ela nao distingue chave
- * revogada de chave que nunca foi uma chave. Uma `GEMINI_API_KEY` com
- * 104 caracteres nao pode ser uma chave do AI Studio — elas tem 39 e
- * comecam com `AIza`. Da para dizer isso ANTES de gastar a chamada, e sem
- * a chave aparecer em lugar nenhum.
+ * A primeira versao disto conferia o TAMANHO da chave (39 caracteres) e
+ * o PREFIXO (`AIza`). As duas regras acusaram de errada, em dias
+ * seguidos, a mesma chave — uma chave recem-criada no AI Studio que
+ * autenticava sem problema nenhum: veio com 53 caracteres e sem aquele
+ * prefixo.
+ *
+ * A licao nao e "ajustar os numeros". E que o formato das credenciais do
+ * Google e problema do Google: ele muda quando quiser, sem avisar, e
+ * qualquer regra escrita aqui envelhece sozinha. Um diagnostico que
+ * envelhece nao fica so inutil — ele passa a mandar a pessoa trocar o que
+ * esta funcionando, que e o pior conselho possivel.
+ *
+ * Entao sobrou o que NAO depende do Google: os erros de digitacao e de
+ * colagem, que sao nossos e nao mudam. Aspas do .env, o nome da variavel
+ * grudado no valor, espaco no meio, a chave colada duas vezes, e as duas
+ * credenciais que as pessoas confundem com API key. Todos produzem o
+ * mesmo "API key not valid" generico, e nenhum deles precisa saber quanto
+ * mede uma chave.
+ *
+ * Quem decide se a chave vale e o Google. Isto aqui so tira do caminho as
+ * chances de a pergunta nem chegar la.
  *
  * ============================================================
- * A REGRA DA CASA CONTINUA VALENDO
+ * A REGRA DA CASA
  * ============================================================
- * Nada aqui devolve a chave, nem pedaco dela. Todo retorno e booleano ou
- * numero. O que sai na tela e "comeca com AIza: nao", nunca o que ela
- * comeca de verdade — porque terminal vira print, e print vira grupo de
- * WhatsApp.
+ * Nada aqui devolve a chave, nem pedaco dela — so booleanos, numeros e
+ * frases fixas. Terminal vira print, e print vira grupo de WhatsApp.
  *
- * Esta funcao e PURA e sem I/O: recebe o texto, devolve o diagnostico.
- * Por isso da para testa-la de verdade, com chaves fabricadas.
+ * Funcao PURA, sem I/O: recebe o texto, devolve o diagnostico. Por isso
+ * da para testa-la com chaves fabricadas.
  */
-
-/**
- * Faixa de tamanho aceitavel para uma chave do AI Studio.
- *
- * ============================================================
- * POR QUE UMA FAIXA, E NAO O NUMERO 39
- * ============================================================
- * A primeira versao disto exigia exatamente 39 caracteres, que era o
- * tamanho das chaves antigas. Uma chave nova, recem-criada e VALIDA, veio
- * com 53 — e a checagem teria dito ao dono que a chave dele estava
- * errada, no exato momento em que ela passou a funcionar.
- *
- * Um diagnostico que acusa o que esta certo e pior que nenhum: manda a
- * pessoa desfazer o que deu certo. Entao a regra ficou frouxa de
- * proposito. O que realmente separa chave de nao-chave e o prefixo
- * `AIza`; o tamanho so serve para pegar coisa absurda, como um comando de
- * PowerShell inteiro colado no lugar da chave.
- */
-export const TAMANHO_MINIMO = 30;
-export const TAMANHO_MAXIMO = 80;
-
-/** Como toda chave do AI Studio comeca. */
-const PREFIXO_AI_STUDIO = 'AIza';
 
 export interface FormatoDaChave {
-  /** Tamanho depois de tirar espaco das pontas. */
+  /** Tamanho depois de tirar espaco das pontas. Informativo, nunca julgado. */
   comprimento: number;
-  /** Tem cara de chave do AI Studio: prefixo e tamanho certos. */
-  pareceAiStudio: boolean;
   /**
-   * O que esta errado, em portugues, pronto para imprimir. Vazio quando
-   * o formato esta plausivel — o que NAO garante que a chave valha; so o
-   * Google sabe disso.
+   * O que esta comprovadamente errado, em portugues, pronto para
+   * imprimir. Vazio quer dizer "nao encontrei erro de colagem" — e NAO
+   * quer dizer que a chave vale. So o Google sabe disso.
    */
   problemas: string[];
 }
@@ -63,9 +52,6 @@ export function conferirFormatoDaChave(bruta: string): FormatoDaChave {
   const problemas: string[] = [];
 
   // --- Coisas que vieram junto por engano ---
-  //
-  // Sao os erros de copiar e colar, e sao os mais comuns. Cada um deles
-  // produz exatamente o mesmo "API key not valid" do Google.
   if (/^["']|["']$/.test(chave)) {
     problemas.push('esta entre aspas — tire as aspas do .env');
   }
@@ -76,6 +62,13 @@ export function conferirFormatoDaChave(bruta: string): FormatoDaChave {
     problemas.push('tem espaco ou quebra de linha no meio — deve ser uma linha unica');
   }
 
+  // Um comando inteiro no lugar da chave. Ja aconteceu: um `Select-String`
+  // de PowerShell colado dentro do .env, com 104 caracteres, que o script
+  // mandou obedientemente para o Google.
+  if (/[|<>;]|\$_|\bForEach-Object\b|\bSelect-String\b/.test(chave)) {
+    problemas.push('parece um comando de terminal, nao uma chave — cole so a chave');
+  }
+
   // --- Coisas que sao outra credencial ---
   if (chave.startsWith('ya29.')) {
     problemas.push('isto e um token OAuth do Google, nao uma API key do AI Studio');
@@ -84,30 +77,25 @@ export function conferirFormatoDaChave(bruta: string): FormatoDaChave {
     problemas.push('isto e um JSON de conta de servico, nao uma API key');
   }
 
-  // Duas ocorrencias do prefixo = a chave foi colada duas vezes. Explica
-  // um tamanho perto do dobro sem nenhum outro sintoma.
-  const ocorrencias = chave.split(PREFIXO_AI_STUDIO).length - 1;
-  if (ocorrencias > 1) {
-    problemas.push(`o prefixo "${PREFIXO_AI_STUDIO}" aparece ${ocorrencias}x — a chave foi colada mais de uma vez`);
+  // A mesma chave colada duas vezes seguidas. Detectado pela repeticao em
+  // si, e nao por um prefixo conhecido — o prefixo e justamente a parte
+  // que ja errou duas vezes aqui.
+  //
+  // A exigencia de VARIEDADE na metade nao e detalhe: sem ela, uma chave
+  // formada por poucos caracteres distintos ("zzzz...") tem as duas
+  // metades iguais por acidente e seria acusada. Foi o proprio teste
+  // desta funcao que pegou isso — que e para o que ele serve.
+  const meio = Math.floor(chave.length / 2);
+  const primeiraMetade = chave.slice(0, meio);
+  const variedade = new Set(primeiraMetade).size;
+  if (
+    chave.length >= 20 &&
+    chave.length % 2 === 0 &&
+    variedade >= 10 &&
+    primeiraMetade === chave.slice(meio)
+  ) {
+    problemas.push('o valor e a mesma coisa repetida duas vezes — cole a chave uma vez so');
   }
 
-  // --- A forma em si ---
-  const temPrefixo = chave.startsWith(PREFIXO_AI_STUDIO);
-  const temTamanho = chave.length >= TAMANHO_MINIMO && chave.length <= TAMANHO_MAXIMO;
-
-  if (!temPrefixo && ocorrencias === 0) {
-    problemas.push(`nao comeca com "${PREFIXO_AI_STUDIO}" — toda chave do AI Studio comeca`);
-  }
-  if (!temTamanho) {
-    problemas.push(
-      `tem ${chave.length} caracteres, fora da faixa esperada ` +
-        `(${TAMANHO_MINIMO} a ${TAMANHO_MAXIMO})`
-    );
-  }
-
-  return {
-    comprimento: chave.length,
-    pareceAiStudio: temPrefixo && temTamanho && ocorrencias === 1,
-    problemas,
-  };
+  return { comprimento: chave.length, problemas };
 }

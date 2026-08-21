@@ -52,6 +52,7 @@ async function main(): Promise<void> {
   const temChave = Boolean(process.env.GEMINI_API_KEY?.trim());
   const modelo = process.env.GEMINI_MODEL ?? 'gemini-3.6-flash';
   const sombra = process.env.AI_ANALYSIS_ONLY?.trim().toLowerCase() !== 'false';
+  const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS) || 20_000;
 
   console.log(`GEMINI_ENABLED    : ${ligada ? 'true' : 'false'}`);
   // O tamanho basta para distinguir "vazia" de "preenchida" sem imprimir
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   );
   console.log(`GEMINI_MODEL      : ${modelo}`);
   console.log(`AI_ANALYSIS_ONLY  : ${sombra ? 'true (modo sombra)' : 'false (IA no comando)'}`);
+  console.log(`GEMINI_TIMEOUT_MS : ${timeoutMs}`);
   console.log('');
 
   // O Google responde "API key not valid" para chave revogada e para
@@ -69,11 +71,11 @@ async function main(): Promise<void> {
   if (temChave) {
     const formato = conferirFormatoDaChave(process.env.GEMINI_API_KEY!);
     if (formato.problemas.length > 0) {
-      console.log('A CHAVE NAO TEM O FORMATO DE UMA API KEY DO AI STUDIO:');
+      console.log('ATENCAO — a chave parece ter vindo com algo grudado:');
       for (const p of formato.problemas) console.log(`  - ${p}`);
       console.log('');
-      console.log('A chamada vai ser feita mesmo assim, para voce ver a resposta');
-      console.log('do Google. Mas o mais provavel e que ela seja recusada.\n');
+      console.log('A chamada vai ser feita assim mesmo, para voce ver a resposta');
+      console.log('do Google.\n');
     }
   }
 
@@ -94,7 +96,7 @@ async function main(): Promise<void> {
     GEMINI_ENABLED: true,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     GEMINI_MODEL: modelo,
-    GEMINI_TIMEOUT_MS: Number(process.env.GEMINI_TIMEOUT_MS) || 8000,
+    GEMINI_TIMEOUT_MS: timeoutMs,
   });
 
   if (!analisador) {
@@ -134,19 +136,22 @@ async function main(): Promise<void> {
       console.log('nao serviu: resposta vazia ou fora do formato combinado.');
       console.log('Costuma ser modelo trocado ou limite de token.\n');
       console.log(`Confira GEMINI_MODEL (esta "${modelo}").\n`);
+    } else if (r.erro.startsWith('Tempo esgotado')) {
+      // O prazo e NOSSO, nao do Google. Dizer "chave invalida" aqui seria
+      // repetir o erro de sempre: a chamada pode estar perfeita e so
+      // lenta. Os modelos que "pensam" antes de responder passam bem de
+      // 8 segundos na primeira chamada.
+      console.log('O prazo estourou do NOSSO lado — nada indica problema na chave.');
+      console.log(`O limite atual e ${timeoutMs}ms.\n`);
+      console.log('Ponha um valor maior no .env e rode de novo:');
+      console.log('  GEMINI_TIMEOUT_MS=30000\n');
+      console.log('Se com 30s continuar estourando, ai sim e rede ou proxy.\n');
     } else {
       const formato = conferirFormatoDaChave(process.env.GEMINI_API_KEY ?? '');
       if (formato.problemas.length > 0) {
-        // Nao repete a lista: ela ja saiu la em cima. Repete a conclusao,
-        // porque e ela que responde "e agora?".
-        console.log('Sua chave nao tem o formato de uma API key do AI Studio');
-        console.log('(os motivos estao logo no comeco desta saida).');
-        console.log('Pegue uma em https://aistudio.google.com/apikey — ela comeca');
-        console.log('com "AIza" e vem numa linha unica, sem aspas.\n');
-        console.log('IMPORTANTE: mesmo com isto falhando, a cadencia funciona.');
-        console.log('O motor deterministico assume e nada para.\n');
-        process.exitCode = 1;
-        return;
+        // Nao repete a lista: ela ja saiu la em cima.
+        console.log('Comece pelo aviso do inicio desta saida: ha algo grudado');
+        console.log('na chave dentro do .env. Corrija e rode de novo.\n');
       }
       console.log('O que costuma causar isso:');
       console.log('  - chave invalida ou revogada     -> gere outra em aistudio.google.com/apikey');

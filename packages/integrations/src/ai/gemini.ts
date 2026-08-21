@@ -40,7 +40,7 @@ export interface OpcoesGemini {
   apiKey: string;
   /** Ex: "gemini-3.6-flash". */
   modelo: string;
-  /** Prazo total da chamada. Padrao 8000 ms. */
+  /** Prazo total da chamada. Padrao 20000 ms. */
   timeoutMs?: number;
 }
 
@@ -87,9 +87,15 @@ const SCHEMA_RESPOSTA = {
  *
  * A SDK aceita `abortSignal`, mas nao ha garantia de que toda falha de
  * rede respeite o sinal em tempo habil. O `Promise.race` e o prazo que
- * de fato vale: passou de 8 segundos, o orquestrador segue com o motor
+ * de fato vale: estourou, o orquestrador segue com o motor
  * deterministico. Uma cadencia nao pode parar porque um modelo remoto
  * ficou lento.
+ *
+ * O padrao subiu de 8s para 20s quando o `gemini-3.6-flash` entrou: os
+ * modelos que "pensam" antes de responder passam de 8 segundos com
+ * facilidade, e a primeira chamada do processo ainda paga o handshake.
+ * Um prazo curto demais nao protege nada — so garante que a IA nunca
+ * chegue a opinar.
  */
 async function comPrazo<T>(promessa: Promise<T>, ms: number): Promise<T> {
   let id: NodeJS.Timeout | undefined;
@@ -115,7 +121,7 @@ export class AnalisadorGemini implements AnalisadorDeCadencia {
   constructor(opcoes: OpcoesGemini) {
     this.modelo = opcoes.modelo;
     this.apiKey = opcoes.apiKey;
-    this.timeoutMs = opcoes.timeoutMs ?? 8_000;
+    this.timeoutMs = opcoes.timeoutMs ?? 20_000;
   }
 
   private async obterCliente(): Promise<{

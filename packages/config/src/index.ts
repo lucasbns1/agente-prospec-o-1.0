@@ -97,7 +97,7 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().default('gemini-3.6-flash'),
 
   /** Passou disto, o motor deterministico assume. */
-  GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(8_000),
+  GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(20_000),
 
   /** Teto de decisoes encadeadas numa execucao. Trava contra laco infinito. */
   GEMINI_MAX_STEPS: z.coerce.number().int().min(1).max(10).default(3),

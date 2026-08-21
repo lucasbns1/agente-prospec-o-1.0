@@ -332,15 +332,19 @@ tem a ver com a sua chave:
 | `A chave FUNCIONA — a chamada foi e voltou` | Chegou resposta, mas fora do formato | Confira `GEMINI_MODEL`; costuma ser modelo trocado |
 | `Isto e um DEFEITO DO PROSPECTOR, nao da sua chave` | Quebrou no nosso código, antes da rede | **Não troque a chave.** Mande as linhas de pilha que ele imprime |
 
-Antes de gastar a chamada, o script também confere o **formato** da chave —
-sem imprimir nada do conteúdo dela. Toda chave do AI Studio começa com
-**`AIza`**; o tamanho varia conforme a época em que ela foi criada (as
-antigas têm 39 caracteres, as novas passam de 50), então a checagem só
-reclama de coisa absurda. Se a sua não tiver essa forma, ele
-diz o motivo: aspas no `.env`, o `GEMINI_API_KEY=` colado junto, a chave
-colada duas vezes, um token OAuth (`ya29.…`) ou um JSON de conta de
-serviço no lugar da API key. Todos esses produzem o mesmo
-`API key not valid` genérico do Google.
+Antes de gastar a chamada, o script confere se a chave veio com algo
+grudado — sem imprimir nada do conteúdo dela: aspas do `.env`, o
+`GEMINI_API_KEY=` colado junto, espaço no meio, a chave colada duas vezes,
+um comando de terminal no lugar da chave, um token OAuth (`ya29.…`) ou um
+JSON de conta de serviço. Todos produzem o mesmo `API key not valid`
+genérico do Google.
+
+Ele **não** julga tamanho nem prefixo, e isso é deliberado: duas versões
+anteriores dessa checagem acusaram de inválida a mesma chave boa — uma
+exigia 39 caracteres (a real tinha 53), outra exigia o prefixo `AIza` (a
+real não tinha). O formato das credenciais é problema do Google e muda sem
+aviso; regra escrita aqui envelhece sozinha e passa a mandar você trocar o
+que está funcionando.
 
 O terceiro caso já aconteceu de verdade: o contexto fabricado do script
 ficou sem um campo que o `ContextoCadencia` havia ganhado, e `montarPrompt`
@@ -357,6 +361,19 @@ lugar. Troque `GEMINI_MODEL` no `.env` pelo nome que ela indicar e rode
 `pnpm ia:testar` de novo.
 
 O padrão do projeto é `gemini-3.6-flash`.
+
+### `Tempo esgotado (Nms)`
+
+Esse prazo é **nosso**, não do Google — a chamada pode estar perfeita e só
+lenta. Modelos que "pensam" antes de responder passam de 8 segundos com
+facilidade, e a primeira chamada do processo ainda paga o handshake. Por
+isso o padrão é `GEMINI_TIMEOUT_MS=20000`.
+
+Se estourar, suba para `30000` e teste de novo. Se com 30s continuar
+estourando, aí sim é rede ou proxy.
+
+Estourar não para a cadência: o motor determinístico assume e o fallback
+não envia nada sozinho — vira intervenção.
 
 ### A IA está ligada mas nada muda no comportamento
 

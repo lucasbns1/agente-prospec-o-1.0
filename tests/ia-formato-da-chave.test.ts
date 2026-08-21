@@ -1,110 +1,99 @@
 /**
- * O checador de formato da GEMINI_API_KEY.
+ * O checador de erros de colagem da GEMINI_API_KEY.
  *
  * ============================================================
- * O QUE ESTES TESTES PROTEGEM
+ * O TESTE MAIS IMPORTANTE DESTE ARQUIVO E O PRIMEIRO
  * ============================================================
- * Duas coisas, e a segunda importa tanto quanto a primeira:
+ * Duas versoes anteriores desta funcao acusaram de invalida uma chave
+ * que funcionava: uma exigia 39 caracteres (a real tinha 53), outra
+ * exigia o prefixo `AIza` (a real nao tinha). Nos dois casos o
+ * diagnostico mandou o dono trocar a credencial certa.
  *
- * 1. Que o diagnostico esteja certo — uma chave boa nao pode ser acusada
- *    de nada, senao a pessoa troca uma chave que funcionava.
- * 2. Que NADA do conteudo da chave saia no diagnostico. Cada mensagem
- *    vai para o terminal, o terminal vira print, e print vira grupo de
- *    WhatsApp. O ultimo teste deste arquivo e so sobre isso.
+ * Por isso o primeiro bloco aqui e uma lista de chaves de formatos
+ * diferentes que TODAS precisam passar limpas. Ele existe para que a
+ * proxima pessoa tentada a "melhorar" a validacao veja a falha antes do
+ * usuario.
+ *
+ * O segundo assunto e o de sempre: nada do conteudo da chave pode sair no
+ * diagnostico. Terminal vira print.
  */
 import { describe, it, expect } from 'vitest';
-import { conferirFormatoDaChave, TAMANHO_MAXIMO } from '../scripts/formato-da-chave.js';
+import { conferirFormatoDaChave } from '../scripts/formato-da-chave.js';
 
-/** Uma chave com a forma antiga: `AIza` + 35 caracteres = 39. */
-const CHAVE_BOA = 'AIza' + 'B'.repeat(35);
+describe('conferirFormatoDaChave — nao acusa chave boa', () => {
+  // Formatos reais e plausiveis, de epocas diferentes do Google.
+  const chavesQueDevemPassar: Array<[string, string]> = [
+    ['formato antigo, 39 caracteres', 'AIza' + 'B'.repeat(35)],
+    ['formato novo, 53 caracteres', 'AIza' + 'C'.repeat(49)],
+    ['sem o prefixo AIza', 'k7Fq' + 'D'.repeat(49)],
+    ['bem curta', 'abc123XYZ'],
+    ['bem longa', 'z'.repeat(140)],
+    ['com hifen e sublinhado', 'AIzaSy-chave_com-simbolos_normais123'],
+  ];
 
-/** Uma chave recem-criada de verdade: 53 caracteres, e valida. */
-const CHAVE_NOVA = 'AIza' + 'C'.repeat(49);
-
-describe('conferirFormatoDaChave', () => {
-  it('nao reclama de uma chave bem formada', () => {
-    const r = conferirFormatoDaChave(CHAVE_BOA);
-
-    expect(r.problemas).toEqual([]);
-    expect(r.pareceAiStudio).toBe(true);
-    expect(r.comprimento).toBe(39);
-  });
-
-  it('nao reclama de uma chave NOVA, de 53 caracteres', () => {
-    // O caso que fez esta regra ser afrouxada. A checagem exigia 39
-    // caracteres exatos e teria acusado de errada uma chave que acabara
-    // de comecar a funcionar. Acusar o que esta certo e pior que nao
-    // checar nada: manda a pessoa desfazer o acerto.
-    const r = conferirFormatoDaChave(CHAVE_NOVA);
-
-    expect(r.comprimento).toBe(53);
-    expect(r.problemas).toEqual([]);
-    expect(r.pareceAiStudio).toBe(true);
-  });
+  for (const [nome, chave] of chavesQueDevemPassar) {
+    it(nome, () => {
+      expect(conferirFormatoDaChave(chave).problemas).toEqual([]);
+    });
+  }
 
   it('ignora espaco nas pontas, que o .env costuma deixar', () => {
-    const r = conferirFormatoDaChave(`  ${CHAVE_BOA}\n`);
+    const r = conferirFormatoDaChave('  AIzaSyChaveNormalDeTeste123456789  \n');
 
     expect(r.problemas).toEqual([]);
-    expect(r.comprimento).toBe(39);
+    expect(r.comprimento).toBe('AIzaSyChaveNormalDeTeste123456789'.length);
+  });
+});
+
+describe('conferirFormatoDaChave — pega erro de colagem', () => {
+  const CHAVE = 'AIzaSyChaveNormalDeTeste123456789';
+
+  it('aspas do .env', () => {
+    expect(conferirFormatoDaChave(`"${CHAVE}"`).problemas.join(' ')).toContain('aspas');
   });
 
-  it('pega a chave entre aspas', () => {
-    const r = conferirFormatoDaChave(`"${CHAVE_BOA}"`);
-
-    expect(r.pareceAiStudio).toBe(false);
-    expect(r.problemas.join(' ')).toContain('aspas');
-  });
-
-  it('pega o "GEMINI_API_KEY=" colado junto', () => {
-    const r = conferirFormatoDaChave(`GEMINI_API_KEY=${CHAVE_BOA}`);
-
+  it('o nome da variavel grudado no valor', () => {
+    const r = conferirFormatoDaChave(`GEMINI_API_KEY=${CHAVE}`);
     expect(r.problemas.join(' ')).toContain('GEMINI_API_KEY=');
   });
 
-  it('pega a chave colada duas vezes', () => {
-    // Este e o caso que explica um tamanho perto do dobro sem nenhum
-    // outro sintoma: prefixo certo, so que duas vezes.
-    const r = conferirFormatoDaChave(CHAVE_BOA + CHAVE_BOA);
-
-    expect(r.pareceAiStudio).toBe(false);
-    expect(r.problemas.join(' ')).toContain('mais de uma vez');
+  it('espaco no meio', () => {
+    const r = conferirFormatoDaChave('AIzaSy chave partida');
+    expect(r.problemas.join(' ')).toContain('espaco');
   });
 
-  it('reconhece um token OAuth como outra credencial', () => {
-    const r = conferirFormatoDaChave('ya29.' + 'x'.repeat(120));
+  it('um comando de PowerShell no lugar da chave', () => {
+    // O caso real: um `Select-String` de 104 caracteres colado no .env,
+    // que o script mandou obedientemente para o Google.
+    const r = conferirFormatoDaChave(
+      'Select-String -Path .env -Pattern "^GEMINI_" | ForEach-Object { $_.Line }'
+    );
+    expect(r.problemas.join(' ')).toContain('comando de terminal');
+  });
 
+  it('a mesma chave colada duas vezes', () => {
+    const r = conferirFormatoDaChave(CHAVE + CHAVE);
+    expect(r.problemas.join(' ')).toContain('repetida duas vezes');
+  });
+
+  it('um token OAuth', () => {
+    const r = conferirFormatoDaChave('ya29.' + 'x'.repeat(120));
     expect(r.problemas.join(' ')).toContain('OAuth');
   });
 
-  it('reconhece um JSON de conta de servico', () => {
+  it('um JSON de conta de servico', () => {
     const r = conferirFormatoDaChave('{"type":"service_account","private_key":"..."}');
-
     expect(r.problemas.join(' ')).toContain('conta de servico');
   });
 
-  it('reclama do tamanho quando ele nao bate', () => {
-    // O caso real que motivou tudo isto: 104 caracteres.
-    const r = conferirFormatoDaChave('A'.repeat(104));
-
-    expect(r.comprimento).toBe(104);
-    expect(r.pareceAiStudio).toBe(false);
-    expect(r.problemas.join(' ')).toContain('104 caracteres');
-    expect(104).toBeGreaterThan(TAMANHO_MAXIMO);
-  });
-
-  it('trata chave vazia sem quebrar', () => {
-    const r = conferirFormatoDaChave('');
-
-    expect(r.comprimento).toBe(0);
-    expect(r.pareceAiStudio).toBe(false);
+  it('chave vazia nao quebra', () => {
     expect(() => conferirFormatoDaChave('')).not.toThrow();
+    expect(conferirFormatoDaChave('').comprimento).toBe(0);
   });
+});
 
-  it('NUNCA devolve pedaco da chave no diagnostico', () => {
-    // A regra da casa: a chave nao vai para o terminal. Um diagnostico
-    // "util demais" que mostrasse os primeiros caracteres seria um vazamento
-    // com aparencia de recurso.
+describe('conferirFormatoDaChave — nao vaza a chave', () => {
+  it('nenhum diagnostico contem pedaco do valor', () => {
     const segredo = 'AIzaSyPALAVRASECRETAxxxxxxxxxxxxxxxxxxxx';
     const variantes = [
       segredo,
@@ -112,6 +101,7 @@ describe('conferirFormatoDaChave', () => {
       `GEMINI_API_KEY=${segredo}`,
       segredo + segredo,
       `ya29.${segredo}`,
+      `Select-String ${segredo} | ForEach-Object { $_ }`,
     ];
 
     for (const v of variantes) {
