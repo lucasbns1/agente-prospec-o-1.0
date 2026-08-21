@@ -40,7 +40,6 @@ function montar(
   const eventos: EventoCanal[] = [];
   const adapter = new WhatsAppWebAdapter({
     provedor,
-    modo: 'dry-run',
     aguardar: async () => {},
     maxTentativasReconexao: 2,
     ...(logger ? { logger } : {}),
@@ -346,39 +345,27 @@ describe('a guarda de envio', () => {
     expect(FASE_PERMITE_ENVIO_REAL).toBe(true);
   });
 
-  it('21. tentar enviar devolve resultado simulado e não toca o provedor', async () => {
+  it('21. com a fase aberta, o envio chega ao provedor', async () => {
     const { adapter, provedor } = montar();
     await adapter.connect();
 
     const r = await adapter.sendMessage('5519999991111', 'Olá!');
 
-    expect(r.simulado).toBe(true);
-    expect(r.whatsappMessageId).toBeNull();
-    // 22. A prova de que nada saiu: o provedor não recebeu nada.
-    expect(provedor.enviadas).toHaveLength(0);
+    // O adapter não conhece campanha nem mensagem — quem avalia essas
+    // duas barreiras é o worker, antes de chegar aqui. Do ponto de vista
+    // do adapter só resta a trava de fase, e ela está aberta.
+    //
+    // Este teste já afirmou o contrário: enquanto existia o modo global,
+    // o adapter lia `process.env` e simulava sozinho. Ler ambiente no
+    // meio do caminho de envio era justamente o defeito.
+    expect(r.simulado).toBe(false);
+    expect(provedor.enviadas).toHaveLength(1);
   });
 
-  it('com a fase aberta E o modo live, o envio chega ao provedor', async () => {
-    const original = process.env.WHATSAPP_MODE;
-    process.env.WHATSAPP_MODE = 'live';
-    try {
-      const { adapter, provedor } = montar();
-      await adapter.connect();
-
-      const r = await adapter.sendMessage('5519999991111', 'Olá!');
-
-      // O caminho de envio real existe e funciona. Antes da Fase 7 este
-      // teste afirmava o contrário — e é essa mudança que a autorização
-      // significa na prática.
-      expect(r.simulado).toBe(false);
-      expect(provedor.enviadas).toHaveLength(1);
-    } finally {
-      if (original === undefined) delete process.env.WHATSAPP_MODE;
-      else process.env.WHATSAPP_MODE = original;
-    }
-  });
-
-  it('o modo global sozinho ainda segura: dry-run simula', async () => {
+  it('o adapter não lê variável de ambiente para decidir envio', async () => {
+    // A garantia da remoção, do lado do adapter: sujar o ambiente com o
+    // nome antigo não pode mudar nada. Se mudar, a trava invisível
+    // voltou.
     const original = process.env.WHATSAPP_MODE;
     process.env.WHATSAPP_MODE = 'dry-run';
     try {
@@ -387,10 +374,8 @@ describe('a guarda de envio', () => {
 
       const r = await adapter.sendMessage('5519999991111', 'Olá!');
 
-      // Abrir a fase não desligou as outras barreiras. Esta é a que você
-      // usa no dia a dia para voltar a ensaiar sem tocar em código.
-      expect(r.simulado).toBe(true);
-      expect(provedor.enviadas).toHaveLength(0);
+      expect(r.simulado).toBe(false);
+      expect(provedor.enviadas).toHaveLength(1);
     } finally {
       if (original === undefined) delete process.env.WHATSAPP_MODE;
       else process.env.WHATSAPP_MODE = original;
@@ -414,26 +399,25 @@ describe('a guarda de envio', () => {
 
   it('acumula todos os motivos, não só o primeiro', () => {
     const v = avaliarGuardaEnvio({
-      modoGlobal: 'dry-run',
       campanhaDryRun: true,
       mensagemDryRun: true,
     });
 
-    // Saber que são quatro barreiras, e não uma, é o que evita alguém
-    // baixar só uma e achar que liberou o envio.
-    // Saber que são TRÊS barreiras levantadas, e não uma, é o que evita
+    // Saber que são DUAS barreiras levantadas, e não uma, é o que evita
     // alguém baixar só uma e achar que liberou o envio.
     expect(v.simular).toBe(true);
-    expect(v.motivos).toEqual([
-      'MODO_GLOBAL',
-      'CAMPANHA_DRY_RUN',
-      'MENSAGEM_DRY_RUN',
-    ]);
+    expect(v.motivos).toEqual(['CAMPANHA_DRY_RUN', 'MENSAGEM_DRY_RUN']);
   });
 
-  it('só envia de verdade com as QUATRO barreiras abertas', () => {
+  it('o motivo do modo global não existe mais', () => {
+    // Ele saiu junto com a variável. Se voltar à lista, voltou a trava
+    // que ninguém conseguia desligar pela tela.
+    const v = avaliarGuardaEnvio({ campanhaDryRun: true, mensagemDryRun: true });
+    expect(v.motivos).not.toContain('MODO_GLOBAL');
+  });
+
+  it('só envia de verdade com as duas barreiras abertas', () => {
     const v = avaliarGuardaEnvio({
-      modoGlobal: 'live',
       campanhaDryRun: false,
       mensagemDryRun: false,
     });
@@ -443,12 +427,11 @@ describe('a guarda de envio', () => {
   });
 
   it('uma barreira sozinha basta para simular', () => {
-    // A lógica é "E" para enviar e "OU" para simular. Um typo no .env
-    // não pode virar 80 mensagens disparadas.
+    // A lógica é "E" para enviar e "OU" para simular. Continua assim
+    // depois da remoção — o que mudou é quantas barreiras existem.
     const casos = [
-      { modoGlobal: 'dry-run', campanhaDryRun: false, mensagemDryRun: false },
-      { modoGlobal: 'live', campanhaDryRun: true, mensagemDryRun: false },
-      { modoGlobal: 'live', campanhaDryRun: false, mensagemDryRun: true },
+      { campanhaDryRun: true, mensagemDryRun: false },
+      { campanhaDryRun: false, mensagemDryRun: true },
     ];
     for (const caso of casos) {
       expect(avaliarGuardaEnvio(caso).simular).toBe(true);

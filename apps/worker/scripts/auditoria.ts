@@ -88,7 +88,6 @@ if (enviadasReais !== comIdWhatsApp) {
 console.log('');
 console.log('BARREIRAS');
 console.log(linha('FASE_PERMITE_ENVIO_REAL', String(FASE_PERMITE_ENVIO_REAL)));
-console.log(linha('WHATSAPP_MODE', process.env.WHATSAPP_MODE ?? '(nao definido)'));
 console.log(linha('WHATSAPP_CANAL', process.env.WHATSAPP_CANAL ?? '(nao definido)'));
 
 console.log('');

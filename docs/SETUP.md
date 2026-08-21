@@ -93,7 +93,6 @@ SEED_USER_PASSWORD=suaSenhaDeLogin
 
 Confirme que o modo simulação está ligado:
 ```env
-WHATSAPP_MODE=dry-run
 ```
 
 Salve e feche.

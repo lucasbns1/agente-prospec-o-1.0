@@ -6,7 +6,7 @@
  * campanha seria muito pior do que falhar no boot.
  */
 import { describe, expect, it } from 'vitest';
-import { carregarEnv, modoDryRun } from '../packages/config/src/index.js';
+import { carregarEnv } from '../packages/config/src/index.js';
 
 const BASE = {
   DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
@@ -19,7 +19,6 @@ describe('carregarEnv', () => {
 
     expect(env.API_PORT).toBe(3333);
     expect(env.REDIS_PORT).toBe(6379);
-    expect(env.WHATSAPP_MODE).toBe('dry-run');
     expect(env.NODE_ENV).toBe('development');
   });
 
@@ -41,16 +40,18 @@ describe('carregarEnv', () => {
   });
 });
 
-describe('modoDryRun', () => {
-  it('so desliga a simulacao com exatamente "live"', () => {
-    expect(modoDryRun(carregarEnv({ ...BASE, WHATSAPP_MODE: 'live' } as NodeJS.ProcessEnv))).toBe(
-      false
-    );
+describe('o modo global de envio nao existe mais', () => {
+  it('WHATSAPP_MODE nao e mais uma chave de configuracao', () => {
+    // Ela travava o envio do sistema inteiro sem aparecer na interface.
+    // Se voltar ao schema, volta junto a trava invisivel.
+    const env = carregarEnv(BASE as NodeJS.ProcessEnv);
+    expect('WHATSAPP_MODE' in env).toBe(false);
+  });
 
-    for (const v of ['dry-run', 'liv', 'LIVEE', 'true', '']) {
-      expect(
-        modoDryRun(carregarEnv({ ...BASE, WHATSAPP_MODE: v } as NodeJS.ProcessEnv))
-      ).toBe(true);
-    }
+  it('passar WHATSAPP_MODE no ambiente nao muda nada', () => {
+    // Sobrevive nos .env de quem ja tinha o projeto. Tem que ser inerte,
+    // e nao voltar a valer por acidente.
+    const comLixo = carregarEnv({ ...BASE, WHATSAPP_MODE: 'dry-run' } as NodeJS.ProcessEnv);
+    expect('WHATSAPP_MODE' in comLixo).toBe(false);
   });
 });

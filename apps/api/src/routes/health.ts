@@ -5,6 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { checkDatabaseConnection } from '@prospector/database';
 import { getRedis } from '../lib/redis.js';
+import { FASE_PERMITE_ENVIO_REAL } from '@prospector/integrations';
 
 export async function rotasHealth(app: FastifyInstance): Promise<void> {
   app.get('/api/health', async (_request, reply) => {
@@ -30,10 +31,10 @@ export async function rotasHealth(app: FastifyInstance): Promise<void> {
         redis,
       },
       whatsapp: {
-        modo:
-          process.env.WHATSAPP_MODE?.trim().toLowerCase() === 'live'
-            ? 'live'
-            : 'dry-run',
+        // O modo global saiu. O que resta de trava global e a guarda de
+        // fase, no codigo. Simulacao por campanha nao aparece aqui —
+        // ela e por campanha, e este endpoint e do sistema.
+        envioRealPermitido: FASE_PERMITE_ENVIO_REAL,
       },
       em: new Date().toISOString(),
     });

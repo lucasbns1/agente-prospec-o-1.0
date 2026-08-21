@@ -75,36 +75,47 @@ Se o usuário já existir, o seed **não** altera a senha.
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `WHATSAPP_CANAL` | `simulado` | `simulado` não conecta; `whatsapp-web` conecta e recebe |
-| `WHATSAPP_MODE` | `dry-run` | `dry-run` simula, `live` envia de verdade |
 | `WHATSAPP_SESSION_PATH` | `./data/whatsapp` | Onde a sessão fica salva |
 | `CHROME_PATH` | vazio | Caminho do Chrome. **Obrigatório** quando `WHATSAPP_CANAL=whatsapp-web` |
 
-### Sobre o `WHATSAPP_MODE`
+### O `WHATSAPP_MODE` foi removido
 
-**Só o valor exatamente `live` desliga a simulação.** Qualquer outra coisa —
-`liv`, `true`, `1`, vazio, ausente — cai em `dry-run`. Um typo não pode
-virar 76 mensagens disparadas por acidente.
+Existia uma variável que travava o envio do **sistema inteiro**. Ela saiu.
 
-Em `dry-run`, cada envio produz uma linha de log
+O motivo é o defeito que ela causava na prática: era invisível de dentro
+do produto. Você desmarcava a simulação na campanha, reenfileirava, e
+continuava sem sair nada — porque uma linha num arquivo de texto, lida só
+no boot, dizia o contrário. Uma trava que não aparece na tela e não pode
+ser desligada por ela não protege; ela faz o sistema parecer quebrado.
+
+Se a linha ainda estiver no seu `.env`, pode apagar — ela é inerte.
+
+### O que trava o envio hoje
+
+| Barreira | Onde | Quem desliga |
+|---|---|---|
+| `FASE_PERMITE_ENVIO_REAL` | código | um commit |
+| `Campaign.dryRun` | banco | a caixa "simulação" nas configurações |
+| `OutboundMessage.dryRun` | banco | herdada da campanha no enfileiramento |
+
+As três precisam estar baixas. Duas não bastam, e `avaliarGuardaEnvio`
+acumula **todos** os motivos em vez de parar no primeiro — saber que são
+duas levantadas, e não uma, é o que evita alguém baixar uma só e achar
+que liberou.
+
+**O padrão de `Campaign.dryRun` mudou para `false`.** Campanha nova nasce
+enviando; simular passou a ser uma escolha explícita, visível na tela.
+
+Em simulação, cada envio produz uma linha de log
 `SIMULAÇÃO — mensagem seria enviada para <telefone>` e uma mensagem com
 status `SIMULADA` no banco, que **não conta** no limite diário — senão
 testar a campanha queimaria a cota do dia.
 
-### Conectar e enviar são chaves diferentes
+### Conectar e enviar continuam separados
 
-`WHATSAPP_CANAL` decide se o sistema **conecta**; `WHATSAPP_MODE` decide
-se ele **envia**. A combinação `whatsapp-web` + `dry-run` é justamente a
-que permite receber mensagens reais sem enviar nenhuma.
-
-### `WHATSAPP_MODE` não é a única trava
-
-Ele é uma de **quatro** barreiras. Acima de todas está
-`FASE_PERMITE_ENVIO_REAL`, no código, que não depende de configuração
-alguma — mudá-la exige um commit. Ver
-[WHATSAPP.md](WHATSAPP.md) e [FILA.md](FILA.md).
-
-`live` só funciona a partir da Fase 8. Antes disso, o sistema lança um erro
-explícito em vez de simular em silêncio.
+`WHATSAPP_CANAL` decide se o sistema **conecta**. Quem decide se ele
+**envia** é a campanha. Dá para conectar de verdade e receber mensagens
+reais com todas as campanhas em simulação.
 
 ### Sobre a pasta da sessão
 

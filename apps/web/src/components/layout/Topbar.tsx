@@ -9,7 +9,12 @@ import type { StatusConexaoSSE } from '@/hooks/useEvents';
 
 interface StatusWhatsApp {
   status: string;
-  modo: string;
+  /**
+   * Hoje significa uma coisa so: a guarda de fase esta levantada no
+   * codigo, e nenhum caminho envia de verdade. O modo global por
+   * variavel de ambiente foi removido, e simulacao por campanha nao
+   * aparece aqui — esta faixa fala pelo sistema inteiro.
+   */
   dryRun: boolean;
   detalhe: string | null;
   conectado: boolean;
@@ -197,13 +202,15 @@ export function Topbar({
       <div className="flex items-center gap-4">
         <IndicadorWhatsApp status={whatsapp?.status ?? 'DESCONECTADO'} />
 
-        {/* A faixa de dry-run fica sempre visivel enquanto o modo estiver
-            ativo. E a diferenca entre "testei o fluxo" e "mandei mensagem
-            para 76 pessoas sem querer". */}
+        {/* So aparece quando a guarda de FASE esta levantada — ou seja,
+            quando o codigo em si recusa qualquer envio. Nao aparece mais
+            por causa de variavel de ambiente: aquela faixa ficava acesa
+            com a campanha corretamente liberada, e a unica coisa que
+            comunicava era "o sistema esta quebrado". */}
         {whatsapp?.dryRun && (
           <Badge variant="info" title={whatsapp.detalhe ?? undefined}>
             <FlaskConical className="h-3 w-3" aria-hidden="true" />
-            MODO SIMULAÇÃO — nada é enviado
+            ENVIO TRAVADO NO CÓDIGO — nada sai
           </Badge>
         )}
       </div>

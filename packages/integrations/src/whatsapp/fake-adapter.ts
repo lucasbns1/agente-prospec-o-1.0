@@ -6,10 +6,9 @@
  * regras, notificacoes — com o telefone desligado.
  *
  * Este e o adapter PADRAO. O sistema nasce em dry-run de proposito: e
- * preciso um ato deliberado (WHATSAPP_MODE=live no .env) para que
+ * preciso desmarcar a simulacao na campanha para que
  * qualquer mensagem real saia.
  */
-import type { WhatsAppMode } from '@prospector/shared';
 import {
   type WhatsAppAdapter,
   type MensagemRecebida,
@@ -27,9 +26,7 @@ export interface FakeAdapterOptions {
 }
 
 export class FakeWhatsAppAdapter implements WhatsAppAdapter {
-  readonly modo: WhatsAppMode = 'dry-run';
-
-  private status: StatusConexao = { status: 'DESCONECTADO', modo: 'dry-run' };
+  private status: StatusConexao = { status: 'DESCONECTADO' };
   private readonly log: (m: string, d?: Record<string, unknown>) => void;
   private readonly latenciaMs: number;
 
@@ -52,7 +49,6 @@ export class FakeWhatsAppAdapter implements WhatsAppAdapter {
   async connect(): Promise<void> {
     this.setStatus({
       status: 'CONECTADO',
-      modo: 'dry-run',
       detalhe: 'Modo simulacao — nenhuma mensagem real sera enviada',
     });
     this.log('[DRY-RUN] WhatsApp "conectado" em modo simulacao.');
@@ -60,7 +56,7 @@ export class FakeWhatsAppAdapter implements WhatsAppAdapter {
   }
 
   async disconnect(): Promise<void> {
-    this.setStatus({ status: 'DESCONECTADO', modo: 'dry-run' });
+    this.setStatus({ status: 'DESCONECTADO' });
     for (const h of this.disconnectedHandlers) h('Desconectado manualmente');
   }
 

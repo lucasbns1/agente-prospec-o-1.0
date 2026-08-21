@@ -132,8 +132,10 @@ export type TaskStatus = (typeof TASK_STATUS)[number];
 export const TASK_PRIORITY = ['BAIXA', 'MEDIA', 'ALTA', 'URGENTE'] as const;
 export type TaskPriority = (typeof TASK_PRIORITY)[number];
 
-export const WHATSAPP_MODE = ['dry-run', 'live'] as const;
-export type WhatsAppMode = (typeof WHATSAPP_MODE)[number];
+// O modo global de envio (`WHATSAPP_MODE`) foi removido do sistema: ele
+// travava o envio inteiro por variavel de ambiente, sem aparecer na
+// interface. Quem decide simulacao agora e a campanha (`dryRun`), mais a
+// trava de fase em `packages/integrations/src/whatsapp/guarda-envio.ts`.
 
 /**
  * Estados da conexao com o canal.

@@ -12,10 +12,14 @@ FASE_PERMITE_ENVIO_REAL = false
 
 Em `packages/integrations/src/whatsapp/guarda-envio.ts`.
 
-**Por que uma variável de ambiente não bastava.** `WHATSAPP_MODE=dry-run`
-protege enquanto alguém lembrar de conferir o `.env`. Basta um
-`export WHATSAPP_MODE=live` num terminal, um compose com o valor errado
-ou um teste que mexe em `process.env` para a única trava cair.
+**Por que uma variável de ambiente não bastava.** Uma trava no `.env`
+protege enquanto alguém lembrar de conferir o arquivo. Basta um `export`
+num terminal, um compose com o valor errado ou um teste que mexe em
+`process.env` para ela cair.
+
+Foi por isso que o `WHATSAPP_MODE` existiu — e foi por outro motivo que
+ele saiu: além de frágil, era **invisível**. Não aparecia na interface, e
+travava o sistema inteiro sem dizer por quê.
 
 Esta constante não depende de configuração. Ligar o envio exige **editar
 o arquivo** — o que significa um commit, com autor, data e revisão. Não
@@ -25,18 +29,17 @@ Há ainda uma última checagem (`exigirPermissaoDeEnvioReal`) imediatamente
 antes de tocar a biblioteca. Ela **lança** em vez de simular em silêncio:
 simular em silêncio faria você achar que enviou o que nunca saiu.
 
-### As quatro barreiras
+### As três barreiras
 
-| Barreira | Onde |
-|---|---|
-| `FASE_PERMITE_ENVIO_REAL` | código |
-| `WHATSAPP_MODE=live` | `.env` |
-| `Campaign.dryRun = false` | banco |
-| `OutboundMessage.dryRun = false` | banco |
+| Barreira | Onde | Quem desliga |
+|---|---|---|
+| `FASE_PERMITE_ENVIO_REAL` | código | um commit |
+| `Campaign.dryRun = false` | banco | a caixa "simulação" nas configurações |
+| `OutboundMessage.dryRun = false` | banco | herdada da campanha ao enfileirar |
 
-As quatro precisam cair juntas. Três não bastam. `avaliarGuardaEnvio`
+As três precisam cair juntas. Duas não bastam. `avaliarGuardaEnvio`
 acumula **todos** os motivos em vez de parar no primeiro — saber que são
-três barreiras levantadas, e não uma, é o que evita alguém baixar uma só
+duas barreiras levantadas, e não uma, é o que evita alguém baixar uma só
 e achar que liberou.
 
 ---
@@ -47,12 +50,11 @@ Duas chaves independentes:
 
 ```env
 WHATSAPP_CANAL=simulado      # simulado | whatsapp-web   → CONECTA?
-WHATSAPP_MODE=dry-run        # dry-run  | live           → ENVIA?
 ```
 
-A Fase 6A vive exatamente em `whatsapp-web` + `dry-run`: conexão real,
-recebimento real, envio nenhum. Se fossem a mesma chave, provar a
-integração exigiria destravar o envio junto — o oposto do objetivo.
+Quem decide o envio é a campanha, não o ambiente. `whatsapp-web` com
+todas as campanhas em simulação dá conexão real, recebimento real e
+envio nenhum — que era o ponto de ter duas chaves separadas.
 
 | `WHATSAPP_CANAL` | O que acontece |
 |---|---|
@@ -210,7 +212,6 @@ declarada.
 
 ```env
 WHATSAPP_CANAL=whatsapp-web
-WHATSAPP_MODE=dry-run          # continua assim
 CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
 ```
 

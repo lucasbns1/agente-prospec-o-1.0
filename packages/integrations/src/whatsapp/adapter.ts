@@ -13,7 +13,7 @@
  * inteiro. O mesmo isolamento permite trocar por outra tecnologia depois
  * sem reescrever CRM, campanhas e regras.
  */
-import type { WhatsAppStatus, WhatsAppMode } from '@prospector/shared';
+import type { WhatsAppStatus } from '@prospector/shared';
 import type { MensagemEntrada } from './eventos-canal.js';
 
 export interface MensagemRecebida {
@@ -42,7 +42,6 @@ export interface ResultadoEnvio {
 
 export interface StatusConexao {
   status: WhatsAppStatus;
-  modo: WhatsAppMode;
   /** Data URL do QR Code, presente apenas em AGUARDANDO_QR. */
   qr?: string;
   /** Telefone da conta conectada. */
@@ -65,8 +64,6 @@ export interface WhatsAppAdapterEvents {
 }
 
 export interface WhatsAppAdapter extends WhatsAppAdapterEvents {
-  readonly modo: WhatsAppMode;
-
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getStatus(): StatusConexao;

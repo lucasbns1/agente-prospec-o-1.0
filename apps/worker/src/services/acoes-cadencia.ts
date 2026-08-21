@@ -6,7 +6,7 @@
  * ============================================================
  * `SEND_STEP` nao chama o WhatsApp. Ele cria a linha em
  * `outbound_messages` — e dali para frente o caminho e o mesmo de
- * sempre: despachante, fila, worker, quatro barreiras.
+ * sempre: despachante, fila, worker, barreiras de envio.
  *
  * A diferenca importa e nao e estilistica. Se a IA tivesse uma
  * ferramenta que dispara o transporte, uma reexecucao do modelo — por
@@ -121,7 +121,7 @@ export async function solicitarEnvioDeEtapa(params: {
     acao: 'SEND_STEP',
     efetivada: r.enfileirou,
     detalhe: r.enfileirou
-      ? `Etapa ${params.ordem} enfileirada. O envio segue pelas quatro barreiras.`
+      ? `Etapa ${params.ordem} enfileirada. O envio segue pelas barreiras de envio.`
       : `Nao enfileirou: ${r.motivo}${r.detalhe ? ` — ${r.detalhe}` : ''}`,
     ...(r.outboundMessageId ? { outboundMessageId: r.outboundMessageId } : {}),
   };

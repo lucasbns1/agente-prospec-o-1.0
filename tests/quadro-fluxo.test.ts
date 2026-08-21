@@ -336,6 +336,33 @@ describe('reenfileirar depois de pausar', () => {
   });
 
   // ============================================================
+  // O PADRÃO MUDOU: CAMPANHA NOVA NASCE ENVIANDO
+  // ============================================================
+  // Enquanto existia o modo global, `dryRun: true` era o padrão da
+  // campanha porque havia uma segunda rede embaixo. Sem ela, deixar toda
+  // campanha nascer simulada significaria que criar uma campanha e
+  // ativá-la não envia nada — e ninguém entende por quê, porque a tela
+  // não mostra motivo nenhum.
+  //
+  // Simular passou a ser uma escolha explícita, e é ela que aparece
+  // marcada na interface quando está ligada.
+  it('campanha nova nasce fora da simulação', async () => {
+    const campanha = await criarCampanha(1);
+    expect(campanha.dryRun).toBe(false);
+  });
+
+  it('a mensagem herda o estado da campanha, seja qual for', async () => {
+    await criarLead();
+
+    const enviando = await criarCampanha(1);
+    await servico.enfileirarCampanha(enviando.id);
+    const real = await prisma.outboundMessage.findFirstOrThrow({
+      where: { campaignId: enviando.id },
+    });
+    expect(real.dryRun).toBe(false);
+  });
+
+  // ============================================================
   // O BECO SEM SAÍDA QUE ISTO FECHA
   // ============================================================
   // Relatado em uso real, com o print da tela: a campanha aparecia
@@ -349,7 +376,13 @@ describe('reenfileirar depois de pausar', () => {
     await criarLead();
     const campanha = await criarCampanha(1);
 
-    // 1. A campanha nasce em simulação, sempre. A mensagem herda isso.
+    // 1. A campanha entra em simulação — agora explicitamente. O padrão
+    //    de `dryRun` virou `false` quando o modo global foi removido, e
+    //    este teste precisa do estado simulado para ter o que destravar.
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: true },
+    });
     await servico.enfileirarCampanha(campanha.id);
     const antes = await prisma.outboundMessage.findFirstOrThrow({
       where: { campaignId: campanha.id },
@@ -399,6 +432,12 @@ describe('reenfileirar depois de pausar', () => {
   it('uma SIMULADA não vira envio real por reenfileiramento', async () => {
     await criarLead();
     const campanha = await criarCampanha(1);
+    // Simulação explícita: é dela que a mensagem herda o `dryRun` que o
+    // teste depois tenta — e precisa falhar em — reverter.
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: true },
+    });
     await servico.enfileirarCampanha(campanha.id);
 
     await prisma.outboundMessage.updateMany({

@@ -134,7 +134,7 @@ const SETTINGS: Array<{
     chave: 'whatsapp.modo',
     valor: 'dry-run',
     descricao:
-      'dry-run = simula os envios, nada sai de verdade. live = envia via whatsapp-web.js. A variavel WHATSAPP_MODE do .env tem precedencia sobre esta chave.',
+      'dry-run = simula os envios, nada sai de verdade. live = envia via whatsapp-web.js. O modo global por variavel de ambiente foi removido; quem decide simulacao e a campanha.',
     categoria: 'whatsapp',
     sistema: true,
   },

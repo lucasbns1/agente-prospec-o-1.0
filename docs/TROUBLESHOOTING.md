@@ -193,9 +193,12 @@ gravar.
 export const FASE_PERMITE_ENVIO_REAL = false;
 ```
 
-Nem `WHATSAPP_MODE=live` destrava. Isso é deliberado: uma variável de
-ambiente cai com um `export` errado; uma constante no código exige um
-commit. Ver [WHATSAPP.md](WHATSAPP.md).
+Nada no `.env` destrava. Isso é deliberado: uma variável de ambiente cai
+com um `export` errado; uma constante no código exige um commit.
+
+(O `WHATSAPP_MODE`, que travava o envio por variável de ambiente, foi
+removido. Se a linha ainda estiver no seu `.env`, ela é inerte.)
+Ver [WHATSAPP.md](WHATSAPP.md).
 
 ### O canal não conecta / fica em INICIALIZANDO
 

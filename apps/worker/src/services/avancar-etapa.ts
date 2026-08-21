@@ -20,7 +20,7 @@
  * ============================================================
  * Nao envia. Cria uma linha em `outbound_messages` com `scheduledAt`, e
  * o despachante + o worker de outbound decidem o resto — passando pelas
- * quatro barreiras, como qualquer outra mensagem. Nao ha aqui nenhum
+ * barreiras de envio, como qualquer outra mensagem. Nao ha aqui nenhum
  * caminho que alcance o WhatsApp.
  *
  * ============================================================

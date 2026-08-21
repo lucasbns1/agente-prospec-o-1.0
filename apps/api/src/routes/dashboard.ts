@@ -128,10 +128,6 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
           // Sempre desconectado ate a fase de integracao: o adapter real
           // com whatsapp-web.js ainda nao existe.
           status: 'DESCONECTADO',
-          modo:
-            process.env.WHATSAPP_MODE?.trim().toLowerCase() === 'live'
-              ? 'live'
-              : 'dry-run',
         },
       };
     }

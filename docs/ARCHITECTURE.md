@@ -157,7 +157,7 @@ campanhas e regras.
 `resolverModo()` só devolve `live` para o valor exatamente `"live"`.
 Qualquer outra coisa cai em dry-run.
 
-E pedir `WHATSAPP_MODE=live` antes da Fase 8 lança um erro explícito em vez
+E tentar enviar com a guarda de fase levantada lança um erro explícito em vez
 de cair silenciosamente em simulação — porque o usuário acharia que enviou
 mensagens que nunca saíram.
 

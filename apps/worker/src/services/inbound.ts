@@ -157,7 +157,7 @@ async function registrarDesconhecido(
  *
  * NENHUM DELES ENVIA MENSAGEM. Os dois efeitos de envio (`AVANCAR_ETAPA`
  * e `ENVIAR_TEMPLATE`) apenas criam linhas em `outbound_messages` — quem
- * envia e o worker de outbound, depois das quatro barreiras.
+ * envia e o worker de outbound, depois das barreiras de envio.
  */
 async function aplicarEfeitos(
   leadId: string,
@@ -310,7 +310,7 @@ async function aplicarEfeitos(
       // campanha na mão.
       //
       // Continuam SEM ENVIAR: criam a linha agendada e param. As
-      // quatro barreiras seguem entre isto e o WhatsApp.
+      // barreiras de envio seguem entre isto e o WhatsApp.
       // -------------------------------------------------------------
       case 'AVANCAR_ETAPA': {
         if (contexto.iaConduz) break;

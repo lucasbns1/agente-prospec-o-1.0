@@ -13,7 +13,7 @@
  * false`, o metodo devolve um resultado simulado e registra o que TERIA
  * sido enviado. Nao existe caminho por onde ele alcance a rede.
  */
-import type { WhatsAppMode, WhatsAppStatus } from '@prospector/shared';
+import type { WhatsAppStatus } from '@prospector/shared';
 import type {
   WhatsAppAdapter,
   StatusConexao,
@@ -48,7 +48,6 @@ const TIPOS_DE_SISTEMA = new Set([
 
 export interface OpcoesWhatsAppWebAdapter {
   provedor: ProvedorWhatsApp;
-  modo: WhatsAppMode;
   logger?: (mensagem: string, dados?: Record<string, unknown>) => void;
   /** Tentativas de reconexao antes de desistir. Padrao 5. */
   maxTentativasReconexao?: number;
@@ -60,8 +59,6 @@ const espera = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
 export class WhatsAppWebAdapter implements WhatsAppAdapter {
-  readonly modo: WhatsAppMode;
-
   private readonly provedor: ProvedorWhatsApp;
   private readonly log: (m: string, d?: Record<string, unknown>) => void;
   private readonly maxTentativas: number;
@@ -92,7 +89,6 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
 
   constructor(opcoes: OpcoesWhatsAppWebAdapter) {
     this.provedor = opcoes.provedor;
-    this.modo = opcoes.modo;
     this.log = opcoes.logger ?? ((): void => {});
     this.maxTentativas = opcoes.maxTentativasReconexao ?? 5;
     this.aguardar = opcoes.aguardar ?? espera;
@@ -330,7 +326,6 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
   getStatus(): StatusConexao {
     return {
       status: this.status,
-      modo: this.modo,
       ...(this.qrAtual ? { qr: this.qrAtual } : {}),
       ...(this.telefoneConta ? { telefone: this.telefoneConta } : {}),
       ...(this.detalhe ? { detalhe: this.detalhe } : {}),
@@ -363,10 +358,9 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
   // -------------------------------------------------------------- envio
   async sendMessage(telefone: string, texto: string): Promise<ResultadoEnvio> {
     const guarda = avaliarGuardaEnvio({
-      modoGlobal: process.env.WHATSAPP_MODE,
       // O adapter não conhece campanha nem mensagem; quem decide isso é
       // o worker, que já avaliou antes de chegar aqui. Do ponto de vista
-      // do adapter, o que resta é a trava de fase e o modo global.
+      // do adapter, o que resta é a trava de fase.
       campanhaDryRun: false,
       mensagemDryRun: false,
     });

@@ -118,7 +118,6 @@ export interface DashboardResponse {
   campanhaAtiva: CampanhaAtivaResumo | null;
   whatsapp: {
     status: string;
-    modo: string;
   };
 }
 

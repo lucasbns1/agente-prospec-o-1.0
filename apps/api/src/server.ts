@@ -9,6 +9,7 @@ import { config } from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { disconnectPrisma } from '@prospector/database';
+import { FASE_PERMITE_ENVIO_REAL } from '@prospector/integrations';
 import { criarApp } from './app.js';
 import { fecharRedis } from './lib/redis.js';
 
@@ -42,10 +43,11 @@ async function main(): Promise<void> {
   try {
     await app.listen({ port: env.API_PORT, host: env.API_HOST });
 
-    const dryRun = env.WHATSAPP_MODE.trim().toLowerCase() !== 'live';
     app.log.info(
       `API ouvindo em http://${env.API_HOST}:${env.API_PORT}  |  WhatsApp: ${
-        dryRun ? 'DRY-RUN (nada e enviado de verdade)' : 'LIVE'
+        FASE_PERMITE_ENVIO_REAL
+          ? 'envio real liberado no codigo; quem simula agora e a campanha'
+          : 'TRAVADO pela guarda de fase (nada sai)'
       }`
     );
   } catch (err) {

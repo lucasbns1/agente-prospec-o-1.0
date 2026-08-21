@@ -35,7 +35,6 @@ interface StatusCanal {
   envioRealPermitidoNaFase: boolean;
   tentativasReconexao: number;
   atualizadoEm: string;
-  modo: string;
   dryRun: boolean;
   canal: string;
 }

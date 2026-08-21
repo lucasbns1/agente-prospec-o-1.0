@@ -27,7 +27,7 @@ Três estados, no `.env`:
 | `GEMINI_ENABLED` | `AI_ANALYSIS_ONLY` | O que acontece |
 |---|---|---|
 | `false` | (ignorado) | **Desligada.** Sistema idêntico ao de antes da Fase 9. Zero chamadas de rede, zero custo. |
-| `true` | `false` *(padrão)* | **Ativa.** As decisões da IA comandam — sempre filtradas pela guarda e pelas quatro barreiras de envio. |
+| `true` | `false` *(padrão)* | **Ativa.** As decisões da IA comandam — sempre filtradas pela guarda e pelas barreiras de envio. |
 | `true` | `true` | **Sombra.** A IA analisa e recomenda; quem comanda é o motor determinístico. As divergências vão para `ai_decisions`. |
 
 **Ligar o Gemini significa dar o comando a ele.** O modo sombra continua
@@ -252,7 +252,7 @@ dinheiro.
 
 ## O que NÃO mudou
 
-As quatro barreiras de envio (`FASE_PERMITE_ENVIO_REAL` → `WHATSAPP_MODE`
+As barreiras de envio (`FASE_PERMITE_ENVIO_REAL`
 → `Campaign.dryRun` → `OutboundMessage.dryRun`), `decidirDryRun()`, o
 caminho de transporte do `outbound.ts`, `avaliarAck()`, o motor de
 classificação, o adapter do WhatsApp, QR e sessão.

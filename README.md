@@ -76,7 +76,6 @@ inteiras com o telefone desligado, antes de qualquer mensagem real sair.
 Só um ato deliberado muda isso:
 
 ```env
-WHATSAPP_MODE=live   # disponível a partir da Fase 8
 ```
 
 Qualquer outro valor (`liv`, `true`, vazio, ausente) cai em dry-run —

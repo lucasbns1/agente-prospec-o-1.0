@@ -11,7 +11,7 @@ import { config } from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { carregarEnv } from '@prospector/config';
-import { criarWhatsAppAdapter, resolverModo } from '@prospector/integrations';
+import { criarWhatsAppAdapter, FASE_PERMITE_ENVIO_REAL } from '@prospector/integrations';
 import { disconnectPrisma, checkDatabaseConnection } from '@prospector/database';
 import pino from 'pino';
 import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
@@ -108,14 +108,12 @@ async function main(): Promise<void> {
     log.warn(
       { modelo: env.GEMINI_MODEL },
       'IA ATIVA — as decisoes dela comandam a cadencia (sempre filtradas pela guarda ' +
-        'e pelas quatro barreiras de envio).'
+        'e pelas barreiras de envio).'
     );
   }
 
   // --- WhatsApp ---
-  const modo = resolverModo(env.WHATSAPP_MODE);
   const adapter = await criarWhatsAppAdapter({
-    modo,
     canal: env.WHATSAPP_CANAL,
     sessionPath: env.WHATSAPP_SESSION_PATH,
     chromePath: env.CHROME_PATH,
@@ -210,7 +208,6 @@ async function main(): Promise<void> {
 
     await publicarEvento('whatsapp.status', {
       status: s.status,
-      modo: s.modo,
       temQr: Boolean(s.qr),
       telefone: s.telefone ?? null,
       detalhe: s.detalhe ?? null,
@@ -281,13 +278,19 @@ async function main(): Promise<void> {
 
   await adapter.connect();
 
-  if (modo === 'dry-run') {
+  if (!FASE_PERMITE_ENVIO_REAL) {
     log.warn(
       '=========================================================\n' +
-        '  MODO DRY-RUN ATIVO\n' +
-        '  Nenhuma mensagem real sera enviada.\n' +
-        '  Para enviar de verdade: WHATSAPP_MODE=live no .env (Fase 8).\n' +
+        '  GUARDA DE FASE LEVANTADA\n' +
+        '  Nenhuma mensagem real sera enviada por caminho nenhum.\n' +
+        '  Destravar exige editar FASE_PERMITE_ENVIO_REAL em\n' +
+        '  packages/integrations/src/whatsapp/guarda-envio.ts.\n' +
         '========================================================='
+    );
+  } else {
+    log.info(
+      'Envio real LIBERADO no codigo. Quem simula agora e a campanha ' +
+        '(caixa "simulacao" nas configuracoes).'
     );
   }
 

@@ -1,34 +1,18 @@
 /**
- * Testes do adapter em modo dry-run.
+ * Testes do adapter simulado.
  *
- * O que estes testes realmente protegem: a garantia de que o sistema NAO
- * envia mensagem real por acidente. Um typo no .env nao pode virar 76
- * mensagens disparadas.
+ * O que estes testes realmente protegem: a garantia de que o canal
+ * simulado NUNCA envia mensagem real, por caminho nenhum. Ele e o que
+ * roda em desenvolvimento e em teste, e uma unica mensagem escapando
+ * dali chegaria num telefone de verdade.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { FakeWhatsAppAdapter } from '../packages/integrations/src/whatsapp/fake-adapter.js';
-import {
-  resolverModo,
-  criarWhatsAppAdapter,
-} from '../packages/integrations/src/whatsapp/factory.js';
+import { criarWhatsAppAdapter } from '../packages/integrations/src/whatsapp/factory.js';
 import {
   telefoneParaChatId,
   chatIdParaTelefone,
 } from '../packages/integrations/src/whatsapp/adapter.js';
-
-describe('resolverModo — padrao seguro', () => {
-  it('reconhece "live"', () => {
-    expect(resolverModo('live')).toBe('live');
-    expect(resolverModo('LIVE')).toBe('live');
-    expect(resolverModo('  live  ')).toBe('live');
-  });
-
-  it('cai em dry-run para qualquer outro valor', () => {
-    for (const v of ['dry-run', 'liv', 'true', '1', 'producao', '', undefined]) {
-      expect(resolverModo(v)).toBe('dry-run');
-    }
-  });
-});
 
 describe('FakeWhatsAppAdapter', () => {
   it('nunca reporta envio real: sempre simulado, sem id do WhatsApp', async () => {
@@ -93,32 +77,23 @@ describe('FakeWhatsAppAdapter', () => {
 });
 
 describe('criarWhatsAppAdapter', () => {
-  it('devolve o adapter fake em dry-run', async () => {
-    const adapter = await criarWhatsAppAdapter({ modo: 'dry-run' });
-    expect(adapter.modo).toBe('dry-run');
-  });
-
   /**
-   * COMPORTAMENTO MUDOU NA FASE 6A.
+   * O EIXO "MODO" SAIU DA FACTORY.
    *
-   * Antes, `modo: 'live'` derrubava a criacao do adapter — a unica
-   * protecao disponivel era recusar a construcao. Agora existe a guarda
-   * de fase, que bloqueia o ENVIO em vez do adapter, e isso e melhor:
-   * permite conectar de verdade e RECEBER mensagens sem destravar o
-   * envio junto, que e exatamente o que a Fase 6A precisa.
+   * A factory tinha duas chaves: `WHATSAPP_CANAL` decidia se conectava,
+   * `WHATSAPP_MODE` decidia se enviava. A segunda foi removida do
+   * sistema — travava tudo por variavel de ambiente sem aparecer na
+   * interface. Sobrou o canal.
    *
-   * O invariante que importa continua o mesmo, e esta testado em
+   * O invariante que importa continua o mesmo e esta em
    * `canal-adapter.test.ts`: com a fase travada, nada sai.
    */
-  it('modo live nao derruba mais a criacao — quem bloqueia e a guarda', async () => {
-    const adapter = await criarWhatsAppAdapter({ modo: 'live', canal: 'simulado' });
-
-    // O adapter simulado se declara dry-run independentemente do modo
-    // pedido: ele nao tem como enviar nada, e dizer 'live' seria mentir.
-    expect(adapter.modo).toBe('dry-run');
+  it('o canal simulado nunca envia de verdade', async () => {
+    const adapter = await criarWhatsAppAdapter({ canal: 'simulado' });
 
     const r = await adapter.sendMessage('5519999998888', 'oi');
     expect(r.simulado).toBe(true);
+    expect(r.whatsappMessageId).toBeNull();
   });
 
   it('canal simulado e o padrao — nao conecta em lugar nenhum', async () => {

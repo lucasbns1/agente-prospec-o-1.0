@@ -57,7 +57,6 @@ export interface LeadTemperaturaEvent {
 
 export interface WhatsAppStatusEvent {
   status: string;
-  modo: string;
   detalhe?: string;
   /** Data URL do QR Code, quando status === AGUARDANDO_QR. */
   qr?: string;

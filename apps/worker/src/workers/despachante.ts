@@ -163,7 +163,7 @@ async function recuperarOrfas(agora: Date): Promise<void> {
  * Nao envia. Cria a linha da proxima etapa em `outbound_messages` com
  * o `scheduledAt` calculado pelo delay configurado. Dali para frente e
  * o mesmo caminho de qualquer outra mensagem — varredura, fila, worker,
- * quatro barreiras.
+ * barreiras de envio.
  */
 async function avancarSequenciasAutomaticas(agora: Date): Promise<number> {
   const candidatos = await prisma.leadCampaign.findMany({

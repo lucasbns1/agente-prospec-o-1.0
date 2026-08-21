@@ -5,18 +5,23 @@ WhatsApp.
 
 ---
 
-## As três barreiras contra envio real
+## As barreiras contra envio real
 
 ```
   campanha.dryRun = false   ─┐
-  mensagem.dryRun = false   ─┼─→ envia de verdade
-  WHATSAPP_MODE = "live"    ─┘
+  mensagem.dryRun = false   ─┴─→ envia de verdade
 
   qualquer uma levantada     ─→ simula
 ```
 
+Mais `FASE_PERMITE_ENVIO_REAL`, no código, acima das duas.
+
 É "E" para enviar e "OU" para simular. **Uma sozinha não libera nada.**
-Um typo no `.env` não pode virar 76 mensagens disparadas.
+
+Havia uma terceira barreira aqui, `WHATSAPP_MODE`, que travava o sistema
+inteiro por variável de ambiente. Foi removida: não aparecia em lugar
+nenhum da interface e fazia campanha corretamente liberada parecer
+quebrada.
 
 Hoje as três estão levantadas. Além delas, o caminho de envio real
 `throw`a explicitamente — falhar alto é melhor do que simular em

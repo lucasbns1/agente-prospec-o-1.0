@@ -814,12 +814,14 @@ model Campaign {
   /// Teto de leads que entram nesta campanha. 0 = sem limite.
   maxLeads Int @default(0) @map("max_leads")
 
-  /// Dry-run POR CAMPANHA.
+  /// Dry-run POR CAMPANHA — a caixa "simulacao" nas configuracoes.
   ///
-  /// Nao substitui o WHATSAPP_MODE global — soma-se a ele. O envio real
-  /// exige que os DOIS estejam liberados. Assim, colocar o sistema em
-  /// modo live nao liga o envio de campanhas antigas por acidente.
-  dryRun Boolean @default(true) @map("dry_run")
+  /// Depois que o modo global (`WHATSAPP_MODE`) foi removido, esta e a
+  /// unica trava de simulacao que voce controla pela tela. O padrao
+  /// mudou de `true` para `false`: campanha nova nasce enviando, e
+  /// simular passou a ser uma escolha explicita em vez do estado
+  /// implicito de todo mundo.
+  dryRun Boolean @default(false) @map("dry_run")
 
   /// Filtros de segmentacao usados para montar a lista de leads.
   /// Guardado como JSON validado por Zod (`filtrosCampanhaSchema`):

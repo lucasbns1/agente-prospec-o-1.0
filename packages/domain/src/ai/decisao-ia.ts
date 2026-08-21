@@ -54,7 +54,7 @@ export type IntentIA = (typeof INTENT_IA)[number];
  *
  * Nenhuma delas toca o WhatsApp. `SEND_STEP` significa "crie a ordem de
  * envio da etapa" — quem envia continua sendo o worker, atras das
- * quatro barreiras.
+ * barreiras de envio.
  */
 export const ACAO_IA = [
   /** Criar a ordem de envio de uma etapa. NAO envia. */

@@ -2,18 +2,22 @@
  * Worker de envio (Fase I).
  *
  * ============================================================
- * ESTE WORKER NAO ENVIA NADA DE VERDADE NESTA FASE
+ * O QUE SEPARA ESTE WORKER DE UM ENVIO REAL
  * ============================================================
  * Ele processa a fila inteira — le a mensagem agendada, revalida os
- * bloqueios, chama o adapter e grava o historico — mas o adapter e o
- * `FakeWhatsAppAdapter`, que apenas registra o que TERIA sido enviado.
+ * bloqueios, chama o adapter e grava o historico. Se o envio sai de
+ * verdade ou vira registro de simulacao depende de duas coisas:
  *
- * Ha tres barreiras independentes contra envio real:
- *   1. `WHATSAPP_MODE` global precisa ser exatamente "live";
- *   2. `Campaign.dryRun` precisa ser false;
- *   3. o adapter real so existe a partir da fase de integracao.
+ *   1. `Campaign.dryRun` — a caixa "simulacao" da campanha;
+ *   2. `OutboundMessage.dryRun` — herdada da campanha no enfileiramento.
  *
- * As tres precisam cair juntas. Uma sozinha nao libera nada.
+ * Mais a trava de fase em `guarda-envio.ts`, que nao depende de
+ * configuracao e mora no codigo.
+ *
+ * Havia aqui uma terceira barreira, `WHATSAPP_MODE`, que travava o
+ * sistema inteiro por variavel de ambiente. Foi removida: era invisivel
+ * de dentro do produto e fazia a campanha parecer quebrada quando na
+ * verdade estava obedecendo um arquivo de texto lido no boot.
  */
 import { Worker, type Job } from 'bullmq';
 import { prisma, Prisma } from '@prospector/database';
@@ -37,17 +41,15 @@ export interface OutboundJobData {
  * inteiro, e ela precisa poder ser testada sem banco, sem fila e sem
  * WhatsApp.
  *
- * A logica e "E" para enviar de verdade e "OU" para simular: basta UMA
- * barreira levantada para nada sair. Um typo no .env nao pode virar 76
- * mensagens disparadas.
+ * A logica e "OU" para simular: basta UMA barreira levantada para nada
+ * sair. Continua assim depois da remocao do modo global — o que mudou e
+ * quantas barreiras existem, nao como elas se combinam.
  */
 export function decidirDryRun(entrada: {
   campanhaDryRun: boolean;
   mensagemDryRun: boolean;
-  modoGlobal: string | undefined;
 }): boolean {
-  const global = entrada.modoGlobal?.trim().toLowerCase();
-  return entrada.campanhaDryRun || entrada.mensagemDryRun || global !== 'live';
+  return entrada.campanhaDryRun || entrada.mensagemDryRun;
 }
 
 /**
@@ -314,7 +316,6 @@ export function criarWorkerOutbound(
       const dryRun = decidirDryRun({
         campanhaDryRun: m.campaign.dryRun,
         mensagemDryRun: m.dryRun,
-        modoGlobal: process.env.WHATSAPP_MODE,
       });
 
       // --- Cria a conversa e a mensagem no historico ---

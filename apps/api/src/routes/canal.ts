@@ -25,7 +25,7 @@ import {
   estadoEstaVelho,
   type EstadoCanal,
 } from '@prospector/shared';
-import { resolverModo, renderizarQrComoImagem } from '@prospector/integrations';
+import { renderizarQrComoImagem } from '@prospector/integrations';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 
@@ -82,12 +82,13 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
   /** Retrato completo, para a tela de configuração do canal. */
   app.get('/api/canal/status', { preHandler: exigirAutenticacao }, async () => {
     const estado = await lerEstado();
-    const modo = resolverModo(process.env.WHATSAPP_MODE);
 
     return {
       ...estado,
-      modo,
-      dryRun: modo === 'dry-run' || !estado.envioRealPermitidoNaFase,
+      // Sem o modo global, a unica trava do SISTEMA inteiro e a guarda de
+      // fase. A simulacao por campanha nao entra aqui: ela e por
+      // campanha, e a faixa do topo fala pelo sistema.
+      dryRun: !estado.envioRealPermitidoNaFase,
       canal: process.env.WHATSAPP_CANAL ?? 'simulado',
     };
   });
@@ -158,7 +159,6 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
       },
       envio: {
         real_permitido_na_fase: estado.envioRealPermitidoNaFase,
-        modo: resolverModo(process.env.WHATSAPP_MODE),
       },
       estado_atualizado_em: estado.atualizadoEm,
       saudavel: estado.conectado,

@@ -46,8 +46,6 @@ const envSchema = z.object({
    */
   WHATSAPP_CANAL: z.enum(['simulado', 'whatsapp-web']).default('simulado'),
 
-  // Qualquer valor diferente de "live" cai em dry-run. Ver factory.ts.
-  WHATSAPP_MODE: z.string().default('dry-run'),
   WHATSAPP_SESSION_PATH: z.string().default('./data/whatsapp'),
   CHROME_PATH: z.string().optional(),
 
@@ -121,9 +119,6 @@ export function carregarEnv(fonte: NodeJS.ProcessEnv = process.env): Env {
 
   return resultado.data;
 }
-
-export const modoDryRun = (env: Env): boolean =>
-  env.WHATSAPP_MODE.trim().toLowerCase() !== 'live';
 
 /**
  * A IA esta de fato operante?

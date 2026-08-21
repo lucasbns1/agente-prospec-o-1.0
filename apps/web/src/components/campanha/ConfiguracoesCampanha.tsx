@@ -274,16 +274,15 @@ export function ConfiguracoesCampanha({
 
           {!c.dryRun && (
             <p className="mt-2 text-sm text-[var(--color-alerta)]">
-              Esta campanha está liberada para envio real. Ela ainda depende
-              das outras barreiras — a trava de fase no código e o{' '}
-              <code>WHATSAPP_MODE</code> no <code>.env</code>.
+              Esta campanha está liberada para envio real. A única barreira
+              que resta é a trava de fase no código.
             </p>
           )}
         </div>
 
         <p className="text-xs text-[var(--color-texto-suave)]">
           Vale só para o que for enfileirado <strong>depois</strong> de
-          salvar. As mensagens já na fila mantêm o modo com que nasceram —
+          salvar. As mensagens já na fila mantêm a marca com que nasceram —
           liberar a campanha não transforma em envio real o que já estava
           agendado.
         </p>

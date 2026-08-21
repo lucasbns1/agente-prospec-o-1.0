@@ -4,24 +4,19 @@
  * ============================================================
  * CONECTAR E ENVIAR SAO COISAS DIFERENTES
  * ============================================================
- * Duas chaves independentes, de proposito:
+ * `WHATSAPP_CANAL` decide se o sistema CONECTA de verdade — e so isso.
  *
- *   WHATSAPP_CANAL  decide se o sistema CONECTA de verdade
- *   WHATSAPP_MODE   decide se o sistema ENVIA de verdade
+ * Havia aqui um segundo eixo, `WHATSAPP_MODE`, que decidia se o sistema
+ * ENVIA de verdade. Ele foi removido: travava tudo por variavel de
+ * ambiente, sem aparecer em lugar nenhum da interface, e fazia uma
+ * campanha corretamente configurada parecer quebrada.
  *
- * A Fase 6A existe justamente na combinacao
- * `WHATSAPP_CANAL=whatsapp-web` + `WHATSAPP_MODE=dry-run`: conexao real,
- * recebimento real, envio nenhum. Se as duas coisas fossem a mesma
- * chave, provar a integracao exigiria destravar o envio junto — que e
- * exatamente o que nao pode acontecer nesta fase.
- *
- * Acima das duas ainda existe a guarda de fase
- * (`guarda-envio.ts`), que nao depende de configuracao alguma.
+ * Quem decide envio agora e a campanha (`dryRun`), mais a guarda de fase
+ * em `guarda-envio.ts`, que nao depende de configuracao alguma.
  *
  * PADRAO SEGURO: qualquer valor inesperado cai no adapter simulado, que
  * nao abre navegador nem conecta em lugar nenhum.
  */
-import type { WhatsAppMode } from '@prospector/shared';
 import type { WhatsAppAdapter } from './adapter.js';
 import { FakeWhatsAppAdapter } from './fake-adapter.js';
 import { WhatsAppWebAdapter } from './whatsapp-web-adapter.js';
@@ -30,7 +25,6 @@ import type { ProvedorWhatsApp } from './provedor.js';
 export type CanalWhatsApp = 'simulado' | 'whatsapp-web';
 
 export interface WhatsAppFactoryOptions {
-  modo?: string;
   canal?: string;
   sessionPath?: string;
   chromePath?: string;
@@ -43,10 +37,6 @@ export interface WhatsAppFactoryOptions {
   provedor?: ProvedorWhatsApp;
 }
 
-export function resolverModo(valor: string | undefined): WhatsAppMode {
-  return valor?.trim().toLowerCase() === 'live' ? 'live' : 'dry-run';
-}
-
 export function resolverCanal(valor: string | undefined): CanalWhatsApp {
   return valor?.trim().toLowerCase() === 'whatsapp-web' ? 'whatsapp-web' : 'simulado';
 }
@@ -54,7 +44,6 @@ export function resolverCanal(valor: string | undefined): CanalWhatsApp {
 export async function criarWhatsAppAdapter(
   options: WhatsAppFactoryOptions = {}
 ): Promise<WhatsAppAdapter> {
-  const modo = resolverModo(options.modo ?? process.env.WHATSAPP_MODE);
   const canal = resolverCanal(options.canal ?? process.env.WHATSAPP_CANAL);
 
   if (canal === 'simulado' && !options.provedor) {
@@ -76,7 +65,6 @@ export async function criarWhatsAppAdapter(
 
   return new WhatsAppWebAdapter({
     provedor,
-    modo,
     ...(options.logger ? { logger: options.logger } : {}),
   });
 }

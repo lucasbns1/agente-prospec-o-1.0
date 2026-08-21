@@ -263,7 +263,7 @@ function NovaCampanha({ aoCancelar }: { aoCancelar: () => void }) {
               <p className="text-xs leading-relaxed text-[var(--color-texto-suave)]">
                 A campanha nasce como <strong>rascunho</strong> e em{' '}
                 <strong>dry-run</strong>. Nenhuma mensagem é enviada até
-                você ativar o modo real nas configurações.
+                você desmarcar a simulação nas configurações.
               </p>
             </CardContent>
           </Card>
