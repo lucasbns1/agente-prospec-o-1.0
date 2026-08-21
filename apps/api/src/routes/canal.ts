@@ -83,13 +83,26 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
   app.get('/api/canal/status', { preHandler: exigirAutenticacao }, async () => {
     const estado = await lerEstado();
 
+    const canal = process.env.WHATSAPP_CANAL ?? 'simulado';
+
+    // DUAS coisas diferentes podem impedir o envio no nivel do SISTEMA, e
+    // confundi-las custou uma noite de depuracao: a trava de fase, que
+    // vive no codigo, e o canal simulado, que e um adapter falso se
+    // declarando "conectado".
+    //
+    // A faixa do topo precisa dizer QUAL das duas — mandar a pessoa
+    // procurar no lugar errado e pior do que nao avisar nada.
+    const motivo = !estado.envioRealPermitidoNaFase
+      ? ('FASE_TRAVADA' as const)
+      : canal !== 'whatsapp-web'
+        ? ('CANAL_SIMULADO' as const)
+        : null;
+
     return {
       ...estado,
-      // Sem o modo global, a unica trava do SISTEMA inteiro e a guarda de
-      // fase. A simulacao por campanha nao entra aqui: ela e por
-      // campanha, e a faixa do topo fala pelo sistema.
-      dryRun: !estado.envioRealPermitidoNaFase,
-      canal: process.env.WHATSAPP_CANAL ?? 'simulado',
+      canal,
+      motivoSimulacao: motivo,
+      dryRun: motivo !== null,
     };
   });
 

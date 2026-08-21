@@ -10,12 +10,16 @@ import type { StatusConexaoSSE } from '@/hooks/useEvents';
 interface StatusWhatsApp {
   status: string;
   /**
-   * Hoje significa uma coisa so: a guarda de fase esta levantada no
-   * codigo, e nenhum caminho envia de verdade. O modo global por
-   * variavel de ambiente foi removido, e simulacao por campanha nao
-   * aparece aqui — esta faixa fala pelo sistema inteiro.
+   * O sistema inteiro esta impedido de enviar. Simulacao por campanha
+   * NAO entra aqui — esta faixa fala pelo sistema, nao por uma campanha.
    */
   dryRun: boolean;
+  /**
+   * QUAL impedimento. Existir sem dizer qual foi o defeito da versao
+   * anterior: a faixa acusava a trava do codigo quando o problema era o
+   * canal falso, e mandava procurar no lugar errado.
+   */
+  motivoSimulacao: 'FASE_TRAVADA' | 'CANAL_SIMULADO' | null;
   detalhe: string | null;
   conectado: boolean;
 }
@@ -28,7 +32,34 @@ interface StatusWhatsApp {
  * conexao nao sobe — e um indicador que diz "conectado" com o processo
  * caido e a mentira mais cara do sistema.
  */
-function IndicadorWhatsApp({ status }: { status: string }) {
+function IndicadorWhatsApp({
+  status,
+  canalSimulado,
+}: {
+  status: string;
+  canalSimulado: boolean;
+}) {
+  // O adapter falso se declara CONECTADO ao subir — ele nao tem em que
+  // conectar. Repetir esse "conectado" no topo era a mentira mais cara
+  // que esta tela contava: voce olhava a bolinha verde e concluia que o
+  // celular estava pareado.
+  if (canalSimulado) {
+    return (
+      <Link
+        to="/canal"
+        className="flex items-center gap-2 text-xs text-[var(--color-texto-suave)] hover:text-[var(--color-texto)]"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          className="h-2 w-2 rounded-full bg-[var(--color-morno)]"
+          aria-hidden="true"
+        />
+        WhatsApp simulado
+      </Link>
+    );
+  }
+
   const mapa: Record<string, { cor: string; rotulo: string }> = {
     CONECTADO: { cor: 'bg-[var(--color-sucesso)]', rotulo: 'WhatsApp conectado' },
     INICIALIZANDO: { cor: 'bg-[var(--color-morno)]', rotulo: 'Inicializando' },
@@ -200,17 +231,20 @@ export function Topbar({
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-borda)] bg-white px-5">
       <div className="flex items-center gap-4">
-        <IndicadorWhatsApp status={whatsapp?.status ?? 'DESCONECTADO'} />
+        <IndicadorWhatsApp
+          status={whatsapp?.status ?? 'DESCONECTADO'}
+          canalSimulado={whatsapp?.motivoSimulacao === 'CANAL_SIMULADO'}
+        />
 
-        {/* So aparece quando a guarda de FASE esta levantada — ou seja,
-            quando o codigo em si recusa qualquer envio. Nao aparece mais
-            por causa de variavel de ambiente: aquela faixa ficava acesa
-            com a campanha corretamente liberada, e a unica coisa que
-            comunicava era "o sistema esta quebrado". */}
+        {/* Fala pelo SISTEMA, e diz qual dos dois impedimentos e. Uma
+            faixa que avisa sem dizer o motivo faz a pessoa mexer no lugar
+            errado — foi o que aconteceu com a versao anterior desta. */}
         {whatsapp?.dryRun && (
           <Badge variant="info" title={whatsapp.detalhe ?? undefined}>
             <FlaskConical className="h-3 w-3" aria-hidden="true" />
-            ENVIO TRAVADO NO CÓDIGO — nada sai
+            {whatsapp.motivoSimulacao === 'CANAL_SIMULADO'
+              ? 'CANAL SIMULADO — não há WhatsApp de verdade conectado'
+              : 'ENVIO TRAVADO NO CÓDIGO — nada sai'}
           </Badge>
         )}
       </div>

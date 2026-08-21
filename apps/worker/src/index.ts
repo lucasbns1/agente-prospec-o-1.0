@@ -181,7 +181,14 @@ async function main(): Promise<void> {
             conectado: s.status === 'CONECTADO',
             ultimoEventoEm: new Date().toISOString(),
             sessaoDesde: null,
-            envioRealPermitidoNaFase: false,
+            // A trava de FASE e a mesma constante para os dois adapters —
+            // ela fala do codigo, nao de quem esta conectado.
+            //
+            // Aqui ficava `false` fixo, e o efeito era uma mentira na
+            // tela: com o canal simulado, a faixa acusava "envio travado
+            // no codigo" enquanto a trava estava aberta. O motivo real e
+            // outro — o canal e falso — e e `provider` quem diz isso.
+            envioRealPermitidoNaFase: FASE_PERMITE_ENVIO_REAL,
             tentativasReconexao: 0,
           };
 
