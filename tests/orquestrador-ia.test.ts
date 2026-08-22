@@ -865,6 +865,19 @@ describe('mensagem recebida com a IA conduzindo', () => {
       data: { etapaAtualId: etapas[0]!.id, etapaAtualOrdem: 1, status: 'AGUARDANDO_RESPOSTA' },
     });
 
+    // A etapa PRECISA esperar resposta para este teste fazer sentido: o
+    // que ele verifica é a resposta conduzindo a cadência. Numa etapa que
+    // anda pelo relógio, a resposta deliberadamente não conduz nada — é
+    // o teste logo abaixo.
+    //
+    // O fixture usa `false` por outro motivo (deixar a sequência andar
+    // sozinha nos casos que não envolvem resposta), e é isso que precisa
+    // ser desfeito aqui.
+    await prisma.campaignStep.update({
+      where: { id: etapas[0]!.id },
+      data: { aguardarResposta: true },
+    });
+
     const gatilhos = await import('../apps/worker/src/services/gatilhos-ia.js');
     const inbound = await import('../apps/worker/src/services/inbound.js');
 
@@ -899,6 +912,97 @@ describe('mensagem recebida com a IA conduzindo', () => {
     // E a IA foi de fato consultada, com o estado real na mao.
     expect(ia.chamadas).toBe(1);
     expect(ia.ultimoContexto?.envios.some((e) => e.ordem === 1)).toBe(true);
+  });
+
+  // ==========================================================
+  // A ETAPA QUE ANDA PELO RELOGIO
+  // ==========================================================
+  // Pedido de quem usa: "eu nao quero que voce analise essa mensagem 1
+  // que ele me responder. Manda a primeira, e depois dos minutos que eu
+  // configurar, manda a 2 automaticamente. A partir da 2, ai sim analisa
+  // a resposta."
+  //
+  // A abordagem e "Oi, prazer, me chamo Lucas." — curta de proposito,
+  // para provocar a saudacao automatica do WhatsApp Business. Deixar a
+  // cadencia depender dessa resposta e o contrario do que ela serve: a
+  // saudacao caia em DUVIDA, a regra da etapa mandava
+  // AGUARDAR_INTERVENCAO, e o lead era congelado antes de a conversa
+  // comecar.
+  it('resposta a uma etapa sem espera nao aciona a IA nem enfileira nada', async () => {
+    const { lead, campanha, etapas } = await cenario();
+
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `relogio-${lead.id}-1`,
+        status: 'ENVIADA',
+        textoRenderizado: 'Oi, prazer, me chamo Lucas.',
+        processedAt: new Date(),
+        dryRun: true,
+      },
+    });
+    // O fixture ja cria as etapas com `aguardarResposta: false` — que e
+    // exatamente a configuracao sob teste aqui.
+    await prisma.leadCampaign.updateMany({
+      where: { leadId: lead.id },
+      data: { etapaAtualId: etapas[0]!.id, etapaAtualOrdem: 1, status: 'EM_ANDAMENTO' },
+    });
+
+    const gatilhos = await import('../apps/worker/src/services/gatilhos-ia.js');
+    const inbound = await import('../apps/worker/src/services/inbound.js');
+
+    const ia = new AnalisadorFalso(decide({ acao: 'SEND_STEP', etapaOrdem: 2 }));
+    gatilhos.configurarIA({ analisador: ia, somenteAnalise: false, log });
+
+    try {
+      const r = await inbound.processarMensagemRecebida({
+        providerMessageId: `wa-relogio-${lead.id}`,
+        chatId: '5511980000001@c.us',
+        telefone: (await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } }))
+          .telefoneNormalizado!,
+        // A cara de uma saudacao automatica de WhatsApp Business.
+        texto: 'Olá! Recebemos sua mensagem e responderemos em breve.',
+        nomeContato: null,
+        recebidaEm: new Date(),
+        deMim: false,
+        tipo: 'chat',
+        temMidia: false,
+      });
+      // A mensagem E processada: ela entra no historico e na conversa.
+      expect(r.processada).toBe(true);
+    } finally {
+      gatilhos.desconfigurarIA();
+    }
+
+    // Nada foi enfileirado por causa da resposta. Quem coloca a etapa 2
+    // na fila e o despachante, no tempo configurado — nao isto aqui.
+    const daEtapa2 = await prisma.outboundMessage.findMany({
+      where: { leadId: lead.id, campaignStepId: etapas[1]!.id },
+    });
+    expect(daEtapa2).toHaveLength(0);
+
+    // A IA nao foi nem consultada: nao ha decisao de cadencia a tomar.
+    expect(ia.chamadas).toBe(0);
+
+    // E voce nao foi incomodado. Esta e a assercao que descreve o
+    // sintoma relatado.
+    const avisos = await prisma.notification.findMany({ where: { leadId: lead.id } });
+    expect(avisos).toHaveLength(0);
+
+    // O lead nao foi congelado.
+    const vinculo = await prisma.leadCampaign.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(vinculo.status).toBe('EM_ANDAMENTO');
+    expect(vinculo.aguardandoLiberacao).toBe(false);
+
+    // Mas a conversa EXISTE: registrar nunca foi o problema.
+    const recebidas = await prisma.message.findMany({
+      where: { leadId: lead.id, direcao: 'RECEBIDA' },
+    });
+    expect(recebidas).toHaveLength(1);
   });
 
   it('o contexto entregue traz a conversa nos DOIS sentidos', async () => {

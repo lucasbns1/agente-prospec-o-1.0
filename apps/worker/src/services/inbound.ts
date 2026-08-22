@@ -159,6 +159,62 @@ async function registrarDesconhecido(
  * e `ENVIAR_TEMPLATE`) apenas criam linhas em `outbound_messages` — quem
  * envia e o worker de outbound, depois das barreiras de envio.
  */
+/**
+ * Os efeitos que sobrevivem numa etapa que NAO espera resposta.
+ *
+ * ============================================================
+ * POR QUE ESTA LISTA EXISTE
+ * ============================================================
+ * Uma etapa com `aguardarResposta: false` anda no relogio, e nao na
+ * resposta. A abordagem e o caso classico: "Oi, prazer, me chamo
+ * Lucas." — a mensagem 2 sai um minuto depois, tenha o lead respondido
+ * o que for, ou nada.
+ *
+ * Mas ate agora a resposta continuava mandando na cadencia mesmo assim.
+ * As regras da etapa rodavam igual, e uma delas e
+ * `DUVIDA -> AGUARDAR_INTERVENCAO`. Efeito pratico: a saudacao
+ * automatica do WhatsApp Business ("Ola! Recebemos sua mensagem...")
+ * chegava, o dicionario nao reconhecia, e o lead era congelado com um
+ * pedido de intervencao — antes de a conversa ter comecado.
+ *
+ * O relogio manda na cadencia; a resposta so registra.
+ *
+ * ============================================================
+ * O QUE NAO ENTRA NESTA REGRA, NUNCA
+ * ============================================================
+ * Parar. Se a pessoa pediu para nao receber mais, ou disse que nao
+ * quer, isso vale na etapa 1 como vale em qualquer outra — e vale
+ * ainda que a etapa esteja configurada para ignorar respostas.
+ *
+ * "Ignorar a resposta" significa nao AVANCAR por causa dela e nao
+ * INCOMODAR voce por causa dela. Nunca significa continuar mandando
+ * para quem disse para parar: isso e o que queima um numero de
+ * WhatsApp, alem de ser errado.
+ */
+const EFEITOS_QUE_SOBREVIVEM_SEM_ESPERA = new Set([
+  // Parar, nas suas tres formas.
+  'REGISTRAR_OPT_OUT',
+  'CANCELAR_JOBS_PENDENTES',
+  'PARAR_SEQUENCIA',
+  // Registrar. Nao muda o rumo de nada.
+  'ALTERAR_TEMPERATURA',
+  'REGISTRAR_EVENTO',
+]);
+
+/**
+ * Peneira os efeitos quando a etapa atual nao espera resposta.
+ *
+ * Fica de fora tudo que AVANCA (`AVANCAR_ETAPA`, `ENVIAR_TEMPLATE`),
+ * tudo que CHAMA VOCE (`CRIAR_INTERVENCAO`, `CRIAR_TAREFA`) e tudo que
+ * ADIA (`AGENDAR_SNOOZE`, `AGUARDAR_RESPOSTA`). `ALTERAR_STATUS`
+ * tambem sai: sem a intervencao junto, um lead marcado
+ * "AGUARDANDO_INTERVENCAO" ficaria esperando um aviso que nunca foi
+ * criado.
+ */
+export function peneirarEfeitosSemEspera(efeitos: EfeitoDecisao[]): EfeitoDecisao[] {
+  return efeitos.filter((e) => EFEITOS_QUE_SOBREVIVEM_SEM_ESPERA.has(e.tipo));
+}
+
 async function aplicarEfeitos(
   leadId: string,
   efeitos: EfeitoDecisao[],
@@ -497,6 +553,20 @@ export async function processarMensagemRecebida(
   const campaignId = lead.leadCampaigns[0]?.campaignId ?? lead.campaignId ?? null;
   const campaignStepId = lead.leadCampaigns[0]?.etapaAtualId ?? null;
 
+  // A etapa em que o lead esta manda na cadencia?
+  //
+  // `aguardarResposta: false` significa "esta etapa anda pelo relogio".
+  // A resposta que chegar aqui e registrada e classificada — ela entra
+  // no historico, na conversa e no contexto da IA — mas nao avanca a
+  // sequencia nem chama voce. Ver `peneirarEfeitosSemEspera`.
+  const etapaAtual = campaignStepId
+    ? await prisma.campaignStep.findUnique({
+        where: { id: campaignStepId },
+        select: { aguardarResposta: true, ordem: true },
+      })
+    : null;
+  const etapaConduzidaPeloRelogio = etapaAtual?.aguardarResposta === false;
+
   // --- 5. Classificar (motor determinístico, sem IA) ---
   const { termos, precedencia } = await carregarConfiguracaoDoMotor(campaignStepId);
   const classificacao: ResultadoClassificacao = classificarResposta(entrada.texto, {
@@ -603,7 +673,10 @@ export async function processarMensagemRecebida(
   // marcar o lead — acontecem de qualquer forma logo abaixo, qualquer
   // que seja a opiniao da IA. A IA pode DETECTAR um opt-out que o
   // dicionario nao pegou; ela nunca pode desfazer um que ele pegou.
-  const conduzida = iaComanda() && campaignId !== null;
+  // Numa etapa que anda pelo relogio, a IA tambem so observa: deixa-la
+  // conduzir seria trocar um condutor por outro, e o pedido e que a
+  // resposta a esta etapa nao conduza nada.
+  const conduzida = iaComanda() && campaignId !== null && !etapaConduzidaPeloRelogio;
 
   if (conduzida) {
     await dispararGatilho({
@@ -620,7 +693,33 @@ export async function processarMensagemRecebida(
   //
   // Sempre roda. Quando a IA conduz, os dois efeitos de cadencia
   // (AVANCAR_ETAPA e ENVIAR_TEMPLATE) sao pulados — ver `iaConduz`.
-  await aplicarEfeitos(leadId, decisao.efeitos, {
+  const efeitos = etapaConduzidaPeloRelogio
+    ? peneirarEfeitosSemEspera(decisao.efeitos)
+    : decisao.efeitos;
+
+  // Este arquivo nao tem logger — ele devolve o que aconteceu a quem
+  // chamou. O registro fica no historico do lead, que e onde voce
+  // procura depois: sem isto, uma resposta ignorada some sem deixar
+  // rastro e vira "o sistema nao fez nada e nao disse por que".
+  if (etapaConduzidaPeloRelogio && efeitos.length < decisao.efeitos.length) {
+    const ignorados = decisao.efeitos
+      .filter((e) => !efeitos.includes(e))
+      .map((e) => e.tipo);
+
+    await prisma.leadEvent.create({
+      data: {
+        leadId,
+        tipo: 'RESPOSTA_CLASSIFICADA',
+        descricao:
+          `Etapa ${etapaAtual?.ordem ?? '?'} anda pelo relógio: resposta registrada ` +
+          `como ${classificacao.categoria}, mas não conduz a cadência ` +
+          `(ignorado: ${ignorados.join(', ')})`,
+        origem: 'worker',
+      },
+    });
+  }
+
+  await aplicarEfeitos(leadId, efeitos, {
     campaignId,
     campaignStepId,
     mensagemRecebidaId: mensagem.id,
@@ -630,7 +729,13 @@ export async function processarMensagemRecebida(
   // Com a IA desligada ou em modo sombra, ela entra aqui so para
   // observar e gravar a comparacao. `dispararGatilho` nao faz nada
   // quando nao ha analisador configurado.
-  if (!conduzida) {
+  //
+  // Numa etapa que anda pelo relogio ela nao entra nem para observar:
+  // nao ha decisao de cadencia a tomar, e cada observacao e uma chamada
+  // paga ao Gemini. Uma campanha grande gera uma saudacao automatica
+  // por lead — seriam centenas de chamadas para gravar "nao ha o que
+  // decidir".
+  if (!conduzida && !etapaConduzidaPeloRelogio) {
     await dispararGatilho({
       leadId,
       campaignId,
