@@ -12,8 +12,11 @@
  */
 import { prisma } from '@prospector/database';
 import {
+  agruparSemResposta,
   priorizarAtencao,
   type CandidatoAtencao,
+  type EnvioSemResposta,
+  type GrupoSemResposta,
   type ItemAtencao,
 } from '@prospector/domain';
 
@@ -238,4 +241,103 @@ export async function resumoCampanhaAtiva(): Promise<ResumoCampanhaAtiva | null>
     quentes,
     limiteDiario: campanha.limiteDiarioEnvios,
   };
+}
+
+
+/**
+ * Quem recebeu mensagem e nunca respondeu, agrupado pela ultima etapa
+ * que saiu.
+ *
+ * ============================================================
+ * O SILENCIO NAO TINHA TELA
+ * ============================================================
+ * Todo o resto do dashboard fala de leads que FIZERAM alguma coisa. O
+ * grupo maior de qualquer prospeccao — quem recebeu e ficou calado — nao
+ * aparecia em lugar nenhum, nem para contar quantos sao.
+ *
+ * ============================================================
+ * "NAO RESPONDEU" E LITERAL
+ * ============================================================
+ * Zero mensagens RECEBIDAS daquele lead. Nao e "nao respondeu a esta
+ * etapa": e nunca falou nada. Alguem que respondeu a mensagem 1 e sumiu
+ * na 2 nao esta aqui — ele ja aparece nas outras secoes, com o que
+ * disse.
+ *
+ * SIMULADA nao conta como envio: um ensaio nao gerou silencio de
+ * ninguem.
+ *
+ * Opt-outs e encerrados ficam de fora: cobrar acao de quem saiu do jogo
+ * e a forma mais rapida de uma tela virar ruido.
+ */
+export async function leadsSemResposta(
+  limitePorEtapa = 50
+): Promise<GrupoSemResposta[]> {
+  // Quem ja falou alguma coisa, uma vez que seja.
+  const responderam = await prisma.message.findMany({
+    where: { direcao: 'RECEBIDA' },
+    select: { leadId: true },
+    distinct: ['leadId'],
+  });
+  const jaFalaram = new Set(
+    responderam.map((r) => r.leadId).filter((id): id is string => id !== null)
+  );
+
+  const envios = await prisma.outboundMessage.findMany({
+    where: {
+      // ENVIADA de verdade. `SIMULADA` fica fora de proposito.
+      status: 'ENVIADA',
+      ...(jaFalaram.size > 0 ? { leadId: { notIn: [...jaFalaram] } } : {}),
+      lead: {
+        optOut: false,
+        status: { notIn: [...STATUS_ENCERRADOS] },
+      },
+    },
+    select: {
+      leadId: true,
+      processedAt: true,
+      createdAt: true,
+      campaignStep: { select: { ordem: true, nome: true } },
+      lead: {
+        select: {
+          nomeCompleto: true,
+          empresa: true,
+          categoria: true,
+          bairro: true,
+          cidade: true,
+          temperatura: true,
+          status: true,
+        },
+      },
+    },
+    orderBy: { processedAt: 'desc' },
+    // Teto generoso: o agrupamento e por lead, e um lead com tres etapas
+    // ocupa tres linhas aqui. Cortar cedo demais esconderia leads
+    // inteiros, e nao so o excedente de um grupo.
+    take: limitePorEtapa * 20,
+  });
+
+  const linhas: EnvioSemResposta[] = envios
+    .filter((e) => e.campaignStep !== null && e.lead !== null)
+    .map((e) => ({
+      leadId: e.leadId,
+      nome: e.lead!.empresa ?? e.lead!.nomeCompleto,
+      categoria: e.lead!.categoria,
+      bairro: e.lead!.bairro,
+      cidade: e.lead!.cidade,
+      temperatura: e.lead!.temperatura,
+      status: e.lead!.status,
+      ordem: e.campaignStep!.ordem,
+      etapaNome: e.campaignStep!.nome,
+      // `processedAt` e quando saiu. Sem ele — nao deveria acontecer numa
+      // ENVIADA — o `createdAt` serve de piso.
+      enviadaEm: e.processedAt ?? e.createdAt,
+    }));
+
+  return agruparSemResposta(linhas).map((g) => ({
+    ...g,
+    // O total continua sendo o de VERDADE; so a lista e cortada. Um
+    // contador que encolhe junto com a pagina mente sobre o tamanho do
+    // problema.
+    leads: g.leads.slice(0, limitePorEtapa),
+  }));
 }

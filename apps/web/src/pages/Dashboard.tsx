@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Flame, Inbox, TriangleAlert, Rocket } from 'lucide-react';
+import { Flame, Inbox, TriangleAlert, Rocket, MessageSquareOff, ChevronDown, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { get } from '@/lib/api';
 import {
@@ -16,7 +16,132 @@ import {
 } from '@/components/ui/primitives';
 import { formatarNumero, formatarDataHora } from '@/lib/utils';
 import { LeadDetalhe } from '@/components/LeadDetalhe';
-import type { DashboardResponse } from '@prospector/shared';
+import type { DashboardResponse, GrupoSemResposta, LeadSemResposta } from '@prospector/shared';
+
+/**
+ * Quem recebeu e nunca respondeu.
+ *
+ * ============================================================
+ * POR QUE ISTO GANHOU LUGAR PROPRIO
+ * ============================================================
+ * Todo o resto desta pagina fala de leads que FIZERAM alguma coisa. O
+ * grupo maior de qualquer prospeccao — quem recebeu a mensagem e ficou
+ * calado — nao aparecia em lugar nenhum, nem para dizer quantos sao.
+ *
+ * Agrupado pela ultima etapa que saiu, e nao num numero so: quem ignorou
+ * a abordagem pode nem ter visto; quem recebeu a proposta inteira e nao
+ * respondeu ja e outra conversa, e pede outra acao.
+ *
+ * A lista so e buscada quando voce abre um grupo. Ela pode ser longa, e
+ * carregar tudo a cada visita ao dashboard seria pagar caro por algo que
+ * quase sempre nao e olhado.
+ */
+function SemResposta({ aoAbrirLead }: { aoAbrirLead: (id: string) => void }) {
+  const [aberto, setAberto] = useState<number | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard-sem-resposta'],
+    queryFn: () => get<{ grupos: GrupoSemResposta[] }>('/api/dashboard/sem-resposta'),
+    refetchInterval: 60_000,
+  });
+
+  const grupos = data?.grupos ?? [];
+  const total = grupos.reduce((soma, g) => soma + g.total, 0);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2">
+          <MessageSquareOff
+            className="h-4 w-4 text-[var(--color-texto-suave)]"
+            aria-hidden="true"
+          />
+          Não responderam
+        </CardTitle>
+        {total > 0 && <Badge variant="info">{total}</Badge>}
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="py-6 text-center text-sm text-[var(--color-texto-fraco)]">
+            Carregando…
+          </p>
+        ) : grupos.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-8 text-center">
+            <Inbox
+              className="h-8 w-8 text-[var(--color-texto-fraco)]"
+              aria-hidden="true"
+            />
+            <p className="text-sm text-[var(--color-texto-suave)]">
+              Todo mundo que recebeu mensagem respondeu.
+            </p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-[var(--color-borda)]">
+            {grupos.map((g) => (
+              <li key={g.ordem}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 py-3 text-left"
+                  onClick={() => setAberto(aberto === g.ordem ? null : g.ordem)}
+                  aria-expanded={aberto === g.ordem}
+                >
+                  <span className="flex items-center gap-2 text-sm">
+                    {aberto === g.ordem ? (
+                      <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    Não responderam a <strong>{g.rotulo}</strong>
+                  </span>
+                  <Badge variant="info">{g.total}</Badge>
+                </button>
+
+                {aberto === g.ordem && (
+                  <ul className="pb-3 pl-6">
+                    {g.leads.map((l: LeadSemResposta) => (
+                      <li key={l.leadId} className="py-1.5">
+                        <button
+                          type="button"
+                          className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
+                          onClick={() => aoAbrirLead(l.leadId)}
+                        >
+                          <span className="min-w-0">
+                            <span className="truncate text-sm font-medium">
+                              {l.nome ?? 'Lead sem nome'}
+                            </span>
+                            <span className="ml-2 text-xs text-[var(--color-texto-fraco)]">
+                              {[l.categoria, l.bairro, l.cidade]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-2">
+                            <Badge variant={variantePorTemperatura(l.temperatura)}>
+                              {l.temperatura.toLowerCase()}
+                            </Badge>
+                            <span className="text-xs text-[var(--color-texto-fraco)]">
+                              calado desde {formatarDataHora(l.desde)}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                    {g.leads.length < g.total && (
+                      <li className="py-1.5 text-xs text-[var(--color-texto-fraco)]">
+                        …e mais {g.total - g.leads.length}. Use a tela de Leads
+                        para ver todos.
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 /** Cor do motivo. Os quatro primeiros são os que doem. */
 function varianteMotivo(motivo: string): 'alerta' | 'quente' | 'morno' | 'info' {
@@ -165,6 +290,9 @@ export function Dashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* ---- Quem recebeu e ficou calado ---- */}
+      <SemResposta aoAbrirLead={setLeadAberto} />
 
       {/* ---- Métricas ---- */}
       <section aria-label="Métricas">

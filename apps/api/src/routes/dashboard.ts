@@ -17,7 +17,11 @@ import {
   type DashboardResponse,
 } from '@prospector/shared';
 import { exigirAutenticacao } from '../plugins/auth.js';
-import { montarAtencao, resumoCampanhaAtiva } from '../services/dashboard-service.js';
+import {
+  leadsSemResposta,
+  montarAtencao,
+  resumoCampanhaAtiva,
+} from '../services/dashboard-service.js';
 
 export async function rotasDashboard(app: FastifyInstance): Promise<void> {
   app.get(
@@ -131,5 +135,20 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
         },
       };
     }
+  );
+
+  /**
+   * GET /api/dashboard/sem-resposta
+   *
+   * Rota separada, e nao mais um campo do /api/dashboard, por dois
+   * motivos: a lista pode ser longa e o dashboard e carregado a cada
+   * visita; e ela so interessa quando voce clica para ver.
+   *
+   * O dashboard traz os TOTAIS por etapa (baratos). A lista vem daqui.
+   */
+  app.get(
+    '/api/dashboard/sem-resposta',
+    { preHandler: exigirAutenticacao },
+    async () => ({ grupos: await leadsSemResposta() })
   );
 }

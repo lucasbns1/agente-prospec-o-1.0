@@ -37,6 +37,7 @@ export * from './campaign/regras-padrao.js';
 export * from './template/contracts.js';
 // --- Dashboard (Fase 5) ---
 export * from './dashboard/atencao.js';
+export * from './dashboard/sem-resposta.js';
 // --- Recebimento (Fase 6A) ---
 export * from './inbound/identificar-lead.js';
 export * from './inbound/confirmacao-entrega.js';

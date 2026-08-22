@@ -144,3 +144,39 @@ export const METRICAS_ZERADAS: DashboardMetricas = {
   agendados: 0,
   leadsHoje: 0,
 };
+
+
+// ---------------------------------------------------------------------------
+// QUEM RECEBEU E NAO RESPONDEU
+//
+// O contrato mora aqui, e nao no dominio, porque o frontend precisa
+// dele: `apps/web` depende de `shared` e nao de `domain`. Mesmo arranjo
+// do `ItemAtencao`.
+// ---------------------------------------------------------------------------
+
+export interface LeadSemResposta {
+  leadId: string;
+  nome: string | null;
+  categoria: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  temperatura: string;
+  status: string;
+  /** A ultima etapa que chegou nele. */
+  ordem: number;
+  etapaNome: string | null;
+  /** Quando aquela etapa saiu — ha quanto tempo ele esta calado. */
+  desde: Date;
+}
+
+export interface GrupoSemResposta {
+  ordem: number;
+  /** Nome da etapa, ou "Mensagem N" quando ela nao tem um. */
+  rotulo: string;
+  /**
+   * O total de VERDADE, mesmo quando `leads` vem cortado. Um contador
+   * que encolhe junto com a pagina mente sobre o tamanho do problema.
+   */
+  total: number;
+  leads: LeadSemResposta[];
+}
