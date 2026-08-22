@@ -24,6 +24,7 @@ import {
   enfileirarCampanha,
   requalificarLeads,
   montarWhere,
+  explicarContagem,
   type FiltrosCampanha,
 } from '../services/campaign-service.js';
 
@@ -762,8 +763,10 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
     { preHandler: exigirAutenticacao },
     async (request) => {
       const filtros = filtrosSchema.parse(request.body ?? {}) as FiltrosCampanha;
-      const total = await prisma.lead.count({ where: montarWhere(filtros) });
-      return { total };
+      // O funil junto do total: um "0 leads" sem dizer onde eles se
+      // perderam faz ajustar o publico virar tentativa e erro.
+      const explicacao = await explicarContagem(filtros);
+      return { total: explicacao.total, funil: explicacao };
     }
   );
 }

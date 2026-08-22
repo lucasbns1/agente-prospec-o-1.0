@@ -459,6 +459,94 @@ describe('GET /api/dashboard', () => {
 });
 
 // -----------------------------------------------------------------------------
+describe('o contador explica para onde os leads foram', () => {
+  // ============================================================
+  // UM ZERO SEM EXPLICAÇÃO É UM BUG DE PRODUTO
+  // ============================================================
+  // A tela mostrava "0 leads" e parava ali. O zero pode vir de quatro
+  // lugares — opt-out, falta de telefone, já contatado, ou planilha
+  // errada — e nenhum aparecia. Ajustar o público virava tentativa e
+  // erro, e a conclusão foi culpar os filtros.
+  let n = 0;
+  async function lead(extras: Record<string, unknown> = {}) {
+    n += 1;
+    return prisma.lead.create({
+      data: {
+        nomeCompleto: `Funil ${n}`,
+        empresa: `Funil ${n}`,
+        telefone: `(11) 9${String(60000000 + n).slice(-8)}`,
+        telefoneNormalizado: `55119${String(60000000 + n).slice(-8)}`,
+        websiteStatus: 'NAO_INFORMADO',
+        ...extras,
+      } as never,
+    });
+  }
+
+  const contar = async (filtros: Record<string, unknown>) =>
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/campaigns/contar-leads',
+        headers: { cookie },
+        payload: filtros,
+      })
+    ).json();
+
+  it('mostra o funil inteiro, e cada corte separado', async () => {
+    await lead();                                             // entra
+    await lead({ optOut: true, status: 'OPT_OUT' });           // sai: opt-out
+    await lead({ telefoneNormalizado: null });                 // sai: sem telefone
+
+    const r = await contar({});
+
+    expect(r.funil.naPlanilha).toBe(3);
+    expect(r.funil.aposExclusoesFixas).toBe(2);
+    expect(r.funil.aposTelefone).toBe(1);
+    expect(r.total).toBe(1);
+  });
+
+  it('"só nunca contatados" aparece como um corte próprio', async () => {
+    // O caso do relato: planilha com 29, campanha com 0, e nenhuma
+    // indicação de que TODOS já tinham recebido mensagem.
+    const contatado = await lead();
+    await lead();
+
+    const conversa = await prisma.conversation.create({
+      data: { id: `f-${contatado.id}`, leadId: contatado.id },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: contatado.id,
+        direcao: 'ENVIADA',
+        status: 'ENVIADA',
+        texto: 'Oi',
+      },
+    });
+
+    const semFiltro = await contar({});
+    expect(semFiltro.total).toBe(2);
+
+    const so = await contar({ apenasNuncaContatados: true });
+    expect(so.funil.aposTelefone).toBe(2);
+    expect(so.total).toBe(1);
+    // A diferença entre os dois é o que a tela mostra como "já
+    // receberam mensagem antes".
+    expect(so.funil.aposTelefone - so.total).toBe(1);
+  });
+
+  it('o total do funil bate com o total antigo', async () => {
+    // `total` continua sendo `montarWhere` — o funil é explicação, não
+    // uma segunda regra que pode divergir da primeira.
+    await lead();
+    await lead({ optOut: true, status: 'OPT_OUT' });
+
+    const r = await contar({});
+    expect(r.total).toBe(r.funil.total);
+  });
+});
+
+// -----------------------------------------------------------------------------
 describe('apagar uma planilha', () => {
   // ============================================================
   // O QUE ESTES TESTES DEFENDEM

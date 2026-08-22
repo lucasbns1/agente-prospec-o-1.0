@@ -120,6 +120,69 @@ export function montarWhere(filtros: FiltrosCampanha): Prisma.LeadWhereInput {
   return { AND: condicoes };
 }
 
+/**
+ * Onde os leads se perderam entre a planilha e a campanha.
+ *
+ * ============================================================
+ * UM ZERO SEM EXPLICACAO E UM BUG DE PRODUTO
+ * ============================================================
+ * A tela mostrava "0 leads" e parava por ai. O zero pode vir de quatro
+ * lugares diferentes — opt-out, falta de telefone, ja contatado, ou a
+ * planilha errada — e nenhum deles aparecia. Sem isso, ajustar o publico
+ * vira tentativa e erro: foi exatamente o que fez os filtros antigos
+ * serem removidos, e o problema nao era dos filtros.
+ *
+ * O funil e cumulativo e na ordem em que o `montarWhere` aplica. Cada
+ * numero e "quantos sobraram DEPOIS deste corte", e nao "quantos este
+ * corte pegou" — assim a soma nunca mente quando um lead cai por dois
+ * motivos ao mesmo tempo.
+ */
+export interface ExplicacaoContagem {
+  /** Na planilha escolhida (ou no CRM inteiro, se nao houver planilha). */
+  naPlanilha: number;
+  /** Sobraram depois de tirar opt-out e quem aguarda intervencao. */
+  aposExclusoesFixas: number;
+  /** Sobraram depois de exigir telefone. */
+  aposTelefone: number;
+  /** O numero final — o mesmo que `total`. */
+  total: number;
+}
+
+export async function explicarContagem(
+  filtros: FiltrosCampanha
+): Promise<ExplicacaoContagem> {
+  // So o recorte de lote, sem nenhum corte. E o "de quantos partimos".
+  const lotes: Prisma.LeadWhereInput[] = [];
+  if (filtros.captureSessionIds?.length) {
+    lotes.push({ captureSessionId: { in: filtros.captureSessionIds } });
+  }
+  if (filtros.importIds?.length) {
+    lotes.push({ importId: { in: filtros.importIds } });
+  }
+  const soLote: Prisma.LeadWhereInput = lotes.length > 0 ? { OR: lotes } : {};
+
+  const fixas: Prisma.LeadWhereInput = {
+    AND: [
+      soLote,
+      { optOut: false },
+      { status: { notIn: ['OPT_OUT', 'AGUARDANDO_INTERVENCAO'] } },
+    ],
+  };
+
+  const comTelefone: Prisma.LeadWhereInput = {
+    AND: [fixas, { telefoneNormalizado: { not: null } }],
+  };
+
+  const [naPlanilha, aposExclusoesFixas, aposTelefone, total] = await Promise.all([
+    prisma.lead.count({ where: soLote }),
+    prisma.lead.count({ where: fixas }),
+    prisma.lead.count({ where: comTelefone }),
+    prisma.lead.count({ where: montarWhere(filtros) }),
+  ]);
+
+  return { naPlanilha, aposExclusoesFixas, aposTelefone, total };
+}
+
 // -----------------------------------------------------------------------------
 // PREVIEW
 // -----------------------------------------------------------------------------

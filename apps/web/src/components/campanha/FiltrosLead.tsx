@@ -46,6 +46,31 @@ interface Lote {
   totalLeads: number;
 }
 
+/**
+ * Onde os leads se perderam entre a planilha e a campanha.
+ *
+ * Cada número é "quantos sobraram DEPOIS deste corte" — e não "quantos
+ * este corte pegou". Assim a conta não mente quando um lead cai por dois
+ * motivos ao mesmo tempo.
+ */
+interface Funil {
+  naPlanilha: number;
+  aposExclusoesFixas: number;
+  aposTelefone: number;
+  total: number;
+}
+
+/** Uma linha do funil, só quando ela explica alguma perda. */
+function Perda({ quantos, texto }: { quantos: number; texto: string }) {
+  if (quantos <= 0) return null;
+  return (
+    <li className="flex justify-between gap-3">
+      <span>{texto}</span>
+      <span className="shrink-0 font-medium">−{quantos}</span>
+    </li>
+  );
+}
+
 export function FiltrosLead({
   valor,
   aoMudar,
@@ -54,7 +79,8 @@ export function FiltrosLead({
   aoMudar: (f: Filtros) => void;
 }) {
   const contar = useMutation({
-    mutationFn: (f: Filtros) => post<{ total: number }>('/api/campaigns/contar-leads', f),
+    mutationFn: (f: Filtros) =>
+      post<{ total: number; funil: Funil }>('/api/campaigns/contar-leads', f),
   });
 
   const { data: lotes } = useQuery({
@@ -178,9 +204,51 @@ export function FiltrosLead({
         </p>
       </div>
 
+      {/* ============================================================
+          O ZERO PRECISA SE EXPLICAR
+          ============================================================
+          A tela mostrava "0 leads" e parava ali. O zero pode vir de
+          quatro lugares — opt-out, falta de telefone, já contatado, ou
+          planilha errada — e nenhum aparecia. Ajustar o público virava
+          tentativa e erro.
+
+          Só aparece quando houve perda: com todos entrando, esta caixa
+          seria ruído. */}
+      {contar.data && contar.data.funil.naPlanilha > contar.data.total && (
+        <div className="rounded-lg border border-[var(--color-borda)] px-4 py-3 text-xs text-[var(--color-texto-suave)]">
+          <p className="mb-1.5">
+            Partindo de <strong>{contar.data.funil.naPlanilha}</strong> lead(s)
+            {nenhumLoteEscolhido ? ' no CRM' : ' nas planilhas marcadas'}:
+          </p>
+          <ul className="space-y-1">
+            <Perda
+              quantos={
+                contar.data.funil.naPlanilha - contar.data.funil.aposExclusoesFixas
+              }
+              texto="pediram para sair, ou aguardam sua intervenção"
+            />
+            <Perda
+              quantos={
+                contar.data.funil.aposExclusoesFixas - contar.data.funil.aposTelefone
+              }
+              texto="estão sem telefone"
+            />
+            <Perda
+              quantos={contar.data.funil.aposTelefone - contar.data.total}
+              texto={
+                valor.apenasNuncaContatados
+                  ? 'já receberam mensagem antes'
+                  : 'não passaram nos demais critérios'
+              }
+            />
+          </ul>
+        </div>
+      )}
+
       <p className="text-xs leading-relaxed text-[var(--color-texto-suave)]">
         Leads que pediram para sair (opt-out) e leads aguardando sua
-        intervenção nunca entram — isso não é configurável.
+        intervenção nunca entram — isso não é configurável. Lead sem
+        telefone também fica de fora: não há para onde mandar.
       </p>
     </div>
   );
