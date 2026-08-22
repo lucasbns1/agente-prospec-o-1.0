@@ -1,18 +1,25 @@
 /**
  * Seletor de publico da campanha.
  *
- * O contador de leads e o ponto central desta tela: voce mexe num
- * filtro e ve na hora quantos leads sobram. Sem isso a escolha do
- * publico vira adivinhacao, e so apareceria errada na previa.
+ * A tela tem DUAS decisoes: qual planilha, e se pula quem ja foi
+ * contatado. Mais nada.
+ *
+ * Ela ja teve onze controles. Saiu tudo, a pedido de quem usa: a
+ * combinacao deles produzia publico errado, e o contador mostrando 0 nao
+ * dizia qual dos onze causou. A planilha ja e o recorte — filtrar por
+ * cima e refazer, com dados piores, a escolha feita la fora.
+ *
+ * O contador continua sendo o centro: voce marca uma planilha e ve na
+ * hora quantos leads entram.
  *
  * O contador chama `POST /api/campaigns/contar-leads`, que apenas conta
  * — nao grava nada e nao enfileira nada.
  */
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Users, Loader2, FileSpreadsheet } from 'lucide-react';
 import { get, post } from '@/lib/api';
-import { Input, Label, Checkbox } from '@/components/ui/primitives';
+import { Checkbox } from '@/components/ui/primitives';
 
 export interface Filtros {
   exigirTelefone?: boolean;
@@ -39,19 +46,6 @@ interface Lote {
   totalLeads: number;
 }
 
-/** "Campinas, Santos" => ["Campinas", "Santos"]. Vazio vira undefined. */
-function listaDeTexto(texto: string): string[] | undefined {
-  const itens = texto
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s !== '');
-  return itens.length > 0 ? itens : undefined;
-}
-
-function textoDeLista(lista: string[] | undefined): string {
-  return (lista ?? []).join(', ');
-}
-
 export function FiltrosLead({
   valor,
   aoMudar,
@@ -59,10 +53,6 @@ export function FiltrosLead({
   valor: Filtros;
   aoMudar: (f: Filtros) => void;
 }) {
-  const [cidades, setCidades] = useState(textoDeLista(valor.cidades));
-  const [estados, setEstados] = useState(textoDeLista(valor.estados));
-  const [categorias, setCategorias] = useState(textoDeLista(valor.categorias));
-
   const contar = useMutation({
     mutationFn: (f: Filtros) => post<{ total: number }>('/api/campaigns/contar-leads', f),
   });
@@ -96,17 +86,6 @@ export function FiltrosLead({
   }, [JSON.stringify(valor)]);
 
   const mudar = (patch: Partial<Filtros>): void => aoMudar({ ...valor, ...patch });
-
-  /** Marca um par mutuamente exclusivo sem deixar os dois ligados. */
-  const exclusivo = (
-    campo: keyof Filtros,
-    oposto: keyof Filtros,
-    marcado: boolean
-  ): void =>
-    mudar({
-      [campo]: marcado ? true : undefined,
-      ...(marcado ? { [oposto]: undefined } : {}),
-    } as Partial<Filtros>);
 
   const totalLotes =
     (lotes?.sessoes.length ?? 0) + (lotes?.arquivos.length ?? 0);
@@ -157,120 +136,33 @@ export function FiltrosLead({
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Checkbox
-          rotulo="Só leads com telefone"
-          checked={valor.exigirTelefone === true}
-          onChange={(e) => mudar({ exigirTelefone: e.target.checked || undefined })}
-        />
-        <Checkbox
-          rotulo="Só nunca contatados"
-          checked={valor.apenasNuncaContatados === true}
-          onChange={(e) =>
-            mudar({ apenasNuncaContatados: e.target.checked || undefined })
-          }
-        />
-        <Checkbox
-          rotulo="Só quem NÃO tem site próprio"
-          checked={valor.exigirSemSite === true}
-          onChange={(e) => exclusivo('exigirSemSite', 'exigirComSite', e.target.checked)}
-        />
-        <Checkbox
-          rotulo="Só quem TEM site próprio"
-          checked={valor.exigirComSite === true}
-          onChange={(e) => exclusivo('exigirComSite', 'exigirSemSite', e.target.checked)}
-        />
-        <Checkbox
-          rotulo="Só quem NÃO tem Instagram"
-          checked={valor.exigirSemInstagram === true}
-          onChange={(e) =>
-            exclusivo('exigirSemInstagram', 'exigirComInstagram', e.target.checked)
-          }
-        />
-        <Checkbox
-          rotulo="Só quem TEM Instagram"
-          checked={valor.exigirComInstagram === true}
-          onChange={(e) =>
-            exclusivo('exigirComInstagram', 'exigirSemInstagram', e.target.checked)
-          }
-        />
-      </div>
+      {/* ============================================================
+          SÓ UMA CAIXA, DE PROPÓSITO
+          ============================================================
+          Havia aqui seis caixas e cinco campos de texto — cidade,
+          estado, categoria, avaliação mínima, com/sem site, com/sem
+          Instagram. Saíram a pedido de quem usa, depois de a combinação
+          deles produzir público errado mais de uma vez.
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div>
-          <Label htmlFor="f-cidades">Cidades</Label>
-          <Input
-            id="f-cidades"
-            value={cidades}
-            placeholder="Campinas, Santos"
-            onChange={(e) => {
-              setCidades(e.target.value);
-              mudar({ cidades: listaDeTexto(e.target.value) });
-            }}
-          />
-        </div>
-        <div>
-          <Label htmlFor="f-estados">Estados (UF)</Label>
-          <Input
-            id="f-estados"
-            value={estados}
-            placeholder="SP, RJ"
-            onChange={(e) => {
-              setEstados(e.target.value);
-              mudar({ estados: listaDeTexto(e.target.value) });
-            }}
-          />
-        </div>
-        <div>
-          <Label htmlFor="f-categorias">Categorias</Label>
-          <Input
-            id="f-categorias"
-            value={categorias}
-            placeholder="Psicólogo, Clínica"
-            onChange={(e) => {
-              setCategorias(e.target.value);
-              mudar({ categorias: listaDeTexto(e.target.value) });
-            }}
-          />
-        </div>
-      </div>
+          O motivo é que eles se sobrepunham à escolha da planilha e
+          brigavam entre si em silêncio: marcar "só quem NÃO tem site" e
+          escolher uma planilha em que a coluna de site veio vazia zerava
+          o público sem dizer por quê. O contador mostrava 0 e não havia
+          como saber qual dos onze controles causou.
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="f-aval">Avaliação mínima</Label>
-          <Input
-            id="f-aval"
-            type="number"
-            min={0}
-            max={5}
-            step={0.1}
-            value={valor.avaliacaoMinima ?? ''}
-            placeholder="Qualquer"
-            onChange={(e) =>
-              mudar({
-                avaliacaoMinima:
-                  e.target.value === '' ? undefined : Number(e.target.value),
-              })
-            }
-          />
-        </div>
-        <div>
-          <Label htmlFor="f-total">Mínimo de avaliações</Label>
-          <Input
-            id="f-total"
-            type="number"
-            min={0}
-            value={valor.totalAvaliacoesMinimo ?? ''}
-            placeholder="Qualquer"
-            onChange={(e) =>
-              mudar({
-                totalAvaliacoesMinimo:
-                  e.target.value === '' ? undefined : Number(e.target.value),
-              })
-            }
-          />
-        </div>
-      </div>
+          A planilha já é o recorte: ela foi montada com o nicho e a
+          cidade certos. Filtrar de novo por cima é refazer, com dados
+          piores, a escolha que já foi feita lá fora.
+
+          Sobrou "só nunca contatados", que não recorta o público por
+          característica — evita falar duas vezes com a mesma pessoa. */}
+      <Checkbox
+        rotulo="Só nunca contatados"
+        checked={valor.apenasNuncaContatados === true}
+        onChange={(e) =>
+          mudar({ apenasNuncaContatados: e.target.checked || undefined })
+        }
+      />
 
       <div className="flex items-center gap-2 rounded-lg bg-[var(--color-fundo)] px-4 py-3">
         {contar.isPending ? (
@@ -282,8 +174,7 @@ export function FiltrosLead({
           <Users className="h-4 w-4 text-[var(--color-marca)]" aria-hidden="true" />
         )}
         <p className="text-sm" aria-live="polite">
-          <strong>{contar.data?.total ?? 0}</strong> leads correspondem a estes
-          filtros
+          <strong>{contar.data?.total ?? 0}</strong> leads entram nesta campanha
         </p>
       </div>
 

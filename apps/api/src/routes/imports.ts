@@ -268,6 +268,11 @@ export async function rotasImports(app: FastifyInstance): Promise<void> {
           captureSession: {
             select: { id: true, nicho: true, cidade: true, estado: true },
           },
+          // Quantos leads AINDA existem vindos desta planilha. Diferente
+          // de `totalImportados`, que e historico do dia da importacao:
+          // leads podem ter sido apagados depois. Antes de apagar uma
+          // planilha voce precisa do numero de agora, nao do de entao.
+          _count: { select: { leads: true } },
         },
       });
       return { imports };
@@ -347,6 +352,89 @@ export async function rotasImports(app: FastifyInstance): Promise<void> {
         throw new AppError('Importação não encontrada', 404, 'NAO_ENCONTRADO');
       }
       return { import: registro };
+    }
+  );
+
+  /**
+   * DELETE /api/imports/:id
+   *
+   * ============================================================
+   * O QUE APAGAR UMA PLANILHA SIGNIFICA
+   * ============================================================
+   * Voce importou o arquivo errado, ou ele veio com as colunas
+   * trocadas, e agora o CRM tem dezenas de leads que nao servem. A saida
+   * era apagar um por um, ou `reset:fabrica` e perder tudo.
+   *
+   * Entao apagar a planilha apaga os leads que ELA criou.
+   *
+   * ============================================================
+   * MENOS OS QUE JA RECEBERAM MENSAGEM
+   * ============================================================
+   * Esses ficam. Nao por delicadeza: o historico de quem ja foi abordado
+   * e a unica coisa que impede o sistema de abordar a mesma pessoa de
+   * novo daqui a um mes. Apagar o lead apaga o telefone, a deduplicacao
+   * deixa de reconhece-lo, e a proxima importacao o traz de volta como
+   * novo.
+   *
+   * Eles perdem o vinculo com a planilha (`importId` vira null) e
+   * continuam no CRM com a conversa inteira.
+   *
+   * Um lead em opt-out tambem fica, mesmo sem mensagem: e o registro de
+   * alguem que pediu para nao ser contatado, e ele precisa sobreviver a
+   * qualquer limpeza.
+   */
+  app.delete<{ Params: { id: string } }>(
+    '/api/imports/:id',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+      const registro = await prisma.import.findUnique({ where: { id } });
+      if (!registro) {
+        throw new AppError('Importação não encontrada', 404, 'NAO_ENCONTRADO');
+      }
+
+      // Quem tem historico fica. `messages` cobre os dois sentidos, e
+      // `outbound` pega tambem o que foi agendado e cancelado
+      // antes de sair — a intencao de abordar ja e informacao.
+      const preservar = await prisma.lead.findMany({
+        where: {
+          importId: id,
+          OR: [
+            { optOut: true },
+            { messages: { some: {} } },
+            { outbound: { some: {} } },
+          ],
+        },
+        select: { id: true },
+      });
+      const idsPreservados = preservar.map((l) => l.id);
+
+      const apagados = await prisma.lead.deleteMany({
+        where: {
+          importId: id,
+          ...(idsPreservados.length > 0 ? { id: { notIn: idsPreservados } } : {}),
+        },
+      });
+
+      // Soltam o vinculo antes de a planilha sumir. `SetNull` no schema
+      // faria isso sozinho, mas depender de um comportamento de cascata
+      // para uma decisao de produto deixa a regra invisivel.
+      if (idsPreservados.length > 0) {
+        await prisma.lead.updateMany({
+          where: { id: { in: idsPreservados } },
+          data: { importId: null },
+        });
+      }
+
+      await prisma.import.delete({ where: { id } });
+
+      return {
+        apagada: true,
+        nomeArquivo: registro.nomeArquivo,
+        leadsApagados: apagados.count,
+        leadsPreservados: idsPreservados.length,
+      };
     }
   );
 }

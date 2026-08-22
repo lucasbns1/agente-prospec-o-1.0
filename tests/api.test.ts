@@ -459,6 +459,144 @@ describe('GET /api/dashboard', () => {
 });
 
 // -----------------------------------------------------------------------------
+describe('apagar uma planilha', () => {
+  // ============================================================
+  // O QUE ESTES TESTES DEFENDEM
+  // ============================================================
+  // Apagar a planilha errada apaga os leads dela — é para isso que
+  // serve. Mas quem já recebeu mensagem, ou pediu para sair, FICA.
+  //
+  // Não é delicadeza: o histórico de quem já foi abordado é a única
+  // coisa que impede o sistema de abordar a mesma pessoa de novo. Apagar
+  // o lead apaga o telefone, a deduplicação deixa de reconhecê-lo, e a
+  // próxima importação o traz de volta como novo.
+  async function planilhaCom(nome: string) {
+    return prisma.import.create({
+      data: { nomeArquivo: nome, formato: 'csv', status: 'CONCLUIDO' },
+    });
+  }
+
+  let seq = 0;
+  async function leadDa(importId: string, extras: Record<string, unknown> = {}) {
+    seq += 1;
+    return prisma.lead.create({
+      data: {
+        nomeCompleto: `Lead ${seq}`,
+        empresa: `Lead ${seq}`,
+        telefone: `(11) 9${String(80000000 + seq).slice(-8)}`,
+        telefoneNormalizado: `55119${String(80000000 + seq).slice(-8)}`,
+        websiteStatus: 'NAO_INFORMADO',
+        importId,
+        ...extras,
+      } as never,
+    });
+  }
+
+  it('apaga a planilha e os leads que ela criou', async () => {
+    const p = await planilhaCom('lista-errada.csv');
+    await leadDa(p.id);
+    await leadDa(p.id);
+
+    const r = await app.inject({
+      method: 'DELETE', url: `/api/imports/${p.id}`, headers: { cookie },
+    });
+
+    expect(r.statusCode).toBe(200);
+    expect(r.json().leadsApagados).toBe(2);
+    expect(await prisma.import.findUnique({ where: { id: p.id } })).toBeNull();
+    expect(await prisma.lead.count({ where: { importId: p.id } })).toBe(0);
+  });
+
+  it('NÃO apaga quem já recebeu mensagem — só solta o vínculo', async () => {
+    const p = await planilhaCom('com-historico.csv');
+    const descartavel = await leadDa(p.id);
+    const abordado = await leadDa(p.id);
+
+    const conversa = await prisma.conversation.create({
+      data: { id: `c-${abordado.id}`, leadId: abordado.id },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: abordado.id,
+        direcao: 'ENVIADA',
+        status: 'ENVIADA',
+        texto: 'Oi',
+      },
+    });
+
+    const r = await app.inject({
+      method: 'DELETE', url: `/api/imports/${p.id}`, headers: { cookie },
+    });
+
+    expect(r.json().leadsApagados).toBe(1);
+    expect(r.json().leadsPreservados).toBe(1);
+
+    expect(await prisma.lead.findUnique({ where: { id: descartavel.id } })).toBeNull();
+
+    const sobreviveu = await prisma.lead.findUnique({ where: { id: abordado.id } });
+    expect(sobreviveu).not.toBeNull();
+    // Solto da planilha, inteiro no CRM.
+    expect(sobreviveu!.importId).toBeNull();
+    expect(sobreviveu!.telefoneNormalizado).toBe(abordado.telefoneNormalizado);
+  });
+
+  it('NÃO apaga quem só tem mensagem AGENDADA', async () => {
+    // A intenção de abordar já é informação: se a mensagem foi
+    // enfileirada, aquele número entrou na roda.
+    const p = await planilhaCom('agendadas.csv');
+    const lead = await leadDa(p.id);
+    const campanha = await prisma.campaign.create({
+      data: { nome: `C-${Date.now()}`, status: 'RASCUNHO', filtros: {} as never },
+    });
+    const etapa = await prisma.campaignStep.create({
+      data: { campaignId: campanha.id, ordem: 1, texto: 'Oi', ativo: true },
+    });
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapa.id,
+        idempotencyKey: `del-${lead.id}`,
+        status: 'AGENDADA',
+        textoRenderizado: 'Oi',
+      },
+    });
+
+    await app.inject({
+      method: 'DELETE', url: `/api/imports/${p.id}`, headers: { cookie },
+    });
+
+    expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
+  });
+
+  it('NUNCA apaga um opt-out, mesmo sem mensagem nenhuma', async () => {
+    // É o registro de alguém que pediu para não ser contatado. Ele tem
+    // que sobreviver a qualquer limpeza — senão a próxima importação o
+    // traz de volta e o sistema fala com quem mandou parar.
+    const p = await planilhaCom('com-optout.csv');
+    const saiu = await leadDa(p.id, { optOut: true, status: 'OPT_OUT' });
+
+    const r = await app.inject({
+      method: 'DELETE', url: `/api/imports/${p.id}`, headers: { cookie },
+    });
+
+    expect(r.json().leadsApagados).toBe(0);
+    expect(r.json().leadsPreservados).toBe(1);
+    expect(await prisma.lead.findUnique({ where: { id: saiu.id } })).not.toBeNull();
+  });
+
+  it('404 para planilha que não existe', async () => {
+    const r = await app.inject({
+      method: 'DELETE',
+      url: '/api/imports/00000000-0000-0000-0000-000000000000',
+      headers: { cookie },
+    });
+    expect(r.statusCode).toBe(404);
+  });
+});
+
+// -----------------------------------------------------------------------------
 describe('notificacoes', () => {
   it('lista vazia quando nao ha nada', async () => {
     const d = (await autenticado('/api/notifications')).json();

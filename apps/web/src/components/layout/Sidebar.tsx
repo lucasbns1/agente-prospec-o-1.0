@@ -12,6 +12,7 @@ import {
   QrCode,
   KanbanSquare,
   Brain,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -19,6 +20,7 @@ const NAVEGACAO = [
   { para: '/', rotulo: 'Dashboard', icone: LayoutDashboard, exato: true },
   { para: '/leads', rotulo: 'Leads', icone: Users },
   { para: '/importar', rotulo: 'Importar', icone: Download },
+  { para: '/planilhas', rotulo: 'Planilhas', icone: FileSpreadsheet },
   { para: '/campanhas', rotulo: 'Campanhas', icone: Rocket },
   { para: '/estado', rotulo: 'Estado das campanhas', icone: KanbanSquare },
   { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
