@@ -503,6 +503,91 @@ describe('notificacoes', () => {
     expect((await autenticado('/api/notifications')).json().naoLidas).toBe(0);
   });
 
+  it('apaga UMA notificação', async () => {
+    // Apagar é diferente de marcar como lida. "Lida" é "eu vi"; apagar é
+    // "isto não me serve" — o aviso de um lead que você decidiu ignorar,
+    // ou o terceiro aviso idêntico de um número que nem existe.
+    const n = await prisma.notification.create({
+      data: {
+        tipo: 'SISTEMA', nivel: 'INFO', prioridade: 50,
+        titulo: 'Para apagar', mensagem: 'x',
+      },
+    });
+
+    const r = await app.inject({
+      method: 'DELETE', url: `/api/notifications/${n.id}`, headers: { cookie },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().apagada).toBe(true);
+
+    expect(await prisma.notification.findUnique({ where: { id: n.id } })).toBeNull();
+  });
+
+  it('404 ao apagar notificacao inexistente', async () => {
+    const r = await app.inject({
+      method: 'DELETE',
+      url: '/api/notifications/00000000-0000-0000-0000-000000000000',
+      headers: { cookie },
+    });
+    expect(r.statusCode).toBe(404);
+  });
+
+  it('apagar as lidas não toca no que está por ler', async () => {
+    // Apagar em massa o que você ainda não leu seria jogar fora a
+    // correspondência sem abrir.
+    await prisma.notification.create({
+      data: {
+        tipo: 'SISTEMA', nivel: 'INFO', prioridade: 50,
+        titulo: 'Já vista', mensagem: 'x', lida: true, lidaEm: new Date(),
+      },
+    });
+    const porLer = await prisma.notification.create({
+      data: {
+        tipo: 'INTERVENCAO_NECESSARIA', nivel: 'ALERTA', prioridade: 1,
+        titulo: 'Ainda não vista', mensagem: 'x',
+      },
+    });
+
+    const r = await app.inject({
+      method: 'DELETE', url: '/api/notifications/lidas', headers: { cookie },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().apagadas).toBe(1);
+
+    const restantes = await prisma.notification.findMany();
+    expect(restantes).toHaveLength(1);
+    expect(restantes[0]!.id).toBe(porLer.id);
+  });
+
+  it('apagar o aviso NÃO destrava o lead', async () => {
+    // A separação que importa. Um botão "apagar" que também retomasse a
+    // cadência mandaria mensagem para um cliente seu como efeito
+    // colateral de limpar a caixa de avisos.
+    const lead = await prisma.lead.create({
+      data: {
+        nomeCompleto: 'Travado LTDA',
+        empresa: 'Travado LTDA',
+        telefone: '(11) 90000-1234',
+        telefoneNormalizado: '5511900001234',
+        status: 'AGUARDANDO_INTERVENCAO',
+        websiteStatus: 'NAO_INFORMADO',
+      } as never,
+    });
+    const n = await prisma.notification.create({
+      data: {
+        tipo: 'INTERVENCAO_NECESSARIA', nivel: 'ALERTA', prioridade: 1,
+        titulo: 'Precisa de você', mensagem: 'x', leadId: lead.id,
+      },
+    });
+
+    await app.inject({
+      method: 'DELETE', url: `/api/notifications/${n.id}`, headers: { cookie },
+    });
+
+    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(depois.status).toBe('AGUARDANDO_INTERVENCAO');
+  });
+
   it('404 ao marcar notificacao inexistente', async () => {
     const r = await app.inject({
       method: 'POST',

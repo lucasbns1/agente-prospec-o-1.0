@@ -71,6 +71,66 @@ export async function rotasNotifications(app: FastifyInstance): Promise<void> {
       return { marcadas: r.count };
     }
   );
+
+  /**
+   * DELETE /api/notifications/:id
+   *
+   * ============================================================
+   * LIDA E APAGADA SAO COISAS DIFERENTES
+   * ============================================================
+   * "Marcar como lida" quer dizer "eu vi". A notificacao continua no
+   * historico e continua contando na lista.
+   *
+   * Apagar quer dizer "isto nao me serve" — o aviso de um lead que voce
+   * decidiu ignorar, uma intervencao que voce resolveu por fora, o
+   * terceiro aviso identico de um numero que nem existe. Sem esta rota,
+   * a unica saida era marcar como lida e conviver com a lista crescendo.
+   *
+   * ============================================================
+   * O QUE APAGAR NAO FAZ
+   * ============================================================
+   * Nao destrava o lead. Se ele esta em AGUARDANDO_INTERVENCAO, apagar o
+   * aviso some com o aviso e deixa o lead parado do mesmo jeito — quem
+   * destrava e o botao de liberar, na tela do lead.
+   *
+   * Isso e deliberado: um botao "apagar" que tambem retomasse a cadencia
+   * mandaria mensagem para um cliente seu como efeito colateral de
+   * limpar a caixa de avisos.
+   */
+  app.delete<{ Params: { id: string } }>(
+    '/api/notifications/:id',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+      const existente = await prisma.notification.findUnique({ where: { id } });
+      if (!existente) {
+        throw new AppError('Notificação não encontrada', 404, 'NAO_ENCONTRADO');
+      }
+
+      await prisma.notification.delete({ where: { id } });
+
+      eventsBus.publicar('notificacao.criada');
+      return { apagada: true };
+    }
+  );
+
+  /**
+   * DELETE /api/notifications/lidas
+   *
+   * Limpa o que voce ja viu. Nao toca no que esta por ler — apagar em
+   * massa uma coisa que voce ainda nao leu e como jogar fora a
+   * correspondencia sem abrir.
+   */
+  app.delete(
+    '/api/notifications/lidas',
+    { preHandler: exigirAutenticacao },
+    async () => {
+      const r = await prisma.notification.deleteMany({ where: { lida: true } });
+      eventsBus.publicar('notificacao.criada');
+      return { apagadas: r.count };
+    }
+  );
 }
 
 /**

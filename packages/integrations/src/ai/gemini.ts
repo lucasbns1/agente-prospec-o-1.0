@@ -96,14 +96,44 @@ const SCHEMA_RESPOSTA = {
  * facilidade, e a primeira chamada do processo ainda paga o handshake.
  * Um prazo curto demais nao protege nada — so garante que a IA nunca
  * chegue a opinar.
+ *
+ * ============================================================
+ * O ERRO DE VERDADE NAO PODE SE PERDER
+ * ============================================================
+ * Quando o prazo vence, a chamada NAO para: ela continua correndo e, na
+ * maioria das vezes, falha alguns segundos depois com o motivo real —
+ * `429 RESOURCE_EXHAUSTED` (limite da API), rede fora, modelo
+ * indisponivel.
+ *
+ * Antes essa rejeicao tardia ia para o vazio, e a unica coisa que sobrava
+ * era "Tempo esgotado (30000ms)" — que descreve o sintoma e esconde a
+ * causa. Voce olhava a notificacao e nao tinha como saber se o problema
+ * era a sua cota, a sua internet ou um modelo lento.
+ *
+ * Agora ela e entregue a `aoFalharTarde`, que a coloca no log do worker.
+ * Chega depois da decisao ter sido tomada — e tarde para mudar o que o
+ * sistema fez, e e exatamente o que voce precisa para saber por que.
  */
-async function comPrazo<T>(promessa: Promise<T>, ms: number): Promise<T> {
+export async function comPrazo<T>(
+  promessa: Promise<T>,
+  ms: number,
+  aoFalharTarde?: (err: unknown) => void
+): Promise<T> {
   let id: NodeJS.Timeout | undefined;
+  let venceu = false;
   try {
     return await Promise.race([
       promessa,
       new Promise<never>((_, rejeitar) => {
-        id = setTimeout(() => rejeitar(new Error(`Tempo esgotado (${ms}ms)`)), ms);
+        id = setTimeout(() => {
+          venceu = true;
+          // A chamada segue viva. Se ela falhar depois, o motivo real
+          // aparece aqui — e nao em lugar nenhum, como antes.
+          void promessa.catch((err) => {
+            if (venceu && aoFalharTarde) aoFalharTarde(err);
+          });
+          rejeitar(new Error(`Tempo esgotado (${ms}ms)`));
+        }, ms);
       }),
     ]);
   } finally {
@@ -159,7 +189,16 @@ export class AnalisadorGemini implements AnalisadorDeCadencia {
             temperature: 0,
           },
         }),
-        this.timeoutMs
+        this.timeoutMs,
+        (err) => {
+          // Sem logger neste package — e o `console` do worker que
+          // aparece na janela onde voce ve o que aconteceu.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(
+            '[gemini] a chamada que estourou o prazo falhou depois com:',
+            redigir(msg, this.apiKey)
+          );
+        }
       );
 
       const latenciaMs = Date.now() - comeco;

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, LogOut, FlaskConical, CheckCheck } from 'lucide-react';
+import { Bell, LogOut, FlaskConical, CheckCheck, X, Trash2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { get, post } from '@/lib/api';
+import { get, post, del } from '@/lib/api';
 import { Button, Badge } from '@/components/ui/primitives';
 import { useLogout, type Usuario } from '@/hooks/useAuth';
 import type { StatusConexaoSSE } from '@/hooks/useEvents';
@@ -129,6 +129,20 @@ function SinoNotificacoes() {
     onSuccess: invalidar,
   });
 
+  // Apagar e diferente de marcar como lida. "Lida" quer dizer "eu vi";
+  // apagar quer dizer "isto nao me serve" — o aviso de um lead que voce
+  // decidiu ignorar, ou o terceiro aviso identico de um numero que nem
+  // existe. Sem isto a lista so crescia.
+  const apagar = useMutation({
+    mutationFn: (id: string) => del(`/api/notifications/${id}`),
+    onSuccess: invalidar,
+  });
+
+  const apagarLidas = useMutation({
+    mutationFn: () => del('/api/notifications/lidas'),
+    onSuccess: invalidar,
+  });
+
   const naoLidas = data?.naoLidas ?? 0;
 
   return (
@@ -154,17 +168,32 @@ function SinoNotificacoes() {
           <div className="absolute right-0 top-10 z-50 w-80 overflow-hidden rounded-xl border border-[var(--color-borda)] bg-white shadow-lg">
             <div className="flex items-center justify-between border-b border-[var(--color-borda)] px-4 py-2 text-sm font-medium">
               Notificações
-              {naoLidas > 0 && (
-                <Button
-                  variant="fantasma"
-                  size="sm"
-                  aria-label="Marcar todas como lidas"
-                  disabled={marcarTodas.isPending}
-                  onClick={() => marcarTodas.mutate()}
-                >
-                  <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                </Button>
-              )}
+              <span className="flex items-center gap-0.5">
+                {naoLidas > 0 && (
+                  <Button
+                    variant="fantasma"
+                    size="sm"
+                    aria-label="Marcar todas como lidas"
+                    title="Marcar todas como lidas"
+                    disabled={marcarTodas.isPending}
+                    onClick={() => marcarTodas.mutate()}
+                  >
+                    <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                  </Button>
+                )}
+                {(data?.notificacoes.some((n) => n.lida) ?? false) && (
+                  <Button
+                    variant="fantasma"
+                    size="sm"
+                    aria-label="Apagar as lidas"
+                    title="Apagar as lidas"
+                    disabled={apagarLidas.isPending}
+                    onClick={() => apagarLidas.mutate()}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  </Button>
+                )}
+              </span>
             </div>
             <div className="max-h-96 overflow-y-auto">
               {(data?.notificacoes.length ?? 0) === 0 ? (
@@ -181,17 +210,37 @@ function SinoNotificacoes() {
                       {/* Clicar marca como lida. Antes o sino so exibia:
                           o contador nunca zerava e a lista virava um mural
                           que ninguem conseguia limpar. */}
-                      <button
-                        type="button"
-                        className="w-full text-left"
-                        disabled={n.lida || marcarLida.isPending}
-                        onClick={() => marcarLida.mutate(n.id)}
-                      >
-                        <div className="text-sm font-medium">{n.titulo}</div>
-                        <div className="text-xs text-[var(--color-texto-suave)]">
-                          {n.mensagem}
-                        </div>
-                      </button>
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          disabled={n.lida || marcarLida.isPending}
+                          onClick={() => marcarLida.mutate(n.id)}
+                        >
+                          <div className="text-sm font-medium">{n.titulo}</div>
+                          <div className="text-xs text-[var(--color-texto-suave)]">
+                            {n.mensagem}
+                          </div>
+                        </button>
+
+                        {/* Apagar UMA. Some da lista e não volta — mas o
+                            lead continua exatamente onde estava: se ele
+                            aguarda intervenção, quem destrava é o botão
+                            de liberar, na tela dele. Um "apagar" que
+                            também retomasse a cadência mandaria mensagem
+                            para um cliente seu como efeito colateral de
+                            limpar a caixa de avisos. */}
+                        <button
+                          type="button"
+                          aria-label={`Apagar: ${n.titulo}`}
+                          title="Apagar esta notificação"
+                          className="shrink-0 rounded p-1 text-[var(--color-texto-fraco)] hover:bg-[var(--color-fundo)] hover:text-[var(--color-alerta)]"
+                          disabled={apagar.isPending}
+                          onClick={() => apagar.mutate(n.id)}
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
