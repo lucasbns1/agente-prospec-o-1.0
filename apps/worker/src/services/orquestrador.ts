@@ -40,6 +40,7 @@
 import { prisma, Prisma } from '@prospector/database';
 import {
   ACOES_QUE_ENVIAM,
+  respostaPermiteAvancar,
   validarDecisao,
   proximaEtapaEsperada,
   etapaDaOrdem,
@@ -399,29 +400,30 @@ export async function orquestrarCadencia(
   // --- A IA falhou: fallback deterministico ---
   if (!analise.ok) {
     // ============================================================
-    // O FALLBACK NAO ENVIA
+    // O FALLBACK CONSULTA AS SUAS REGRAS
     // ============================================================
-    // Quando a IA esta ligada, ela e quem decide. Se ela nao respondeu, o
-    // sistema NAO SABE o que o lead disse — sabe apenas o que o
-    // dicionario achou, que e exatamente a limitacao que motivou ligar a
-    // IA.
+    // Antes, qualquer acao que ENVIASSE virava intervencao quando a IA
+    // falhava. Era seguro e caro: cada timeout do Gemini congelava um
+    // lead que o motor deterministico saberia conduzir sozinho — e um
+    // timeout de 30s virou rotina.
     //
-    // Mandar a proxima mensagem nesse estado e apostar. E uma mensagem
-    // enviada nao volta atras, enquanto um lead esperando meia hora a
-    // mais volta.
+    // O motor nao e chute. Ele classifica contra um dicionario de
+    // centenas de termos, com confianca, e as regras de cada etapa
+    // (POSITIVO -> AVANCAR, PRECO -> AGUARDAR_INTERVENCAO) sao as que
+    // VOCE configurou na tela. Ignorar tudo isso e jogar fora a resposta
+    // que o sistema tem para dar.
     //
-    // Entao acoes que ENVIAM viram intervencao: a cadencia para, uma
-    // tarefa nasce e voce e avisado. Acoes que apenas silenciam (WAIT,
-    // PAUSE, STOP) passam normalmente — elas nao arriscam nada.
-    //
-    // Com a IA DESLIGADA isto nao se aplica: ali o motor e o dono do
-    // sistema, nao um substituto de emergencia, e o comportamento e o de
-    // antes da Fase 9.
-    const arriscada = ACOES_QUE_ENVIAM.includes(motor.acao);
-    const acaoSegura: AcaoIA = arriscada ? 'CREATE_INTERVENTION' : motor.acao;
+    // Agora ele pergunta o que a sua regra manda fazer. Ver
+    // `respostaPermiteAvancar`, que carrega os tres casos em que a
+    // resposta NAO libera a proxima mensagem: opt-out e negativo, baixa
+    // confianca, e categoria sem regra configurada.
+    const ultimaResposta = ctx.respostas[ctx.respostas.length - 1];
+    const veredicto = respostaPermiteAvancar(ultimaResposta, ctx.regras);
+
+    const arriscada = ACOES_QUE_ENVIAM.includes(motor.acao) && !veredicto.permite;
+    const acaoSegura: AcaoIA = arriscada ? veredicto.acao : motor.acao;
     const motivoSeguro = arriscada
-      ? `A IA nao respondeu (${analise.erro}) e a proxima acao seria ${motor.acao}. ` +
-        'A cadencia parou para voce decidir, em vez de arriscar uma mensagem.'
+      ? `A IA nao respondeu (${analise.erro}). ${veredicto.motivo}`
       : motor.motivo;
 
     opcoes.log.warn(

@@ -250,6 +250,29 @@ dinheiro.
 | `apps/worker/src/services/gatilhos-ia.ts` | os gatilhos |
 | `apps/worker/src/services/notificar.ts` | notificação idempotente |
 
+## Quando a IA não responde
+
+O fallback não congela mais tudo. Ele pergunta o que a **sua regra** manda
+fazer com aquela resposta — `POSITIVO → AVANCAR` envia, `PRECO →
+AGUARDAR_INTERVENCAO` te chama.
+
+Três recusas continuam de pé, e nenhuma é configurável para menos:
+
+| Situação | O que acontece |
+|---|---|
+| `OPT_OUT` ou `NEGATIVO` | para sempre, mesmo com regra mandando avançar |
+| Confiança do motor abaixo de 50 | vira intervenção, mesmo com regra de avançar |
+| Categoria sem regra configurada | vira intervenção — sem instrução, pergunta |
+
+Sem resposta nenhuma do lead, quem manda é o relógio: uma etapa que anda
+sozinha continua andando, porque não há o que interpretar.
+
+Antes disso, qualquer ação que enviasse virava intervenção quando a IA
+falhava. Era seguro e caro: um timeout de 30s virou rotina em uso real, e
+cada um congelava um lead que o motor saberia conduzir.
+
+Ver `respostaPermiteAvancar` em `packages/domain/src/ai/`.
+
 ## O que NÃO mudou
 
 As barreiras de envio (`FASE_PERMITE_ENVIO_REAL`

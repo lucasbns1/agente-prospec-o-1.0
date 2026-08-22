@@ -576,45 +576,211 @@ describe('intervencao humana', () => {
 // FALLBACK — a cadencia nao para porque a IA parou
 // =============================================================================
 
-describe('quando a IA falha, o sistema NAO arrisca uma mensagem', () => {
+/**
+ * A etapa 1 já saiu e o lead está parado nela.
+ *
+ * É o estado real em que uma resposta chega: sem isto o vínculo não tem
+ * `etapaAtualId`, o contexto vem SEM regras, e todo teste de regra
+ * passaria pelo motivo errado ("não há regra configurada").
+ */
+async function etapa1JaSaiu(
+  lead: { id: string },
+  campanha: { id: string },
+  etapa: { id: string }
+): Promise<void> {
+  await prisma.outboundMessage.create({
+    data: {
+      leadId: lead.id,
+      campaignId: campanha.id,
+      campaignStepId: etapa.id,
+      idempotencyKey: `regra-${lead.id}-1`,
+      status: 'ENVIADA',
+      textoRenderizado: 'Mensagem 1',
+      processedAt: new Date(),
+      dryRun: true,
+    },
+  });
+  await prisma.leadCampaign.updateMany({
+    where: { leadId: lead.id, campaignId: campanha.id },
+    data: {
+      etapaAtualId: etapa.id,
+      etapaAtualOrdem: 1,
+      status: 'AGUARDANDO_RESPOSTA',
+    },
+  });
+}
+
+/**
+ * Uma resposta do lead, já classificada pelo motor.
+ *
+ * O `categoria`/`confianca` são o que o dicionário achou — exatamente o
+ * que o contexto entrega à IA e ao fallback.
+ */
+async function responder(
+  lead: { id: string },
+  campanha: { id: string },
+  texto: string,
+  categoria: string,
+  confianca: number
+): Promise<void> {
+  const conversa = await prisma.conversation.upsert({
+    where: { id: `${lead.id}-${campanha.id}` },
+    update: {},
+    create: { id: `${lead.id}-${campanha.id}`, leadId: lead.id, campaignId: campanha.id },
+  });
+  await prisma.message.create({
+    data: {
+      conversationId: conversa.id,
+      leadId: lead.id,
+      campaignId: campanha.id,
+      direcao: 'RECEBIDA',
+      status: 'ENTREGUE',
+      texto,
+      categoria,
+      confianca,
+      recebidaEm: new Date(),
+    },
+  });
+}
+
+describe('quando a IA falha, o motor segue as SUAS regras', () => {
   // ============================================================
-  // A REGRA QUE ESTES TESTES DEFENDEM
+  // O QUE MUDOU AQUI, E POR QUE
   // ============================================================
-  // Com a IA ligada, ela e quem decide. Se ela nao respondeu, o sistema
-  // nao sabe o que o lead disse — sabe so o que o dicionario achou, que
-  // e exatamente a limitacao que motivou liga-la.
+  // Estes testes fixavam a regra antiga: com a IA fora do ar, QUALQUER
+  // acao que enviasse virava intervencao.
   //
-  // Mandar a proxima mensagem nesse estado e apostar, e mensagem enviada
-  // nao volta atras. Um lead esperando meia hora a mais volta.
+  // Era seguro e caro. Um timeout de 30s virou rotina em uso real, e
+  // cada um congelava um lead que o motor deterministico saberia
+  // conduzir — inclusive nos casos em que nao ha nada para interpretar,
+  // como uma etapa que anda pelo relogio.
+  //
+  // A regra nova pergunta o que a resposta permite. Ver
+  // `respostaPermiteAvancar`: sem resposta, o relogio manda; com
+  // resposta, mandam a confianca do motor e a regra da etapa.
   it.each([
     ['timeout', 'Tempo esgotado (8000ms)'],
     ['JSON invalido', 'JSON fora do contrato — intent: valor invalido'],
     ['resposta vazia', 'O modelo devolveu resposta vazia'],
-  ])('%s -> nada e enviado e a cadencia para para voce decidir', async (_nome, erro) => {
-    const { lead, campanha } = await cenario();
-    const ia = new AnalisadorFalso(falha(erro));
+  ])(
+    '%s, sem resposta do lead -> o relogio manda e a etapa sai',
+    async (_nome, erro) => {
+      const { lead, campanha } = await cenario();
+      const ia = new AnalisadorFalso(falha(erro));
 
+      const r = await orq.orquestrarCadencia(
+        { leadId: lead.id, campaignId: campanha.id, gatilho: 'ETAPA_CONCLUIDA' },
+        opcoes(ia)
+      );
+
+      // Nao ha resposta nenhuma para interpretar: a decisao e aritmetica
+      // (o delay passou, existe proxima etapa). A IA nao teria o que
+      // acrescentar, e parar aqui era so atraso.
+      expect(r?.fallback).toBe(true);
+      expect(r?.acaoMotor).toBe('SEND_STEP');
+      expect(r?.acaoExecutada).toBe('SEND_STEP');
+      expect(await envios(lead.id)).toHaveLength(1);
+
+      const trilha = await prisma.aiDecision.findFirstOrThrow();
+      expect(trilha.fallback).toBe(true);
+      expect(trilha.erro).toBe(erro);
+      expect(trilha.acaoIa).toBeNull();
+      // Nao houve recusa: o motor conduziu.
+      expect(trilha.motivoRejeicao).toBeNull();
+    }
+  );
+
+  it('resposta que o motor mal entendeu ainda para a cadencia', async () => {
+    // Do diagnostico real: "ok" classifica POSITIVO com 35 de confianca.
+    // Pode ser "ok, manda" ou "ok, deixa pra la" — e a diferenca entre as
+    // duas e uma mensagem enviada para quem nao queria.
+    const { lead, campanha, etapas } = await cenario();
+    await etapa1JaSaiu(lead, campanha, etapas[0]!);
+    await responder(lead, campanha, 'ok', 'POSITIVO', 35);
+    await prisma.campaignStepRule.create({
+      data: { campaignStepId: etapas[0]!.id, categoria: 'POSITIVO', acao: 'AVANCAR' },
+    });
+
+    const ia = new AnalisadorFalso(falha('Tempo esgotado (30000ms)'));
     const r = await orq.orquestrarCadencia(
-      { leadId: lead.id, campaignId: campanha.id, gatilho: 'ETAPA_CONCLUIDA' },
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
       opcoes(ia)
     );
 
-    expect(r?.fallback).toBe(true);
-    // O motor QUERIA enviar; o sistema recusou por falta da IA.
     expect(r?.acaoMotor).toBe('SEND_STEP');
     expect(r?.acaoExecutada).toBe('CREATE_INTERVENTION');
-    expect(await envios(lead.id)).toHaveLength(0);
-
-    // E voce e avisado — silencio aqui seria um lead parado sem motivo
-    // visivel.
+    // So a etapa 1, que ja tinha saido. Nada novo entrou na fila.
+    expect(await envios(lead.id)).toHaveLength(1);
     expect(await prisma.notification.count()).toBe(1);
 
     const trilha = await prisma.aiDecision.findFirstOrThrow();
-    expect(trilha.fallback).toBe(true);
-    expect(trilha.erro).toBe(erro);
-    expect(trilha.acaoIa).toBeNull();
-    // Distingue "a guarda recusou a IA" de "o sistema nao arriscou sem ela".
     expect(trilha.motivoRejeicao).toBe('FALLBACK_NAO_ENVIA');
+  });
+
+  it('resposta clara e regra de AVANCAR: a etapa sai', async () => {
+    // O caso que antes congelava sem motivo. O lead disse "quero sim", o
+    // motor entendeu com 95, e a regra que o operador configurou manda
+    // avancar.
+    const { lead, campanha, etapas } = await cenario();
+    await etapa1JaSaiu(lead, campanha, etapas[0]!);
+    await responder(lead, campanha, 'quero sim', 'POSITIVO', 95);
+    await prisma.campaignStepRule.create({
+      data: { campaignStepId: etapas[0]!.id, categoria: 'POSITIVO', acao: 'AVANCAR' },
+    });
+
+    const ia = new AnalisadorFalso(falha('Tempo esgotado (30000ms)'));
+    const r = await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      opcoes(ia)
+    );
+
+    expect(r?.acaoExecutada).toBe('SEND_STEP');
+    // Duas: a etapa 1 que ja tinha saido, e a 2 que o motor acabou de
+    // enfileirar.
+    expect(await envios(lead.id)).toHaveLength(2);
+  });
+
+  it('NEGATIVO para, mesmo com a IA fora e regra mandando avancar', async () => {
+    // Nao existe leitura de "nao quero" que autorize a proxima mensagem.
+    // Nem uma regra mal configurada abre essa porta.
+    const { lead, campanha, etapas } = await cenario();
+    await etapa1JaSaiu(lead, campanha, etapas[0]!);
+    await responder(lead, campanha, 'nao tenho interesse', 'NEGATIVO', 90);
+    await prisma.campaignStepRule.create({
+      data: { campaignStepId: etapas[0]!.id, categoria: 'NEGATIVO', acao: 'AVANCAR' },
+    });
+
+    const ia = new AnalisadorFalso(falha('Tempo esgotado (30000ms)'));
+    const r = await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      opcoes(ia)
+    );
+
+    expect(r?.acaoExecutada).toBe('STOP_CAMPAIGN');
+    expect(await envios(lead.id)).toHaveLength(1);
+  });
+
+  it('PRECO chama voce, porque e o que a regra manda', async () => {
+    const { lead, campanha, etapas } = await cenario();
+    await etapa1JaSaiu(lead, campanha, etapas[0]!);
+    await responder(lead, campanha, 'quanto custa?', 'PRECO', 90);
+    await prisma.campaignStepRule.create({
+      data: {
+        campaignStepId: etapas[0]!.id,
+        categoria: 'PRECO',
+        acao: 'AGUARDAR_INTERVENCAO',
+      },
+    });
+
+    const ia = new AnalisadorFalso(falha('Tempo esgotado (30000ms)'));
+    const r = await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      opcoes(ia)
+    );
+
+    expect(r?.acaoExecutada).toBe('CREATE_INTERVENTION');
+    expect(await envios(lead.id)).toHaveLength(1);
+    expect(await prisma.notification.count()).toBe(1);
   });
 
   // Acoes que so silenciam nao arriscam nada, entao o fallback as executa

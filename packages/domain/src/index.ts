@@ -50,6 +50,7 @@ export * from './inbound/confirmacao-entrega.js';
 export * from './ai/decisao-ia.js';
 export * from './ai/contexto.js';
 export * from './ai/mapear-intent.js';
+export * from './ai/resposta-permite-avancar.js';
 export * from './ai/validar-decisao.js';
 export * from './ai/prompt.js';
 // --- Reconciliacao (Fase 9) ---
