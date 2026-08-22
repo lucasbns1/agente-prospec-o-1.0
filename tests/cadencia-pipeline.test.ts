@@ -962,3 +962,155 @@ describe('histórico já gravado não trava o avanço da etapa', () => {
     expect(vinculo.totalEnviadas).toBe(1);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// O CASO QUE O TESTE ACIMA NÃO PEGAVA
+//
+// O teste anterior monta a colisão de um jeito conveniente: a linha
+// existente TEM o mesmo `whatsappMessageId`, então a busca de resgate a
+// encontra e o pós-processamento segue.
+//
+// No uso real aconteceu o contrário, e o diagnóstico registrou:
+//
+//   etapa 2 | ENVIADA
+//     erro: Unique constraint failed on (whatsapp_message_id)
+//   ...
+//   etapa atual  etapa 1
+//   enviadas     1
+//
+// A mensagem 2 chegou no celular do lead. O lead ficou na etapa 1. A
+// etapa 3 nunca nasceu e nenhuma notificação foi criada — para alguém
+// que tinha acabado de responder "Sim".
+//
+// Duas correções, e a segunda é a que importa:
+//
+//   1. o resgate procura pelos DOIS caminhos (whatsappMessageId E
+//      idempotencyKey), em vez de escolher um;
+//   2. cada passo do pós-processamento cai sozinho. Mover o lead de
+//      etapa não pode mais depender de gravar o histórico ter dado
+//      certo — são coisas diferentes, e uma delas é a cadência.
+// ---------------------------------------------------------------------------
+describe('um passo do pós-processamento não derruba os outros', () => {
+  it('histórico que colide E não é achado pelo id ainda deixa o lead avançar', async () => {
+    const { criarWorkerOutbound } = await import(
+      '../apps/worker/src/workers/outbound.js'
+    );
+    const lead = await criarLead();
+    const { campanha, etapas } = await criarCampanha(true);
+    await prisma.campaign.update({
+      where: { id: campanha.id },
+      data: { dryRun: false },
+    });
+    await prisma.campaignStep.update({
+      where: { id: etapas[0]!.id },
+      data: { notificarAoChegar: true },
+    });
+
+    const CHAVE = `pos-${Date.now()}-${n}`;
+
+    const conversa = await prisma.conversation.create({
+      data: {
+        id: `${lead.id}-${campanha.id}`,
+        leadId: lead.id,
+        campaignId: campanha.id,
+        chatId: `${lead.telefoneNormalizado}@c.us`,
+        ultimaMensagemEm: new Date(),
+      },
+    });
+
+    // A armadilha: a linha existente tem a MESMA idempotencyKey e um
+    // whatsappMessageId DIFERENTE do que o adapter vai devolver. A busca
+    // antiga procurava só pelo id do adapter, não achava nada, e
+    // relançava o erro original — matando tudo que vinha depois.
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        direcao: 'ENVIADA',
+        status: 'ENVIADA',
+        texto: 'Olá!',
+        idempotencyKey: CHAVE,
+        whatsappMessageId: `outro-id-${Date.now()}-${n}`,
+      },
+    });
+
+    await prisma.leadCampaign.create({
+      data: { leadId: lead.id, campaignId: campanha.id, status: 'PENDENTE' },
+    });
+
+    const m = await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: CHAVE,
+        status: 'AGENDADA',
+        telefoneDestino: lead.telefoneNormalizado,
+        textoRenderizado: 'Olá!',
+        textoTemplate: 'Olá!',
+        variaveisUsadas: {},
+        dryRun: false,
+        scheduledAt: new Date(),
+      },
+    });
+
+    const adapter = {
+      sendMessage: async () => ({
+        sucesso: true,
+        whatsappMessageId: `wa-novo-${Date.now()}-${n}`,
+        simulado: false,
+      }),
+      confirmarEnvio: async () => null,
+      isRegistered: async () => true,
+      getContacts: async () => [],
+      mensagensPerdidas: async () => [],
+      connect: async () => {},
+      disconnect: async () => {},
+      getStatus: () => ({ status: 'CONECTADO' }),
+      onReady: () => {}, onQr: () => {}, onMessage: () => {},
+      onDisconnected: () => {}, onStatusChange: () => {},
+    } as never;
+
+    await workerOutbound.pause();
+    const w = criarWorkerOutbound(log, adapter);
+    await w.waitUntilReady();
+    try {
+      await processarFila();
+    } finally {
+      await w.close();
+      await workerOutbound.resume();
+    }
+
+    const depois = await prisma.outboundMessage.findUniqueOrThrow({
+      where: { id: m.id },
+    });
+
+    // A mensagem saiu — isso nunca esteve em dúvida.
+    expect(depois.status).toBe('ENVIADA');
+
+    // Nenhum passo falhou: a busca de resgate encontrou a linha pela
+    // `idempotencyKey` depois de não achar pelo id do adapter.
+    //
+    // Esta asserção pina a PRIMEIRA correção. Sem ela — mas com o
+    // isolamento dos passos — o lead ainda avançaria, e o teste
+    // passaria: por isso ela é separada e explícita. `erro` preenchido
+    // aqui significa que a colisão voltou a derrubar o histórico.
+    expect(depois.erro).toBeNull();
+
+    // O QUE IMPORTA: o lead ANDOU. Esta é a asserção que falhava no uso
+    // real, com a mensagem no celular e o quadro parado.
+    const vinculo = await prisma.leadCampaign.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(vinculo.etapaAtualId).toBe(etapas[0]!.id);
+    expect(vinculo.totalEnviadas).toBe(1);
+    expect(vinculo.status).toBe('AGUARDANDO_RESPOSTA');
+
+    // E o aviso nasceu. Antes ele era a terceira vítima do mesmo erro:
+    // o passo nem chegava a rodar.
+    const avisos = await prisma.notification.findMany({
+      where: { leadId: lead.id },
+    });
+    expect(avisos).toHaveLength(1);
+  }, 60_000);
+});

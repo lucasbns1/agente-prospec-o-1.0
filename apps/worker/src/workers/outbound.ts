@@ -570,32 +570,89 @@ export function criarWorkerOutbound(
       // retentativa encontraria a mensagem ja ENVIADA. No melhor caso
       // seria trabalho jogado fora; no pior, o comportamento antigo de
       // marcar FALHOU o que ja tinha saido.
-      try {
-        // ============================================================
-        // GRAVAR O HISTORICO DUAS VEZES NAO E ERRO
-        // ============================================================
-        // `whatsapp_message_id` e UNIQUE, e com razao: e ele que amarra
-        // a confirmacao de entrega (ACK) a mensagem certa.
-        //
-        // So que uma segunda tentativa de gravar a MESMA mensagem nao e
-        // um problema — e a mesma mensagem. Deixar a colisao estourar
-        // derrubava o pos-processamento inteiro, e com ele tudo que vem
-        // depois: mover o lead para a etapa seguinte, atualizar o
-        // quadro, criar a notificacao, agendar a proxima mensagem.
-        //
-        // Foi exatamente isto que aconteceu no uso real:
-        //
-        //   etapa 2 | ENVIADA
-        //     erro: Unique constraint failed on (whatsapp_message_id)
-        //
-        // A mensagem 2 chegou no celular, mas o lead ficou registrado na
-        // etapa 1. A conversa nao mostrou a mensagem, o quadro nao
-        // andou, e a etapa 3 nunca nasceu — tudo por causa de uma
-        // gravacao de historico repetida.
-        //
-        // Agora a colisao e tratada como o que ela e: ja esta gravado,
-        // segue em frente com a linha que ja existe.
-        let mensagem: { id: string };
+      // ============================================================
+      // CADA PASSO CAI SOZINHO
+      // ============================================================
+      // Antes, os cinco passos abaixo viviam dentro de UM try. O primeiro
+      // que falhasse cancelava todos os seguintes — e o primeiro da fila
+      // era o menos importante de todos: gravar o historico.
+      //
+      // O caso real, com o print do diagnostico:
+      //
+      //   etapa 2 | ENVIADA
+      //     erro: Unique constraint failed on (whatsapp_message_id)
+      //   ...
+      //   etapa atual  etapa 1
+      //   enviadas     1
+      //
+      // A mensagem 2 chegou no celular. O lead ficou registrado na etapa
+      // 1, com "enviadas: 1", porque a gravacao repetida do historico
+      // abortou o bloco antes de mover o quadro. A cadencia congelou e
+      // nenhuma notificacao nasceu — para um lead que tinha acabado de
+      // responder "Sim".
+      //
+      // Um passo que falha agora contamina APENAS a si mesmo. Os outros
+      // rodam. As falhas sao juntadas e gravadas no fim, no campo `erro`,
+      // com o status intacto.
+      //
+      // A ordem tambem mudou: mover o quadro vem PRIMEIRO. Ele e o unico
+      // passo de que a cadencia depende para continuar existindo; o
+      // resto e registro e aviso.
+      const falhasPos: string[] = [];
+
+      const passo = async (nome: string, fn: () => Promise<void>): Promise<void> => {
+        try {
+          await fn();
+        } catch (err) {
+          const detalhe = err instanceof Error ? err.message : String(err);
+          falhasPos.push(`${nome}: ${detalhe}`);
+          log.error(
+            { outboundMessageId, etapa: m.campaignStep.ordem, passo: nome, err },
+            'Passo do pós-processamento falhou — os outros seguem'
+          );
+        }
+      };
+
+      // --- 1. Move o lead para a coluna desta etapa, no quadro ---
+      //
+      // Acontece TAMBEM em simulacao, de proposito: o dry-run existe para
+      // ensaiar o fluxo inteiro. Se o quadro so andasse com envio real,
+      // ele ficaria parado justamente na fase em que voce confere se a
+      // sequencia faz sentido.
+      //
+      // `updateMany` e nao `update`: o vinculo pode nao existir (mensagem
+      // enfileirada por uma versao anterior), e falhar aqui perderia o
+      // registro de um envio que ja aconteceu.
+      await passo('mover o lead de etapa', async () => {
+        await prisma.leadCampaign.updateMany({
+          where: { leadId: m.lead.id, campaignId: m.campaign.id },
+          data: {
+            etapaAtualId: m.campaignStep.id,
+            etapaAtualOrdem: m.campaignStep.ordem,
+            // Quem decide o proximo estado e a ETAPA, nao o worker: se ela
+            // espera resposta, o lead fica aguardando; senao a sequencia
+            // segue sozinha.
+            status: m.campaignStep.aguardarResposta
+              ? 'AGUARDANDO_RESPOSTA'
+              : 'EM_ANDAMENTO',
+            totalEnviadas: { increment: 1 },
+          },
+        });
+      });
+
+      // --- 2. Grava o historico ---
+      //
+      // `whatsapp_message_id` e UNIQUE, e com razao: e ele que amarra a
+      // confirmacao de entrega (ACK) a mensagem certa. Mas uma segunda
+      // tentativa de gravar a MESMA mensagem nao e um problema — e a
+      // mesma mensagem.
+      //
+      // Se nem a linha existente for encontrada, o passo desiste em vez
+      // de lancar: o `messageId` do outbound fica sem vinculo, o que a
+      // reconciliacao detecta e reporta. Perder o vinculo e barato;
+      // perder a cadencia inteira nao era.
+      await passo('gravar o histórico', async () => {
+        let mensagem: { id: string } | null = null;
         try {
           mensagem = await prisma.message.create({
             data: {
@@ -625,65 +682,54 @@ export function criarWorkerOutbound(
             throw err;
           }
 
-          // Ja existe. Reaproveita a linha em vez de desistir do resto.
-          const existente = await prisma.message.findFirst({
-            where: resultadoEnvio.whatsappMessageId
-              ? { whatsappMessageId: resultadoEnvio.whatsappMessageId }
-              : { idempotencyKey: m.idempotencyKey },
-            select: { id: true },
-          });
-
-          if (!existente) throw err;
-          mensagem = existente;
+          // Ja existe. Procura pelos DOIS caminhos, e nao so por um: a
+          // colisao pode ter sido no `whatsapp_message_id` enquanto a
+          // linha esta achavel pela `idempotencyKey`, ou o contrario.
+          // Procurar por um so foi o que fez este catch relancar o erro
+          // original em vez de seguir em frente.
+          mensagem =
+            (resultadoEnvio.whatsappMessageId
+              ? await prisma.message.findFirst({
+                  where: { whatsappMessageId: resultadoEnvio.whatsappMessageId },
+                  select: { id: true },
+                })
+              : null) ??
+            (await prisma.message.findFirst({
+              where: { idempotencyKey: m.idempotencyKey },
+              select: { id: true },
+            }));
 
           log.warn(
-            { outboundMessageId, etapa: m.campaignStep.ordem, messageId: existente.id },
-            'Histórico desta mensagem já estava gravado — seguindo com o registro existente'
+            {
+              outboundMessageId,
+              etapa: m.campaignStep.ordem,
+              messageId: mensagem?.id ?? null,
+            },
+            'Histórico desta mensagem já estava gravado — seguindo em frente'
           );
         }
 
-        // So o vinculo com a mensagem gravada. O status ja foi decidido
-        // la em cima, quando o transporte teve sucesso.
-        await prisma.outboundMessage.update({
-          where: { id: outboundMessageId },
-          data: { messageId: mensagem.id },
-        });
+        if (mensagem) {
+          // So o vinculo com a mensagem gravada. O status ja foi decidido
+          // la em cima, quando o transporte teve sucesso.
+          await prisma.outboundMessage.update({
+            where: { id: outboundMessageId },
+            data: { messageId: mensagem.id },
+          });
+        }
+      });
 
-        // --- Move o lead para a coluna desta etapa, no quadro ---
-        //
-        // Acontece TAMBEM em simulacao, de proposito: o dry-run existe para
-        // ensaiar o fluxo inteiro. Se o quadro so andasse com envio real,
-        // ele ficaria parado justamente na fase em que voce confere se a
-        // sequencia faz sentido.
-        //
-        // `updateMany` e nao `update`: o vinculo pode nao existir (mensagem
-        // enfileirada por uma versao anterior), e falhar aqui perderia o
-        // registro de um envio que ja aconteceu.
-        await prisma.leadCampaign.updateMany({
-          where: { leadId: m.lead.id, campaignId: m.campaign.id },
-          data: {
-            etapaAtualId: m.campaignStep.id,
-            etapaAtualOrdem: m.campaignStep.ordem,
-            // Quem decide o proximo estado e a ETAPA, nao o worker: se ela
-            // espera resposta, o lead fica aguardando; senao a sequencia
-            // segue sozinha.
-            status: m.campaignStep.aguardarResposta
-              ? 'AGUARDANDO_RESPOSTA'
-              : 'EM_ANDAMENTO',
-            totalEnviadas: { increment: 1 },
-          },
-        });
-
-        // --- "Me avise quando alguem chegar nesta etapa" ---
-        //
-        // Configurado por etapa. E o que transforma um trabalho manual no
-        // meio da sequencia ("montar a previa do site deste") em algo que
-        // te procura, em vez de depender de voce olhar o quadro.
-        //
-        // Dispara TAMBEM em simulacao: se so avisasse no envio real, voce
-        // descobriria que o aviso nao funciona justamente no dia em que
-        // passou a depender dele.
-        if (m.campaignStep.notificarAoChegar) {
+      // --- 3. "Me avise quando alguem chegar nesta etapa" ---
+      //
+      // Configurado por etapa. E o que transforma um trabalho manual no
+      // meio da sequencia ("montar a previa do site deste") em algo que
+      // te procura, em vez de depender de voce olhar o quadro.
+      //
+      // Dispara TAMBEM em simulacao: se so avisasse no envio real, voce
+      // descobriria que o aviso nao funciona justamente no dia em que
+      // passou a depender dele.
+      if (m.campaignStep.notificarAoChegar) {
+        await passo('criar a notificação da etapa', async () => {
           const rotuloEtapa =
             m.campaignStep.nome?.trim() || `Mensagem ${m.campaignStep.ordem}`;
           const quem = m.lead.empresa ?? m.lead.nomeCompleto ?? 'Lead sem nome';
@@ -704,8 +750,11 @@ export function criarWorkerOutbound(
             link: `/conversas/${m.lead.id}`,
             referencia: `chegou-etapa:${m.campaignStep.id}`,
           });
-        }
+        });
+      }
 
+      // --- 4. A linha do tempo do lead ---
+      await passo('registrar o evento do lead', async () => {
         await prisma.leadEvent.create({
           data: {
             leadId: m.lead.id,
@@ -721,37 +770,31 @@ export function criarWorkerOutbound(
             } as Prisma.InputJsonValue,
           },
         });
+      });
 
+      // --- 5. Avisa as telas abertas ---
+      await passo('publicar o evento em tempo real', async () => {
         await publicarEvento(
           resultadoEnvio.simulado ? 'mensagem.simulada' : 'mensagem.enviada',
           { leadId: m.lead.id, campaignId: m.campaign.id }
         );
-      } catch (err) {
-        const detalhe = err instanceof Error ? err.message : String(err);
+      });
+
+      // O status NAO muda: a mensagem saiu. O `erro` descreve o que ficou
+      // por sincronizar, para a tela poder dizer "enviada, sincronizacao
+      // pendente" em vez de mentir que falhou.
+      if (falhasPos.length > 0) {
         await prisma.outboundMessage
           .update({
             where: { id: outboundMessageId },
             data: {
-              erro: `Enviada, mas o pós-processamento falhou: ${detalhe}`,
+              erro: `Enviada, mas ${falhasPos.length} passo(s) do pós-processamento falharam — ${falhasPos.join(' | ')}`,
             },
           })
           // Se ate isto falhar, o banco esta fora — e nao ha o que
-          // gravar em lugar nenhum. O log e o ultimo recurso.
+          // gravar em lugar nenhum. O log ja registrou cada passo.
           .catch(() => undefined);
-
-        log.error(
-          {
-            outboundMessageId,
-            etapa: m.campaignStep.ordem,
-            statusPreservado: statusFinal,
-            err,
-          },
-          'Envio concluído, mas o pós-processamento falhou — status preservado'
-        );
-
-        return { status: statusFinal, simulado: resultadoEnvio.simulado };
       }
-
       // ============================================================
       // GATILHO DA IA — DEPOIS DO TRANSPORTE, NUNCA DENTRO DELE
       // ============================================================
