@@ -22,6 +22,8 @@ import {
 import {
   normalizarLead,
   type DominioSocial,
+  avaliarColunaTelefone,
+  type AlertaColunaTelefone,
   type ResultadoNormalizacao,
 } from '@prospector/domain';
 
@@ -35,6 +37,11 @@ export interface ResumoAnalise {
   semSite: number;
   redeSocial: number;
   semTelefone: number;
+  /**
+   * Preenchido quando quase nenhuma linha tem telefone utilizavel — o
+   * sintoma de coluna trocada no mapeamento. Ver `avaliarColunaTelefone`.
+   */
+  alertaTelefone: AlertaColunaTelefone | null;
 }
 
 export type SituacaoLinha =
@@ -222,7 +229,13 @@ function montarResumo(linhas: LinhaAnalisada[]): ResumoAnalise {
     semSite: 0,
     redeSocial: 0,
     semTelefone: 0,
+    alertaTelefone: null,
   };
+
+  // Os valores CRUS das linhas que ficaram sem telefone. Sao eles que
+  // denunciam a coluna errada: "15" e "3" nao sao telefones truncados,
+  // sao contagem de avaliacoes.
+  const brutosRecusados: (string | null | undefined)[] = [];
 
   for (const l of linhas) {
     if (l.situacao === 'NOVO') resumo.novos++;
@@ -238,8 +251,17 @@ function montarResumo(linhas: LinhaAnalisada[]): ResumoAnalise {
     else resumo.comSite++;
 
     if (l.normalizado.dados.websiteStatus === 'REDE_SOCIAL') resumo.redeSocial++;
-    if (l.normalizado.semTelefone) resumo.semTelefone++;
+    if (l.normalizado.semTelefone) {
+      resumo.semTelefone++;
+      brutosRecusados.push(l.bruto.telefone);
+    }
   }
+
+  resumo.alertaTelefone = avaliarColunaTelefone({
+    novos: resumo.novos,
+    semTelefone: resumo.semTelefone,
+    brutosRecusados,
+  });
 
   return resumo;
 }

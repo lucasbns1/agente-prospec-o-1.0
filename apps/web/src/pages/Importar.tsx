@@ -49,6 +49,44 @@ interface Resumo {
   semSite: number;
   redeSocial: number;
   semTelefone: number;
+  /**
+   * Preenchido quando quase nenhuma linha tem telefone utilizavel. É o
+   * sintoma de coluna trocada no mapeamento — e antes ele existia só
+   * como um número entre outros, que ninguém lê.
+   */
+  alertaTelefone: {
+    proporcaoSemTelefone: number;
+    exemplos: string[];
+    mensagem: string;
+  } | null;
+}
+
+/**
+ * O aviso que precisa interromper a leitura.
+ *
+ * Um lead sem telefone é inútil para este produto: a campanha não tem
+ * para onde mandar. Se quase todos vieram assim, importar do jeito que
+ * está é jogar trabalho fora — e foi o que aconteceu com 54 leads antes
+ * de alguém perguntar por que a campanha mostrava zero.
+ */
+function AlertaTelefone({ alerta }: { alerta: Resumo['alertaTelefone'] }) {
+  if (!alerta) return null;
+  return (
+    <div
+      role="alert"
+      className="rounded-lg border border-[var(--color-alerta)] bg-[var(--color-alerta)]/5 px-4 py-3"
+    >
+      <p className="flex items-center gap-2 text-sm font-semibold text-[var(--color-alerta)]">
+        <PhoneOff className="h-4 w-4" aria-hidden="true" />
+        A coluna do telefone parece errada
+      </p>
+      <p className="mt-1.5 text-sm text-[var(--color-texto)]">{alerta.mensagem}</p>
+      <p className="mt-2 text-xs text-[var(--color-texto-suave)]">
+        Leads sem telefone entram no CRM, mas nenhuma campanha consegue
+        usá-los. Confira o mapeamento de colunas abaixo antes de importar.
+      </p>
+    </div>
+  );
 }
 
 interface Analise {
@@ -191,6 +229,8 @@ export function Importar() {
           </div>
         </div>
 
+        <AlertaTelefone alerta={r.alertaTelefone} />
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <CardResumo valor={r.totalLinhas} rotulo="Linhas no arquivo" icone={FileSpreadsheet} />
           <CardResumo valor={r.importados} rotulo="Novos leads" icone={CheckCircle2} destaque="sucesso" />
@@ -271,6 +311,8 @@ export function Importar() {
             </ul>
           </div>
         )}
+
+        <AlertaTelefone alerta={r.alertaTelefone} />
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <CardResumo valor={r.totalLinhas} rotulo="Total encontrado" icone={FileSpreadsheet} />

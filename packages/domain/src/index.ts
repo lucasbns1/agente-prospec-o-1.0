@@ -14,6 +14,7 @@ export * from './delay.js';
 
 // --- Normalizacao (Fase 2) ---
 export * from './normalization/texto.js';
+export * from './normalization/coluna-telefone.js';
 export * from './normalization/telefone.js';
 export * from './normalization/website.js';
 export * from './normalization/dedupe.js';
