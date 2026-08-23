@@ -214,12 +214,27 @@ export function FiltrosLead({
 
           Só aparece quando houve perda: com todos entrando, esta caixa
           seria ruído. */}
-      {contar.data && contar.data.funil.naPlanilha > contar.data.total && (
+      {contar.data &&
+        (contar.data.total === 0 ||
+          contar.data.funil.naPlanilha > contar.data.total) && (
         <div className="rounded-lg border border-[var(--color-borda)] px-4 py-3 text-xs text-[var(--color-texto-suave)]">
           <p className="mb-1.5">
             Partindo de <strong>{contar.data.funil.naPlanilha}</strong> lead(s)
             {nenhumLoteEscolhido ? ' no CRM' : ' nas planilhas marcadas'}:
           </p>
+
+          {/* O caso que ainda deixava um zero sem explicacao: a planilha
+              marcada nao casa com lead nenhum. Acontece quando os leads
+              dela foram apagados, ou quando a mesma lista foi importada
+              duas vezes e a segunda so gerou duplicados. */}
+          {contar.data.funil.naPlanilha === 0 && (
+            <p className="text-[var(--color-alerta)]">
+              {nenhumLoteEscolhido
+                ? 'Não há nenhum lead no CRM.'
+                : 'As planilhas marcadas não têm nenhum lead no CRM. O número ao lado do nome conta os leads da importação; se eles foram apagados depois, ele fica desatualizado.'}
+            </p>
+          )}
+
           <ul className="space-y-1">
             <Perda
               quantos={
