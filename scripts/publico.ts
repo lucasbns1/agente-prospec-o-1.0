@@ -29,6 +29,24 @@ async function main(): Promise<void> {
   // `await` no topo do modulo nao existe la. O mesmo motivo dos outros
   // scripts desta pasta.
   const { prisma } = await import('../packages/database/src/index.js');
+  const { normalizarTelefone } = await import('../packages/domain/src/index.js');
+
+  // O DDI padrao decide as regras de validacao. Com 55 valem as
+  // brasileiras (DDD de dois digitos, celular comecando com 9); com
+  // qualquer outro, so o tamanho E.164. Um DDI errado rejeita uma
+  // planilha inteira sem dizer por que.
+  const ddi = await prisma.setting.findUnique({
+    where: { chave: 'leads.telefone_ddi_padrao' },
+  });
+  const ddiAtual = String(ddi?.valor ?? '55').replace(/\D/g, '') || '55';
+
+  titulo('CONFIGURACAO');
+  console.log(`\n  DDI padrao ..................... ${ddiAtual}`);
+  console.log(
+    ddiAtual === '55'
+      ? '    (regras brasileiras: DDD de 2 digitos, celular comecando com 9)'
+      : '    (regras estrangeiras: so o tamanho E.164 e validado)'
+  );
 
   titulo('AS PLANILHAS, E QUANTOS LEADS DE VERDADE TEM CADA UMA');
 
@@ -84,6 +102,55 @@ async function main(): Promise<void> {
 
     if (nuncaContatados === 0 && naPlanilha > 0) {
       console.log('    ^ e por isto que a campanha mostra 0.');
+    }
+
+    // ============================================================
+    // POR QUE O TELEFONE SUMIU
+    // ============================================================
+    // Duas causas, e elas pedem consertos diferentes:
+    //
+    //   a coluna nao foi mapeada  -> `telefone` cru tambem esta vazio.
+    //                                Reimporte escolhendo a coluna certa.
+    //   o normalizador recusou    -> `telefone` cru existe. O motivo
+    //                                aparece abaixo, numero por numero.
+    const perdidosNoTelefone = semOptOut - comTelefone;
+    if (perdidosNoTelefone > 0) {
+      const semNadaBruto = await prisma.lead.count({
+        where: {
+          captureSessionId: s.id,
+          optOut: false,
+          status: { notIn: ['OPT_OUT', 'AGUARDANDO_INTERVENCAO'] },
+          telefoneNormalizado: null,
+          OR: [{ telefone: null }, { telefone: '' }],
+        },
+      });
+      const recusados = perdidosNoTelefone - semNadaBruto;
+
+      console.log('');
+      if (semNadaBruto > 0) {
+        console.log(
+          `    ${semNadaBruto} sem telefone NENHUM na planilha (coluna nao mapeada?)`
+        );
+      }
+      if (recusados > 0) {
+        console.log(`    ${recusados} com telefone na planilha, recusado ao normalizar:`);
+
+        const exemplos = await prisma.lead.findMany({
+          where: {
+            captureSessionId: s.id,
+            telefoneNormalizado: null,
+            telefone: { not: null },
+          },
+          select: { nomeCompleto: true, telefone: true },
+          take: 3,
+        });
+        for (const e of exemplos) {
+          const r = normalizarTelefone(e.telefone, ddiAtual);
+          console.log(
+            `      "${e.telefone}"  ->  ${r.motivoInvalido ?? 'ok?'}  (${e.nomeCompleto})`
+          );
+        }
+      }
     }
   }
 
