@@ -1171,6 +1171,150 @@ describe('mensagem recebida com a IA conduzindo', () => {
     expect(recebidas).toHaveLength(1);
   });
 
+  // ==========================================================
+  // A DUVIDA DO DICIONARIO NAO VALE CONTRA A LEITURA DA IA
+  // ==========================================================
+  // Relato de uso: "tem muita gente que escreve 'boa noite sim'".
+  //
+  // O dicionario nao reconhece a frase inteira e o motor emite o pacote
+  // de intervencao: ALTERAR_STATUS para AGUARDANDO_INTERVENCAO,
+  // CRIAR_INTERVENCAO e CRIAR_TAREFA. A IA, conduzindo, le sem
+  // dificuldade e manda avancar.
+  //
+  // Antes deste conserto os DOIS eram aplicados: a etapa 2 saia E o lead
+  // ficava congelado como "precisa de voce". Ligar a IA existe
+  // justamente para cobrir o que o dicionario nao entende — deixar a
+  // duvida DELE congelar o lead anula o motivo de ter ligado.
+  it('com a IA conduzindo, a duvida do dicionario nao congela o lead', async () => {
+    const { lead, campanha, etapas } = await cenario();
+
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `duvida-${lead.id}-1`,
+        status: 'ENVIADA',
+        textoRenderizado: 'Mensagem 1',
+        processedAt: new Date(),
+        dryRun: true,
+      },
+    });
+    await prisma.leadCampaign.updateMany({
+      where: { leadId: lead.id },
+      data: { etapaAtualId: etapas[0]!.id, etapaAtualOrdem: 1, status: 'AGUARDANDO_RESPOSTA' },
+    });
+    // A etapa precisa esperar resposta: e o caminho em que a resposta
+    // conduz a cadencia, e portanto o unico em que a IA comanda.
+    await prisma.campaignStep.update({
+      where: { id: etapas[0]!.id },
+      data: { aguardarResposta: true },
+    });
+
+    const gatilhos = await import('../apps/worker/src/services/gatilhos-ia.js');
+    const inbound = await import('../apps/worker/src/services/inbound.js');
+
+    const ia = new AnalisadorFalso(
+      decide({ intent: 'ACEITE', acao: 'SEND_STEP', etapaOrdem: 2 })
+    );
+    gatilhos.configurarIA({ analisador: ia, somenteAnalise: false, log });
+
+    try {
+      await inbound.processarMensagemRecebida({
+        providerMessageId: `wa-duvida-${lead.id}`,
+        chatId: '5511980000001@c.us',
+        telefone: (await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } }))
+          .telefoneNormalizado!,
+        texto: 'boa noite sim',
+        nomeContato: null,
+        recebidaEm: new Date(),
+        deMim: false,
+        tipo: 'chat',
+        temMidia: false,
+      });
+    } finally {
+      gatilhos.desconfigurarIA();
+    }
+
+    // A IA leu e mandou avancar: a etapa 2 saiu.
+    const daEtapa2 = await prisma.outboundMessage.findMany({
+      where: { leadId: lead.id, campaignStepId: etapas[1]!.id },
+    });
+    expect(daEtapa2).toHaveLength(1);
+
+    // E o lead NAO ficou congelado no estado contraditorio.
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.status).not.toBe('AGUARDANDO_INTERVENCAO');
+
+    // Nem gerou trabalho manual para uma frase que foi entendida.
+    expect(
+      await prisma.notification.count({
+        where: { leadId: lead.id, tipo: 'INTERVENCAO_NECESSARIA' },
+      })
+    ).toBe(0);
+    expect(await prisma.task.count({ where: { leadId: lead.id } })).toBe(0);
+  });
+
+  // A GARANTIA DO OUTRO LADO.
+  //
+  // O conserto acima pula efeitos que nascem da duvida do motor. Ele nao
+  // pode ter aberto uma fresta no opt-out: a IA pode DETECTAR um opt-out
+  // que o dicionario nao pegou; ela nunca pode desfazer um que ele pegou.
+  it('com a IA conduzindo, o opt-out do dicionario continua valendo', async () => {
+    const { lead, campanha, etapas } = await cenario();
+
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapas[0]!.id,
+        idempotencyKey: `optout-${lead.id}-1`,
+        status: 'ENVIADA',
+        textoRenderizado: 'Mensagem 1',
+        processedAt: new Date(),
+        dryRun: true,
+      },
+    });
+    await prisma.leadCampaign.updateMany({
+      where: { leadId: lead.id },
+      data: { etapaAtualId: etapas[0]!.id, etapaAtualOrdem: 1, status: 'AGUARDANDO_RESPOSTA' },
+    });
+    await prisma.campaignStep.update({
+      where: { id: etapas[0]!.id },
+      data: { aguardarResposta: true },
+    });
+
+    const gatilhos = await import('../apps/worker/src/services/gatilhos-ia.js');
+    const inbound = await import('../apps/worker/src/services/inbound.js');
+
+    // A IA erra feio de proposito: manda avancar em cima de um opt-out.
+    const ia = new AnalisadorFalso(
+      decide({ intent: 'ACEITE', acao: 'SEND_STEP', etapaOrdem: 2 })
+    );
+    gatilhos.configurarIA({ analisador: ia, somenteAnalise: false, log });
+
+    try {
+      await inbound.processarMensagemRecebida({
+        providerMessageId: `wa-optout-${lead.id}`,
+        chatId: '5511980000001@c.us',
+        telefone: (await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } }))
+          .telefoneNormalizado!,
+        texto: 'não quero receber mais mensagens, me tire da lista',
+        nomeContato: null,
+        recebidaEm: new Date(),
+        deMim: false,
+        tipo: 'chat',
+        temMidia: false,
+      });
+    } finally {
+      gatilhos.desconfigurarIA();
+    }
+
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.status).toBe('OPT_OUT');
+    expect(l.optOut).toBe(true);
+  });
+
   it('o contexto entregue traz a conversa nos DOIS sentidos', async () => {
     const { lead, campanha, etapas } = await cenario();
 

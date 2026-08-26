@@ -43,6 +43,7 @@ export * from './relatorio/semana.js';
 // --- Recebimento (Fase 6A) ---
 export * from './inbound/identificar-lead.js';
 export * from './inbound/confirmacao-entrega.js';
+export * from './inbound/assumir-conversa.js';
 // --- Orquestracao por IA (Fase 9) ---
 //
 // Tudo aqui e puro: contrato, traducao, guarda e montagem de prompt. A

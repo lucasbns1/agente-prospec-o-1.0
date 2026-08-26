@@ -34,6 +34,7 @@ import {
   avaliarAck,
   acaoDoMotor,
   estadoDeStatus,
+  estadoAoAssumirConversa,
   type ResultadoClassificacao,
 } from '@prospector/domain';
 import type { MensagemEntrada } from '@prospector/integrations';
@@ -237,10 +238,32 @@ async function aplicarEfeitos(
      * enfileiramento. Mas os efeitos colaterais aconteceriam duas
      * vezes, e a trilha passaria a mentir sobre quem decidiu.
      *
-     * SO estes dois sao pulados. Tudo o mais continua valendo:
-     * opt-out, status, temperatura, snooze, parada de sequencia,
-     * intervencao, tarefa e historico. O motor nunca deixa de ser a
-     * barreira determinista — ele deixa de ser o CONDUTOR.
+     * ============================================================
+     * A DUVIDA DO DICIONARIO NAO VALE CONTRA A LEITURA DA IA
+     * ============================================================
+     * A lista comecou com dois efeitos — avancar e responder — e isso
+     * produziu um estado contraditorio em uso real.
+     *
+     * O lead escreveu "boa noite sim". O dicionario nao reconheceu a
+     * frase inteira, devolveu confianca baixa, e o motor emitiu
+     * CRIAR_INTERVENCAO. A IA, que estava conduzindo, leu sem
+     * dificuldade e mandou avancar. Os dois efeitos foram aplicados: a
+     * etapa seguinte foi enfileirada E o lead ficou congelado como
+     * "precisa de voce".
+     *
+     * Ligar a IA existe justamente para cobrir o que o dicionario nao
+     * entende. Deixar a incerteza DELE congelar o lead anula o motivo de
+     * ter ligado.
+     *
+     * Entao quando a IA conduz, tudo que nasce da duvida do motor e
+     * pulado: avancar, responder por template, pedir intervencao, criar
+     * tarefa, e marcar o lead como AGUARDANDO_INTERVENCAO. Se a
+     * intervencao for necessaria, quem pede e a IA — pela acao dela, que
+     * passa pela guarda.
+     *
+     * O QUE NUNCA E PULADO: opt-out, cancelamento e parada de sequencia.
+     * A IA pode DETECTAR um opt-out que o dicionario nao pegou; ela nunca
+     * pode desfazer um que ele pegou.
      */
     iaConduz?: boolean;
   }
@@ -248,6 +271,10 @@ async function aplicarEfeitos(
   for (const efeito of efeitos) {
     switch (efeito.tipo) {
       case 'ALTERAR_STATUS':
+        // O unico status que nasce da duvida. Os demais (EM_CONVERSA,
+        // OPT_OUT, AGENDADO) descrevem o que aconteceu e continuam
+        // valendo com a IA no comando.
+        if (contexto.iaConduz && efeito.para === 'AGUARDANDO_INTERVENCAO') break;
         await prisma.lead.update({
           where: { id: leadId },
           data: { status: efeito.para as never, proximaAcao: efeito.motivo },
@@ -293,6 +320,9 @@ async function aplicarEfeitos(
         break;
 
       case 'CRIAR_TAREFA':
+        // Mesma origem da intervencao: e o trabalho que a duvida do
+        // dicionario cria. Com a IA lendo, ela decide se ha trabalho.
+        if (contexto.iaConduz) break;
         await prisma.task.create({
           data: {
             leadId,
@@ -305,6 +335,9 @@ async function aplicarEfeitos(
         break;
 
       case 'CRIAR_INTERVENCAO':
+        // Nasce da duvida do dicionario. Com a IA conduzindo, quem pede
+        // intervencao e ela — ver o cabecalho de `iaConduz`.
+        if (contexto.iaConduz) break;
         await criarNotificacao({
           tipo: 'INTERVENCAO_NECESSARIA',
           titulo: efeito.titulo,
@@ -549,6 +582,40 @@ async function registrarMensagemManual(p: {
     });
   }
 
+  // ============================================================
+  // O LEAD MUDA DE LUGAR NO QUADRO
+  // ============================================================
+  // Sem isto, voce assumia a conversa e o lead continuava aparecendo
+  // como "aguardando resposta", frio, na mesma coluna de quem nunca
+  // falou com voce. O dashboard mentia sobre onde a sua prospeccao
+  // estava.
+  //
+  // Quem decide o que gravar e `estadoAoAssumirConversa` — ela existe
+  // porque escrever EM_CONVERSA sem olhar o estado atual REBAIXA quem ja
+  // esta adiante (OPORTUNIDADE, CLIENTE) e ressuscitaria um OPT_OUT.
+  //
+  // `ultimaInteracaoEm` sobe SEMPRE, inclusive nesses casos: ela conta
+  // quando a conversa se mexeu pela ultima vez, e ela se mexeu.
+  const atual = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { status: true },
+  });
+  const novoEstado = estadoAoAssumirConversa(atual?.status ?? '');
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      ultimaInteracaoEm: entrada.recebidaEm,
+      ...(novoEstado.status !== null
+        ? {
+            status: novoEstado.status as never,
+            temperatura: novoEstado.temperatura as never,
+            proximaAcao: novoEstado.proximaAcao,
+          }
+        : {}),
+    },
+  });
+
   await prisma.leadEvent.create({
     data: {
       leadId,
@@ -559,6 +626,19 @@ async function registrarMensagemManual(p: {
   });
 
   void publicarEvento('mensagem.enviada', { leadId, campaignId });
+  if (novoEstado.status !== null) {
+    void publicarEvento('lead.status_alterado', {
+      leadId,
+      status: novoEstado.status,
+    });
+    void publicarEvento('lead.temperatura_alterada', {
+      leadId,
+      temperatura: novoEstado.temperatura,
+    });
+  }
+  // O dashboard conta status e temperatura; sem este aviso os cartoes so
+  // mudariam na proxima vez que voce recarregasse a pagina.
+  void publicarEvento('dashboard.atualizar');
 
   return { processada: true, leadId, motivo: 'Mensagem manual registrada' };
 }

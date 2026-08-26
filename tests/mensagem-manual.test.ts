@@ -177,6 +177,63 @@ describe('assumir a conversa pausa o robô', () => {
   });
 });
 
+describe('o lead muda de lugar no quadro', () => {
+  it('assumir a conversa deixa o lead EM_CONVERSA e QUENTE', async () => {
+    // Sem isto, você respondia pelo celular e o lead continuava
+    // aparecendo como "aguardando resposta", frio, na mesma coluna de
+    // quem nunca falou com você. O quadro mentia justamente sobre os
+    // leads mais avançados.
+    const { lead } = await cenario();
+
+    await inbound.processarMensagemRecebida(
+      entrada(lead, 'boa noite! consigo te mostrar amanhã', true)
+    );
+
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.status).toBe('EM_CONVERSA');
+    expect(l.temperatura).toBe('QUENTE');
+    expect(l.proximaAcao).toContain('conduzindo');
+    expect(l.ultimaInteracaoEm).not.toBeNull();
+  });
+
+  it('NÃO ressuscita um lead em opt-out', async () => {
+    // "Desculpa, já te tirei da lista" não pode devolver ao funil quem
+    // pediu para sair. OPT_OUT é terminal — é a mesma barreira que
+    // impede o resto do sistema de voltar a falar com ele.
+    const { lead } = await cenario();
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { status: 'OPT_OUT', temperatura: 'FRIO' },
+    });
+
+    await inbound.processarMensagemRecebida(
+      entrada(lead, 'desculpa, já tirei da lista', true)
+    );
+
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.status).toBe('OPT_OUT');
+    expect(l.temperatura).toBe('FRIO');
+  });
+
+  it('NÃO rebaixa quem já está adiante', async () => {
+    // Um "bom dia" para um cliente fechado não pode empurrá-lo de volta
+    // para o meio do funil, ou o número de fechamentos derrete sozinho
+    // toda vez que você conversa com quem já comprou.
+    const { lead } = await cenario();
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { status: 'CLIENTE' },
+    });
+
+    await inbound.processarMensagemRecebida(entrada(lead, 'bom dia!', true));
+
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.status).toBe('CLIENTE');
+    // Mas a conversa se mexeu, e isso conta.
+    expect(l.ultimaInteracaoEm).not.toBeNull();
+  });
+});
+
 describe('o que NÃO mudou', () => {
   it('a resposta do LEAD continua sendo classificada', async () => {
     // A garantia do outro lado: o conserto não pode ter desligado o
