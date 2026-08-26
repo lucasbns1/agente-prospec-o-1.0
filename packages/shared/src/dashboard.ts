@@ -111,10 +111,28 @@ export interface FunilEtapa {
   total: number;
 }
 
+/**
+ * Quantos leads pararam em cada etapa da cadencia.
+ *
+ * Pedido: "coloque também: clientes etapa tal / clientes etapa tal".
+ *
+ * "Esta na etapa N" e a MAIOR etapa que saiu para aquele lead — a mesma
+ * regra de "nao responderam" e do relatorio semanal. Tres telas contando
+ * a mesma coisa de tres jeitos seria pior do que nao ter as tres.
+ */
+export interface EtapaComLeads {
+  ordem: number;
+  /** Nome da etapa, ou "Mensagem N" quando ela nao tem um. */
+  rotulo: string;
+  leads: number;
+}
+
 export interface DashboardResponse {
   metricas: DashboardMetricas;
   atencao: ItemAtencao[];
   funil: FunilEtapa[];
+  /** Em ordem crescente de etapa. Etapas vazias nao aparecem. */
+  porEtapa: EtapaComLeads[];
   campanhaAtiva: CampanhaAtivaResumo | null;
   whatsapp: {
     status: string;

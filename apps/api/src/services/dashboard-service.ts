@@ -13,9 +13,14 @@
 import { prisma } from '@prospector/database';
 import {
   agruparSemResposta,
+  contarLeadsPorEtapa,
   priorizarAtencao,
+  estadoAoAssumirConversa,
+  ORIGEM_MARCADO_A_MAO,
+  DESCRICAO_MARCADO_A_MAO,
   type CandidatoAtencao,
   type EnvioSemResposta,
+  type EtapaComLeads,
   type GrupoSemResposta,
   type ItemAtencao,
 } from '@prospector/domain';
@@ -282,6 +287,18 @@ export async function leadsSemResposta(
     responderam.map((r) => r.leadId).filter((id): id is string => id !== null)
   );
 
+  // Quem VOCE ja riscou da lista com o botao "já mandei".
+  //
+  // Sem isto a lista e uma fila de trabalho que nunca encolhe: voce
+  // manda na mao, volta ao dashboard, e os mesmos leads continuam la —
+  // ate voce mandar de novo para o mesmo numero.
+  const marcados = await prisma.leadEvent.findMany({
+    where: { tipo: 'MENSAGEM_ENVIADA', origem: ORIGEM_MARCADO_A_MAO },
+    select: { leadId: true },
+    distinct: ['leadId'],
+  });
+  for (const m of marcados) jaFalaram.add(m.leadId);
+
   const envios = await prisma.outboundMessage.findMany({
     where: {
       // ENVIADA de verdade. `SIMULADA` fica fora de proposito.
@@ -340,4 +357,48 @@ export async function leadsSemResposta(
     // problema.
     leads: g.leads.slice(0, limitePorEtapa),
   }));
+}
+
+/**
+ * Onde a sua prospeccao esta: quantos leads pararam em cada etapa.
+ *
+ * ============================================================
+ * O NUMERO QUE FALTAVA
+ * ============================================================
+ * Pedido: "coloque também: clientes etapa tal / clientes etapa tal".
+ *
+ * O painel sabia dizer quantos leads existem, quantos estao quentes e
+ * quantos fecharam — e nao sabia dizer a coisa mais simples de todas:
+ * ate onde a sequencia foi. Vinte pessoas paradas na mensagem 1 e vinte
+ * espalhadas ate a 4 sao duas semanas completamente diferentes, e as
+ * metricas que a tela mostrava eram identicas nos dois casos.
+ *
+ * SIMULADA fica de fora: um ensaio nao colocou ninguem em etapa nenhuma.
+ * Opt-outs e encerrados tambem — eles sairam da fila, e conta-los como
+ * "esta na etapa 2" faria a fila parecer maior do que e.
+ *
+ * A regra de "esta na etapa N" (a MAIOR que saiu) e do dominio, em
+ * `contarLeadsPorEtapa`.
+ */
+export async function leadsPorEtapa(): Promise<EtapaComLeads[]> {
+  const envios = await prisma.outboundMessage.findMany({
+    where: {
+      status: 'ENVIADA',
+      lead: { optOut: false, status: { notIn: [...STATUS_ENCERRADOS] } },
+    },
+    select: {
+      leadId: true,
+      campaignStep: { select: { ordem: true, nome: true } },
+    },
+  });
+
+  return contarLeadsPorEtapa(
+    envios
+      .filter((e) => e.campaignStep !== null)
+      .map((e) => ({
+        leadId: e.leadId,
+        ordem: e.campaignStep!.ordem,
+        etapaNome: e.campaignStep!.nome,
+      }))
+  );
 }

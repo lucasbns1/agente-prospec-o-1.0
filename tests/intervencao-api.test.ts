@@ -494,3 +494,167 @@ describe('notificações', () => {
     expect(r.statusCode).toBe(404);
   });
 });
+
+// -------------------------------------------------------- "já mandei"
+//
+// ============================================================
+// O BOTÃO DA LISTA DE QUEM NÃO RESPONDEU
+// ============================================================
+// Pedido: "colocar um botão de marcado como mandado em cada lead e
+// atualizar a lista — porque ai eu mando".
+//
+// Aquela lista é uma fila de trabalho: você passa por ela abrindo o
+// WhatsApp e escrevendo na mão. Sem uma forma de riscar o que já foi
+// feito, ela nunca encolhe, e na próxima visita você reescreve para os
+// mesmos leads — que é a forma mais rápida de queimar um número.
+describe('POST /api/leads/:id/marcar-mandado', () => {
+  it('grava o rastro, move o lead e para a automação', async () => {
+    const lead = await criarLead({ status: 'AGUARDANDO_RESPOSTA' });
+    const fila = await enfileirarPara(lead.id);
+
+    const r = await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+    expect(r.statusCode).toBe(200);
+
+    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(depois.status).toBe('EM_CONVERSA');
+    expect(depois.temperatura).toBe('QUENTE');
+
+    // O rastro: "quem mudou isso?" tem que ter resposta.
+    const ev = await prisma.leadEvent.findFirstOrThrow({
+      where: { leadId: lead.id, origem: 'marcado-a-mao' },
+    });
+    expect(ev.tipo).toBe('MENSAGEM_ENVIADA');
+
+    // A automação para: mandar a etapa 2 por cima seria o robô falando
+    // junto com você.
+    const m = await prisma.outboundMessage.findUniqueOrThrow({ where: { id: fila.id } });
+    expect(m.status).toBe('CANCELADA');
+  });
+
+  it('NÃO envia mensagem nenhuma', async () => {
+    // É uma anotação — "cuidei deste". Se criasse uma linha em
+    // `messages`, o funil de envios passaria a contar o que você fez na
+    // mão como se o sistema tivesse mandado.
+    const lead = await criarLead();
+
+    await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+
+    expect(await prisma.message.count({ where: { leadId: lead.id } })).toBe(0);
+    expect(await prisma.outboundMessage.count({ where: { leadId: lead.id } })).toBe(0);
+  });
+
+  it('recusa um lead em opt-out', async () => {
+    // A tela pode estar velha. Esta é a última chance de não registrar
+    // "mandei mensagem" para quem pediu para parar.
+    const lead = await criarLead({ optOut: true, status: 'OPT_OUT' });
+
+    const r = await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+    expect(r.statusCode).toBe(422);
+
+    expect(
+      await prisma.leadEvent.count({
+        where: { leadId: lead.id, origem: 'marcado-a-mao' },
+      })
+    ).toBe(0);
+  });
+
+  it('não rebaixa quem já está adiante', async () => {
+    const lead = await criarLead({ status: 'CLIENTE' });
+
+    await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+
+    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(depois.status).toBe('CLIENTE');
+  });
+
+  it('desfazer devolve o lead à lista', async () => {
+    // Um clique errado numa lista de trinta nomes tem que ter volta.
+    const lead = await criarLead();
+    await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+
+    const r = await app.inject({
+      method: 'DELETE',
+      url: `/api/leads/${lead.id}/marcar-mandado`,
+      headers: { cookie },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().desfeitos).toBe(1);
+
+    expect(
+      await prisma.leadEvent.count({
+        where: { leadId: lead.id, origem: 'marcado-a-mao' },
+      })
+    ).toBe(0);
+  });
+});
+
+// ============================================================
+// E A LISTA ENCOLHE
+// ============================================================
+// "…e atualizar a lista". O botão só serve se o lead sair de "não
+// responderam" — senão você marca, volta ao dashboard e o mesmo nome
+// continua lá pedindo trabalho que já foi feito.
+describe('GET /api/dashboard/sem-resposta depois do "já mandei"', () => {
+  async function enviadaPara(leadId: string) {
+    seq += 1;
+    const campanha = await prisma.campaign.create({
+      data: { nome: `SR${seq}-${Date.now()}`, status: 'ATIVA' } as never,
+    });
+    const etapa = await prisma.campaignStep.create({
+      data: { campaignId: campanha.id, ordem: 1, texto: 'oi', ativo: true },
+    });
+    await prisma.outboundMessage.create({
+      data: {
+        leadId,
+        campaignId: campanha.id,
+        campaignStepId: etapa.id,
+        idempotencyKey: `sr-${seq}-${Date.now()}`,
+        status: 'ENVIADA',
+        processedAt: new Date(),
+        dryRun: false,
+      },
+    });
+  }
+
+  const idsNaLista = async (): Promise<string[]> => {
+    const r = await chamar('GET', '/api/dashboard/sem-resposta');
+    return r
+      .json()
+      .grupos.flatMap((g: { leads: { leadId: string }[] }) =>
+        g.leads.map((l) => l.leadId)
+      );
+  };
+
+  it('o lead marcado sai da lista; o não marcado fica', async () => {
+    const marcado = await criarLead({ status: 'AGUARDANDO_RESPOSTA' });
+    const outro = await criarLead({ status: 'AGUARDANDO_RESPOSTA' });
+    await enviadaPara(marcado.id);
+    await enviadaPara(outro.id);
+
+    expect(await idsNaLista()).toEqual(
+      expect.arrayContaining([marcado.id, outro.id])
+    );
+
+    await chamar('POST', `/api/leads/${marcado.id}/marcar-mandado`);
+
+    const depois = await idsNaLista();
+    expect(depois).not.toContain(marcado.id);
+    // A garantia do outro lado: o filtro tira UM lead, e não a lista.
+    expect(depois).toContain(outro.id);
+  });
+
+  it('desfazer devolve o lead à lista', async () => {
+    const lead = await criarLead({ status: 'AGUARDANDO_RESPOSTA' });
+    await enviadaPara(lead.id);
+
+    await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+    expect(await idsNaLista()).not.toContain(lead.id);
+
+    await app.inject({
+      method: 'DELETE',
+      url: `/api/leads/${lead.id}/marcar-mandado`,
+      headers: { cookie },
+    });
+    expect(await idsNaLista()).toContain(lead.id);
+  });
+});

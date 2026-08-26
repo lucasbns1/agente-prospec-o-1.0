@@ -6,10 +6,10 @@
  * resposta vale mais que qualquer grafico.
  */
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Flame, Inbox, TriangleAlert, Rocket, MessageSquareOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Flame, Inbox, TriangleAlert, Rocket, MessageSquareOff, ChevronDown, ChevronRight, Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { get } from '@/lib/api';
+import { get, post, del } from '@/lib/api';
 import {
   Card, CardContent, CardHeader, CardTitle, Badge, Button,
   variantePorTemperatura,
@@ -38,6 +38,41 @@ import type { DashboardResponse, GrupoSemResposta, LeadSemResposta } from '@pros
  */
 function SemResposta({ aoAbrirLead }: { aoAbrirLead: (id: string) => void }) {
   const [aberto, setAberto] = useState<number | null>(null);
+  const cliente = useQueryClient();
+
+  // ============================================================
+  // "JA MANDEI PARA ESTE"
+  // ============================================================
+  // Esta lista e uma fila de trabalho: voce passa por ela abrindo o
+  // WhatsApp e escrevendo na mao. Sem uma forma de riscar o que ja foi
+  // feito, ela nunca encolhe.
+  //
+  // O lead marcado NAO some na hora. Ele fica riscado, com um "desfazer"
+  // do lado, ate voce sair da secao — um clique errado numa lista de
+  // trinta nomes tem que ter volta, e um item que evapora nao tem.
+  const [marcados, setMarcados] = useState<Record<string, boolean>>({});
+
+  const marcar = useMutation({
+    mutationFn: (leadId: string) =>
+      post(`/api/leads/${leadId}/marcar-mandado`).then(() => leadId),
+    onSuccess: (leadId) => {
+      setMarcados((m) => ({ ...m, [leadId]: true }));
+      // Os totais das outras secoes mudam junto: o lead saiu do silencio.
+      void cliente.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+
+  const desfazer = useMutation({
+    mutationFn: (leadId: string) =>
+      del(`/api/leads/${leadId}/marcar-mandado`).then(() => leadId),
+    onSuccess: (leadId) => {
+      setMarcados((m) => {
+        const { [leadId]: _fora, ...resto } = m;
+        return resto;
+      });
+      void cliente.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard-sem-resposta'],
@@ -82,7 +117,20 @@ function SemResposta({ aoAbrirLead }: { aoAbrirLead: (id: string) => void }) {
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-2 py-3 text-left"
-                  onClick={() => setAberto(aberto === g.ordem ? null : g.ordem)}
+                  onClick={() => {
+                    const fechando = aberto === g.ordem;
+                    setAberto(fechando ? null : g.ordem);
+                    // Ao fechar o grupo, a lista e relida: e quando os
+                    // leads marcados finalmente saem dela. Riscar na hora
+                    // e sumir na hora sao coisas diferentes — a segunda
+                    // levaria o "desfazer" junto.
+                    if (fechando) {
+                      setMarcados({});
+                      void cliente.invalidateQueries({
+                        queryKey: ['dashboard-sem-resposta'],
+                      });
+                    }
+                  }}
                   aria-expanded={aberto === g.ordem}
                 >
                   <span className="flex items-center gap-2 text-sm">
@@ -98,34 +146,65 @@ function SemResposta({ aoAbrirLead }: { aoAbrirLead: (id: string) => void }) {
 
                 {aberto === g.ordem && (
                   <ul className="pb-3 pl-6">
-                    {g.leads.map((l: LeadSemResposta) => (
-                      <li key={l.leadId} className="py-1.5">
-                        <button
-                          type="button"
-                          className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
-                          onClick={() => aoAbrirLead(l.leadId)}
+                    {g.leads.map((l: LeadSemResposta) => {
+                      const jaMandei = marcados[l.leadId] === true;
+                      return (
+                        <li
+                          key={l.leadId}
+                          className="flex flex-wrap items-center gap-2 py-1.5"
                         >
-                          <span className="min-w-0">
-                            <span className="truncate text-sm font-medium">
-                              {l.nome ?? 'Lead sem nome'}
+                          <button
+                            type="button"
+                            className={`flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 text-left ${
+                              jaMandei ? 'opacity-50 line-through' : ''
+                            }`}
+                            onClick={() => aoAbrirLead(l.leadId)}
+                          >
+                            <span className="min-w-0">
+                              <span className="truncate text-sm font-medium">
+                                {l.nome ?? 'Lead sem nome'}
+                              </span>
+                              <span className="ml-2 text-xs text-[var(--color-texto-fraco)]">
+                                {[l.categoria, l.bairro, l.cidade]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </span>
                             </span>
-                            <span className="ml-2 text-xs text-[var(--color-texto-fraco)]">
-                              {[l.categoria, l.bairro, l.cidade]
-                                .filter(Boolean)
-                                .join(' · ')}
+                            <span className="flex items-center gap-2">
+                              <Badge variant={variantePorTemperatura(l.temperatura)}>
+                                {l.temperatura.toLowerCase()}
+                              </Badge>
+                              <span className="text-xs text-[var(--color-texto-fraco)]">
+                                calado desde {formatarDataHora(l.desde)}
+                              </span>
                             </span>
-                          </span>
-                          <span className="flex items-center gap-2">
-                            <Badge variant={variantePorTemperatura(l.temperatura)}>
-                              {l.temperatura.toLowerCase()}
-                            </Badge>
-                            <span className="text-xs text-[var(--color-texto-fraco)]">
-                              calado desde {formatarDataHora(l.desde)}
-                            </span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                          </button>
+
+                          {jaMandei ? (
+                            <button
+                              type="button"
+                              className="shrink-0 text-xs text-[var(--color-texto-fraco)] underline"
+                              onClick={() => desfazer.mutate(l.leadId)}
+                              disabled={desfazer.isPending}
+                            >
+                              desfazer
+                            </button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="secundario"
+                              className="shrink-0"
+                              onClick={() => marcar.mutate(l.leadId)}
+                              disabled={marcar.isPending}
+                              title="Registra que você mandou mensagem na mão. Não envia nada."
+                            >
+                              <Check className="mr-1 h-3 w-3" aria-hidden="true" />
+                              Já mandei
+                            </Button>
+                          )}
+                        </li>
+                      );
+                    })}
                     {g.leads.length < g.total && (
                       <li className="py-1.5 text-xs text-[var(--color-texto-fraco)]">
                         …e mais {g.total - g.leads.length}. Use a tela de Leads
@@ -387,6 +466,43 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ---- Onde a prospecção está ---- */}
+      {/*
+        O funil acima conta ESTADOS (quentes, clientes). Este conta
+        POSIÇÃO na sequência, que é outra pergunta: vinte pessoas paradas
+        na mensagem 1 e vinte espalhadas até a 4 dão exatamente os mesmos
+        números lá em cima, e são duas semanas completamente diferentes.
+      */}
+      {(data?.porEtapa ?? []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Onde os leads estão</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+              {(data?.porEtapa ?? []).map((e) => (
+                <div
+                  key={e.ordem}
+                  className="rounded-lg border border-[var(--color-borda)] p-3"
+                >
+                  <p className="num text-xl font-semibold">
+                    {formatarNumero(e.leads)}
+                  </p>
+                  <p className="text-[11px] text-[var(--color-texto-suave)]">
+                    {e.rotulo}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
+              Cada lead aparece uma vez só, na etapa mais avançada que
+              chegou nele. Quem saiu (opt-out, encerrado, cliente) fica de
+              fora.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex items-start gap-2 rounded-lg border border-[var(--color-borda)] bg-white p-3 text-xs text-[var(--color-texto-suave)]">
         <TriangleAlert

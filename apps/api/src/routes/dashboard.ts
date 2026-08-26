@@ -19,6 +19,7 @@ import {
 import { exigirAutenticacao } from '../plugins/auth.js';
 import {
   leadsSemResposta,
+  leadsPorEtapa,
   montarAtencao,
   resumoCampanhaAtiva,
 } from '../services/dashboard-service.js';
@@ -88,9 +89,10 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
         prisma.lead.count({ where: { createdAt: { gte: inicioDoDia } } }),
       ]);
 
-      const [atencao, campanhaAtiva] = await Promise.all([
+      const [atencao, campanhaAtiva, porEtapa] = await Promise.all([
         montarAtencao(),
         resumoCampanhaAtiva(),
+        leadsPorEtapa(),
       ]);
 
       return {
@@ -128,6 +130,11 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
           { rotulo: 'Quentes', total: quentes },
           { rotulo: 'Clientes', total: clientes },
         ],
+        // Onde a prospeccao ESTA. O funil acima conta estados; este
+        // conta posicao na sequencia, que e outra pergunta: vinte
+        // pessoas paradas na mensagem 1 e vinte espalhadas ate a 4 dao
+        // exatamente os mesmos numeros la em cima.
+        porEtapa,
         whatsapp: {
           // Sempre desconectado ate a fase de integracao: o adapter real
           // com whatsapp-web.js ainda nao existe.

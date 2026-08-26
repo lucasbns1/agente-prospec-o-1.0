@@ -24,6 +24,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma, Prisma } from '@prospector/database';
 import { LEAD_STATUS, TEMPERATURA } from '@prospector/shared';
+import {
+  estadoAoAssumirConversa,
+  ORIGEM_MARCADO_A_MAO,
+  DESCRICAO_MARCADO_A_MAO,
+} from '@prospector/domain';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 import { eventsBus } from '../lib/events-bus.js';
@@ -382,6 +387,109 @@ export async function rotasLeadAcoes(app: FastifyInstance): Promise<void> {
 
       eventsBus.publicar('lead.atualizado', { leadId: id });
       return { lead: atualizado };
+    }
+  );
+
+  // ------------------------------------------------ "já mandei para este"
+  //
+  // ============================================================
+  // O BOTAO DA LISTA DE QUEM NAO RESPONDEU
+  // ============================================================
+  // Pedido: "colocar um botao de marcado como mandado em cada lead e
+  // atualizar a lista — porque ai eu mando".
+  //
+  // Aquela lista e uma fila de trabalho: voce passa por ela abrindo o
+  // WhatsApp e escrevendo na mao. Sem uma forma de riscar o que ja foi
+  // feito, ela nunca encolhe, e na proxima visita voce reescreve para os
+  // mesmos leads.
+  //
+  // ISTO NAO ENVIA NADA. E uma anotacao — "cuidei deste".
+  app.post<{ Params: { id: string } }>(
+    '/api/leads/:id/marcar-mandado',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      const lead = await buscarLead(id);
+
+      // Um lead em opt-out nao devia estar na lista, mas a tela pode
+      // estar velha. Recusar aqui e a ultima chance de nao registrar
+      // "mandei mensagem" para quem pediu para parar.
+      if (lead.optOut) {
+        throw new AppError(
+          'Este lead pediu para não ser mais contatado.',
+          422,
+          'LEAD_EM_OPT_OUT'
+        );
+      }
+
+      await prisma.leadEvent.create({
+        data: {
+          leadId: id,
+          tipo: 'MENSAGEM_ENVIADA',
+          descricao: DESCRICAO_MARCADO_A_MAO,
+          origem: ORIGEM_MARCADO_A_MAO,
+        },
+      });
+
+      // O lead anda no quadro pela MESMA regra da mensagem manual que
+      // chega pelo WhatsApp: quem ja esta adiante nao e rebaixado.
+      const novo = estadoAoAssumirConversa(lead.status);
+      const atualizado = await prisma.lead.update({
+        where: { id },
+        data: {
+          ultimaInteracaoEm: new Date(),
+          ...(novo.status !== null
+            ? {
+                status: novo.status as never,
+                temperatura: novo.temperatura as never,
+                proximaAcao: novo.proximaAcao,
+              }
+            : {}),
+        },
+      });
+
+      // A automacao daquele lead para. Voce entrou na conversa; mandar a
+      // etapa seguinte por cima seria o robo falando junto com voce.
+      const canceladas = await cancelarFilaDoLead(
+        id,
+        'Você marcou que mandou mensagem na mão'
+      );
+      await prisma.leadCampaign.updateMany({
+        where: { leadId: id, status: { notIn: ['CONCLUIDO', 'PARADO', 'OPT_OUT'] } },
+        data: {
+          status: 'PAUSADO',
+          aguardandoLiberacao: true,
+          motivoParada: 'Você marcou que mandou mensagem na mão',
+        },
+      });
+
+      if (novo.status !== null) {
+        eventsBus.publicar('lead.status_alterado', { leadId: id, status: novo.status });
+      }
+      eventsBus.publicar('dashboard.atualizar');
+
+      return { lead: atualizado, canceladas };
+    }
+  );
+
+  // Desfazer. Um clique errado nesta lista tira o lead dela para sempre;
+  // sem volta, o botao acima fica perigoso demais para usar com pressa.
+  app.delete<{ Params: { id: string } }>(
+    '/api/leads/:id/marcar-mandado',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      await buscarLead(id);
+
+      const r = await prisma.leadEvent.deleteMany({
+        where: { leadId: id, tipo: 'MENSAGEM_ENVIADA', origem: ORIGEM_MARCADO_A_MAO },
+      });
+
+      // O status NAO volta sozinho. O lead pode ter andado por outros
+      // motivos desde a marcacao, e adivinhar de onde ele veio erraria
+      // mais do que acertaria — desfazer devolve a lista, nao o passado.
+      eventsBus.publicar('dashboard.atualizar');
+      return { desfeitos: r.count };
     }
   );
 }
