@@ -36,7 +36,8 @@ export type MotivoRejeicao =
   | 'PULO_DE_ETAPA'
   | 'ETAPA_MANUAL'
   | 'SEQUENCIA_TERMINOU'
-  | 'RETRY_SEM_FALHA';
+  | 'RETRY_SEM_FALHA'
+  | 'PRECISA_HUMANO';
 
 export interface ResultadoValidacao {
   /** true = executa a acao que o modelo pediu, como ele pediu. */
@@ -65,6 +66,19 @@ export const ACOES_QUE_ENVIAM: readonly AcaoIA[] = [
   'ADVANCE_STEP',
   'RETRY_SEND',
   'RESUME',
+];
+
+/**
+ * As acoes que JA sao um chamado para voce.
+ *
+ * `precisaHumano` nao precisa substituir nenhuma delas — trocar uma
+ * intervencao por outra intervencao so apagaria o motivo original.
+ * STOP_CAMPAIGN entra porque encerrar e mais decisivo do que avisar.
+ */
+const JA_CHAMAM_VOCE: readonly AcaoIA[] = [
+  'CREATE_INTERVENTION',
+  'NOTIFY_OPERATOR',
+  'STOP_CAMPAIGN',
 ];
 
 /** Status de envio que contam como "ja foi, nao mexa". */
@@ -133,6 +147,42 @@ export function validarDecisao(
       etapaFinal: null,
       motivoRejeicao: null,
       explicacao: `Opt-out detectado: ${decisao.motivo}`,
+    };
+  }
+
+  // ============================================================
+  // BARREIRA 1B — "ISTO E COM VOCE" TEM QUE CHEGAR ATE VOCE
+  // ============================================================
+  // `precisaHumano` (o `needs_human` do modelo) era lido, validado pelo
+  // Zod, gravado na trilha... e nunca consultado por ninguem. O modelo
+  // dizia "nao sei resolver isto, chama a pessoa", devolvia WAIT junto,
+  // e o sistema esperava. Em silencio.
+  //
+  // Relato de uso, exatamente este: "quando a ferramenta nao ta mandando
+  // ... nao esta me avisando que precisa de mim".
+  //
+  // Agora `precisaHumano` VIRA a acao. Ele nao aconselha: ele manda.
+  //
+  // POR QUE ISTO BLOQUEIA ATE UM ENVIO
+  // O modelo pedindo SEND_STEP com `needs_human` ligado esta se
+  // contradizendo. Entre mandar a proxima mensagem da sequencia e
+  // chamar voce, chamar voce e o unico dos dois que da para desfazer.
+  //
+  // O QUE PASSA POR CIMA DISTO
+  // Opt-out, ja tratado acima, e as duas acoes que JA sao um chamado
+  // (CREATE_INTERVENTION, NOTIFY_OPERATOR). STOP_CAMPAIGN tambem passa:
+  // encerrar e mais decisivo do que avisar, e o lead para de qualquer
+  // forma.
+  if (
+    decisao.precisaHumano &&
+    !JA_CHAMAM_VOCE.includes(decisao.acao)
+  ) {
+    return {
+      permitida: false,
+      acaoFinal: 'CREATE_INTERVENTION',
+      etapaFinal: null,
+      motivoRejeicao: 'PRECISA_HUMANO',
+      explicacao: `A IA pediu voce nesta conversa: ${decisao.motivo}`,
     };
   }
 

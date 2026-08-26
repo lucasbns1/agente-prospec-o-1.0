@@ -486,6 +486,65 @@ describe('intervencao humana', () => {
     expect(await prisma.task.count()).toBe(1);
   });
 
+  // ==========================================================
+  // "ISTO E COM VOCE" TEM QUE CHEGAR ATE VOCE
+  // ==========================================================
+  // Relato de uso: "quando a ferramenta nao ta mandando ... nao esta me
+  // avisando que precisa de mim".
+  //
+  // A causa era esta: `precisaHumano` era lido do modelo, validado pelo
+  // Zod, gravado na trilha — e nunca consultado por ninguem. O modelo
+  // podia dizer "nao sei resolver isto" com um WAIT junto, e o sistema
+  // esperava. Em silencio. Nada no sino, nada nas tarefas.
+  //
+  // Os testes 9 e 10 acima nao pegavam isto porque a IA deles ja pedia
+  // CREATE_INTERVENTION explicitamente.
+  it('WAIT com precisaHumano AVISA voce, em vez de esperar calado', async () => {
+    const { lead, campanha } = await cenario();
+    const ia = new AnalisadorFalso(
+      decide({
+        intent: 'DUVIDA',
+        acao: 'WAIT',
+        precisaHumano: true,
+        motivo: 'Nao consigo dizer se "boa noite sim" e um sim para a previa.',
+      })
+    );
+
+    const r = await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      opcoes(ia)
+    );
+
+    expect(r?.acaoExecutada).toBe('CREATE_INTERVENTION');
+
+    // O que voce ve: um aviso no sino e uma tarefa.
+    expect(await prisma.notification.count({ where: { leadId: lead.id } })).toBe(1);
+    expect(await prisma.task.count({ where: { leadId: lead.id } })).toBe(1);
+
+    // E o aviso diz POR QUE — sem isso ele e so um ponto vermelho.
+    const aviso = await prisma.notification.findFirstOrThrow({
+      where: { leadId: lead.id },
+    });
+    expect(`${aviso.titulo} ${aviso.mensagem}`).toContain('boa noite sim');
+  });
+
+  it('a substituicao fica na trilha, e nao passa por decisao da IA', async () => {
+    // Auditoria: daqui a um mes a pergunta vai ser "por que ela mandou
+    // esperar e o sistema me chamou?". A resposta precisa estar gravada.
+    const { lead, campanha } = await cenario();
+    const ia = new AnalisadorFalso(
+      decide({ acao: 'WAIT', precisaHumano: true, motivo: 'nao sei resolver' })
+    );
+
+    await orq.orquestrarCadencia(
+      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      opcoes(ia)
+    );
+
+    const d = await prisma.aiDecision.findFirstOrThrow({ where: { leadId: lead.id } });
+    expect(d.motivoRejeicao).toBe('PRECISA_HUMANO');
+  });
+
   it('etapa configurada como manual vira intervencao, nao envio', async () => {
     const { lead, campanha, etapas } = await cenario({ etapa3Manual: true });
 

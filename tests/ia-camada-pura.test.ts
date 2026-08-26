@@ -398,6 +398,91 @@ describe('validarDecisao — acoes que nao enviam passam', () => {
 });
 
 // -----------------------------------------------------------------------------
+// "Isto é com você"
+// -----------------------------------------------------------------------------
+//
+// `precisaHumano` (o `needs_human` do modelo) era lido, validado pelo
+// Zod, gravado na trilha — e nunca consultado por ninguém. O modelo
+// dizia "não sei resolver isto, chama a pessoa", devolvia WAIT junto, e
+// o sistema esperava em silêncio.
+//
+// Relato de uso, exatamente este: "quando a ferramenta não ta mandando
+// ... não está me avisando que precisa de mim".
+describe('validarDecisao — precisaHumano vira a acao', () => {
+  it('WAIT com precisaHumano vira CREATE_INTERVENTION', () => {
+    // O caso relatado: esperar em silêncio era a resposta do sistema
+    // para "chama a pessoa".
+    const r = validarDecisao(
+      contexto(),
+      decisao({ acao: 'WAIT', etapaOrdem: null, precisaHumano: true })
+    );
+
+    expect(r.acaoFinal).toBe('CREATE_INTERVENTION');
+    expect(r.motivoRejeicao).toBe('PRECISA_HUMANO');
+    // Você lê esta frase na tela: ela tem que dizer POR QUE.
+    expect(r.explicacao).toContain('teste');
+  });
+
+  it('bloqueia ate um envio', () => {
+    // SEND_STEP com `needs_human` ligado é o modelo se contradizendo.
+    // Entre mandar a próxima da sequência e chamar você, chamar você é
+    // o único dos dois que dá para desfazer.
+    const r = validarDecisao(
+      contexto({ envios: [envio(1, 'ENVIADA')] }),
+      decisao({ acao: 'SEND_STEP', etapaOrdem: 2, precisaHumano: true })
+    );
+
+    expect(r.acaoFinal).toBe('CREATE_INTERVENTION');
+    expect(r.permitida).toBe(false);
+  });
+
+  it('nao troca uma intervencao por outra', () => {
+    // Substituir apagaria o motivo original sem ganhar nada.
+    const r = validarDecisao(
+      contexto(),
+      decisao({ acao: 'CREATE_INTERVENTION', etapaOrdem: null, precisaHumano: true })
+    );
+    expect(r.acaoFinal).toBe('CREATE_INTERVENTION');
+    expect(r.motivoRejeicao).toBeNull();
+  });
+
+  it('NOTIFY_OPERATOR ja e um chamado, e passa como esta', () => {
+    const r = validarDecisao(
+      contexto(),
+      decisao({ acao: 'NOTIFY_OPERATOR', etapaOrdem: null, precisaHumano: true })
+    );
+    expect(r.acaoFinal).toBe('NOTIFY_OPERATOR');
+  });
+
+  it('encerrar e mais decisivo do que avisar', () => {
+    const r = validarDecisao(
+      contexto(),
+      decisao({ acao: 'STOP_CAMPAIGN', etapaOrdem: null, precisaHumano: true })
+    );
+    expect(r.acaoFinal).toBe('STOP_CAMPAIGN');
+  });
+
+  it('opt-out continua vindo antes de tudo', () => {
+    // A barreira mais antiga do sistema não pode ter sido empurrada
+    // para trás por esta.
+    const base = contexto();
+    const r = validarDecisao(
+      contexto({ lead: { ...base.lead, optOut: true } }),
+      decisao({ acao: 'SEND_STEP', etapaOrdem: 2, precisaHumano: true })
+    );
+
+    expect(r.acaoFinal).toBe('STOP_CAMPAIGN');
+    expect(r.motivoRejeicao).toBe('LEAD_EM_OPT_OUT');
+  });
+
+  it('sem precisaHumano, nada muda', () => {
+    const r = validarDecisao(contexto(), decisao({ acao: 'WAIT', etapaOrdem: null }));
+    expect(r.acaoFinal).toBe('WAIT');
+    expect(r.motivoRejeicao).toBeNull();
+  });
+});
+
+// -----------------------------------------------------------------------------
 // Prompt
 // -----------------------------------------------------------------------------
 
