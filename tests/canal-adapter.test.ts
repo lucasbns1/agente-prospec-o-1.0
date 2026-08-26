@@ -190,31 +190,44 @@ describe('recebimento no adapter', () => {
     });
   });
 
-  it('ignora o eco das próprias mensagens', async () => {
+  // ============================================================
+  // O QUE VOCE MANDA DO CELULAR — ANTES ERA DESCARTADO
+  // ============================================================
+  // Estes dois testes fixavam um `return`: mensagem sua era jogada fora e
+  // o sistema nunca sabia que voce tinha respondido na mao.
+  //
+  // O efeito era o pior tipo de cegueira. A conversa na tela mostrava so
+  // o lado do lead, a IA decidia sem saber o que voce ja tinha dito, e a
+  // cadencia podia disparar a proxima etapa por cima de uma negociacao em
+  // andamento.
+  //
+  // Agora ela passa, marcada com `deMim`. A distincao que importa nao
+  // sumiu — ela mudou de lugar: quem trata "isto nao e resposta do lead"
+  // e o pipeline, e nao mais o adapter jogando fora.
+  it('a mensagem que VOCÊ mandou chega, marcada como sua', async () => {
     const { adapter, provedor, eventos } = montar();
     await adapter.connect();
 
     provedor.receber({ from: '5519999991111@c.us', body: 'oi', fromMe: true });
 
-    // Processar o próprio envio como entrada faria o sistema classificar
-    // as mensagens que ele mesmo escreveu.
-    expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(false);
+    const e = eventos.find((x) => x.tipo === 'canal.mensagem_recebida');
+    expect(e).toBeDefined();
+    expect((e as { mensagem: { deMim: boolean } }).mensagem.deMim).toBe(true);
+  });
+
+  it('a resposta do LEAD continua chegando sem a marca', async () => {
+    // A outra metade: o conserto não pode ter borrado a distinção.
+    const { adapter, provedor, eventos } = montar();
+    await adapter.connect();
+
+    provedor.receber({ from: '5519999991111@c.us', body: 'oi', fromMe: false });
+
+    const e = eventos.find((x) => x.tipo === 'canal.mensagem_recebida');
+    expect(e).toBeDefined();
+    expect((e as { mensagem: { deMim: boolean } }).mensagem.deMim).toBe(false);
   });
 
   // ---- Ruído que não é conversa (achado na validação real) ----
-
-  it('ignora o eco do próprio número e diz isso no log', async () => {
-    const linhas: string[] = [];
-    const { adapter, provedor, eventos } = montar({}, (m) => linhas.push(m));
-    await adapter.connect();
-
-    provedor.receber({ from: '5519999991111@c.us', body: 'oi', fromMe: true });
-
-    expect(eventos.some((e) => e.tipo === 'canal.mensagem_recebida')).toBe(false);
-    // Descartar em silêncio fazia quem testava com o próprio número
-    // concluir que o canal estava quebrado.
-    expect(linhas.some((l) => l.includes('proprio numero conectado'))).toBe(true);
-  });
 
   it('eventos de sistema não viram mensagem', async () => {
     const { adapter, provedor, eventos } = montar();

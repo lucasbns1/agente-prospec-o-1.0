@@ -31,6 +31,8 @@ export interface InboundJobData {
     texto: string;
     nomeContato: string | null;
     recebidaEmISO: string;
+    /** true = saiu do seu numero, e nao do lead. */
+    deMim: boolean;
     tipo: string;
     temMidia: boolean;
   };
@@ -48,6 +50,7 @@ export async function enfileirarRecebida(m: MensagemEntrada): Promise<void> {
         texto: m.texto,
         nomeContato: m.nomeContato,
         recebidaEmISO: m.recebidaEm.toISOString(),
+        deMim: m.deMim,
         tipo: m.tipo,
         temMidia: m.temMidia,
       },
@@ -75,7 +78,9 @@ export function criarWorkerInbound(log: Logger): Worker<InboundJobData> {
         texto: mensagem.texto,
         nomeContato: mensagem.nomeContato,
         recebidaEm: new Date(mensagem.recebidaEmISO),
-        deMim: false,
+        // Carregado pela fila: sem isto, a mensagem que voce mandou na
+        // mao chegava aqui disfarcada de resposta do lead.
+        deMim: mensagem.deMim ?? false,
         tipo: mensagem.tipo,
         temMidia: mensagem.temMidia,
       });

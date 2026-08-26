@@ -186,17 +186,24 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
     this.provedor.on('message', (bruta) => {
       const m = bruta as MensagemProvedor;
 
-      // O eco do proprio envio nao e uma resposta do lead. Processar
-      // como entrada faria o sistema classificar as proprias mensagens.
+      // ============================================================
+      // O QUE SAI DO SEU NUMERO TAMBEM IMPORTA
+      // ============================================================
+      // Isto era um `return`: mensagem sua era descartada e o sistema
+      // nunca sabia que voce tinha respondido na mao. A conversa na tela
+      // ficava so com o lado do lead, a IA decidia sem saber o que voce
+      // ja tinha dito, e a cadencia podia mandar a proxima etapa por cima
+      // de uma negociacao em andamento.
       //
-      // Descartar em SILENCIO era uma armadilha: quem testa mandando
-      // mensagem do proprio numero conectado ve "nada acontece" e conclui
-      // que o canal esta quebrado. O log transforma esse minuto de
-      // confusao numa linha que explica.
-      if (m.fromMe) {
-        this.log('Mensagem ignorada: enviada pelo proprio numero conectado');
-        return;
-      }
+      // Agora ela passa, marcada com `deMim`. Quem trata a diferenca e o
+      // pipeline: mensagem sua NAO e classificada como resposta do lead —
+      // ela e registrada, entra no contexto da IA, e pausa a automacao
+      // daquele lead.
+      //
+      // O eco dos envios do PROPRIO sistema tambem chega aqui, com o
+      // mesmo `fromMe`. Ele e descartado no pipeline pelo
+      // `whatsappMessageId`, que ja foi gravado no envio — e a mesma
+      // chave UNIQUE que impede historico duplicado.
 
       // Eventos internos do WhatsApp — troca de chave, aviso de grupo,
       // registro de chamada. Nao sao alguem falando com voce.
@@ -223,7 +230,7 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
         texto: m.body ?? '',
         nomeContato: m.notifyName ?? null,
         recebidaEm: new Date(m.timestamp * 1000),
-        deMim: false,
+        deMim: Boolean(m.fromMe),
         tipo: m.type,
         temMidia: m.hasMedia,
       };
@@ -238,7 +245,7 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
           texto: entrada.texto,
           nomeContato: entrada.nomeContato,
           timestamp: entrada.recebidaEm,
-          deMim: false,
+          deMim: entrada.deMim,
         });
       }
 

@@ -453,6 +453,116 @@ async function aplicarEfeitos(
  * IDEMPOTENTE por `provider_message_id`: o mesmo evento chegando duas
  * vezes nao cria duas mensagens nem reaplica os efeitos.
  */
+/**
+ * Uma mensagem que VOCE mandou do celular, na mao.
+ *
+ * ============================================================
+ * ELA NAO E UMA RESPOSTA DO LEAD
+ * ============================================================
+ * Ate agora o sistema descartava tudo que saia do numero conectado. O
+ * efeito era o pior tipo de cegueira: a conversa na tela mostrava so o
+ * lado do lead, a IA decidia sem saber o que voce ja tinha dito, e a
+ * cadencia podia disparar a proxima etapa por cima de uma negociacao em
+ * andamento.
+ *
+ * Agora ela e gravada como ENVIADA. NAO passa pelo motor de
+ * classificacao — classificar a propria fala como se fosse do lead
+ * encheria o funil de "positivos" que sao voce mesmo.
+ *
+ * ============================================================
+ * E ELA PAUSA A AUTOMACAO DAQUELE LEAD
+ * ============================================================
+ * Se voce entrou na conversa, o robo sai. Continuar a sequencia por cima
+ * seria mandar a mensagem 3 enquanto voce negocia preco — o jeito mais
+ * rapido de parecer um robo e perder a venda.
+ *
+ * Nao e irreversivel: e a mesma pausa que o botao "retomar automacao"
+ * desfaz.
+ */
+async function registrarMensagemManual(p: {
+  entrada: MensagemEntrada;
+  leadId: string;
+  campaignId: string | null;
+}): Promise<ResultadoInbound> {
+  const { entrada, leadId, campaignId } = p;
+
+  const conversa = await prisma.conversation.upsert({
+    where: { id: `${leadId}-${campaignId ?? 'sem-campanha'}` },
+    update: {
+      ultimaMensagemEm: entrada.recebidaEm,
+      ultimaMensagemTexto: entrada.texto.slice(0, 200),
+      // `naoLidas` NAO sobe: a mensagem e sua, voce ja a leu.
+    },
+    create: {
+      id: `${leadId}-${campaignId ?? 'sem-campanha'}`,
+      leadId,
+      campaignId,
+      chatId: entrada.chatId,
+      ultimaMensagemEm: entrada.recebidaEm,
+      ultimaMensagemTexto: entrada.texto.slice(0, 200),
+      naoLidas: 0,
+    },
+  });
+
+  try {
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId,
+        campaignId,
+        // Sem etapa: nao veio de uma sequencia, veio de voce.
+        direcao: 'ENVIADA',
+        status: 'ENVIADA',
+        texto: entrada.texto,
+        // A UNIQUE aqui faz DOIS trabalhos: barra o mesmo evento
+        // entregue duas vezes, e descarta o eco dos envios do proprio
+        // sistema — eles ja gravaram esta chave no worker de outbound.
+        whatsappMessageId: entrada.providerMessageId,
+        enviadaEm: entrada.recebidaEm,
+      },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return {
+        processada: false,
+        motivo: 'Mensagem já registrada (envio do próprio sistema, ou evento repetido)',
+        leadId,
+      };
+    }
+    throw err;
+  }
+
+  if (campaignId) {
+    await prisma.leadCampaign.updateMany({
+      where: {
+        leadId,
+        campaignId,
+        // So pausa o que estava andando. Um lead ja concluido ou em
+        // opt-out nao volta a "pausado" porque voce mandou um "obrigado".
+        status: { notIn: ['CONCLUIDO', 'PARADO', 'OPT_OUT'] },
+      },
+      data: {
+        status: 'PAUSADO',
+        aguardandoLiberacao: true,
+        motivoParada: 'Você assumiu a conversa pelo WhatsApp',
+      },
+    });
+  }
+
+  await prisma.leadEvent.create({
+    data: {
+      leadId,
+      tipo: 'MENSAGEM_ENVIADA',
+      descricao: 'Você respondeu manualmente pelo WhatsApp — automação pausada',
+      origem: 'whatsapp-manual',
+    },
+  });
+
+  void publicarEvento('mensagem.enviada', { leadId, campaignId });
+
+  return { processada: true, leadId, motivo: 'Mensagem manual registrada' };
+}
+
 export async function processarMensagemRecebida(
   entrada: MensagemEntrada
 ): Promise<ResultadoInbound> {
@@ -552,6 +662,15 @@ export async function processarMensagemRecebida(
 
   const campaignId = lead.leadCampaigns[0]?.campaignId ?? lead.campaignId ?? null;
   const campaignStepId = lead.leadCampaigns[0]?.etapaAtualId ?? null;
+
+  // --- 4b. Foi VOCE quem mandou? ---
+  //
+  // Daqui para baixo tudo trata a mensagem como fala do LEAD: classifica,
+  // aplica regras, dispara a IA. Nada disso vale para o que saiu do seu
+  // proprio numero.
+  if (entrada.deMim) {
+    return registrarMensagemManual({ entrada, leadId, campaignId });
+  }
 
   // A etapa em que o lead esta manda na cadencia?
   //

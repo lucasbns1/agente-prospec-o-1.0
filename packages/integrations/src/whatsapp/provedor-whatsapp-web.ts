@@ -152,6 +152,33 @@ export async function criarProvedorWhatsAppWeb(
             }
           })();
         });
+
+        // ============================================================
+        // O QUE VOCE MANDA DO CELULAR
+        // ============================================================
+        // `message` NAO dispara para as suas proprias mensagens — a
+        // biblioteca so avisa do que chega. Quem cobre o outro sentido e
+        // `message_create`, que dispara para os DOIS.
+        //
+        // Sem isto, tudo que voce responde na mao pelo WhatsApp era
+        // invisivel para o sistema: nao entrava na conversa, nao entrava
+        // no contexto da IA, e o robo podia mandar a proxima etapa por
+        // cima de uma conversa que voce ja estava tendo.
+        //
+        // O filtro `fromMe` e obrigatorio: sem ele toda mensagem
+        // RECEBIDA chegaria duas vezes, por este listener e pelo de
+        // cima.
+        cliente.on('message_create', (m: any) => {
+          if (!m?.fromMe) return;
+          void (async () => {
+            try {
+              const { telefone, fonte } = await resolverTelefoneDaMensagem(m);
+              handler({ ...traduzirMensagem(m), telefone, fonteTelefone: fonte });
+            } catch (err) {
+              log(`Falha ao tratar mensagem enviada por voce: ${String(err)}`);
+            }
+          })();
+        });
         return;
       }
       if (evento === 'message_ack') {
