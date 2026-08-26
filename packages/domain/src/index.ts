@@ -44,6 +44,7 @@ export * from './dashboard/por-etapa.js';
 export * from './dashboard/por-nicho.js';
 export * from './dashboard/resolver-atencao.js';
 export * from './relatorio/semana.js';
+export * from './relatorio/dia.js';
 // --- Recebimento (Fase 6A) ---
 export * from './inbound/identificar-lead.js';
 export * from './inbound/confirmacao-entrega.js';

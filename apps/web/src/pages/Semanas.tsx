@@ -24,11 +24,11 @@
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Inbox } from 'lucide-react';
+import { CalendarDays, Inbox, ChevronLeft, ChevronRight, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { get } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui/primitives';
 import { formatarNumero } from '@/lib/utils';
-import type { RelatorioSemana } from '@prospector/shared';
+import type { RelatorioSemana, ResumoDoDia } from '@prospector/shared';
 
 interface SemanaNaLista {
   inicio: string;
@@ -53,6 +53,367 @@ function rotuloDaSemana(inicioISO: string): string {
   return mes(inicio) === mes(fim)
     ? `${dia(inicio)} a ${dia(fim)} de ${mes(inicio)}`
     : `${dia(inicio)} ${mes(inicio)} a ${dia(fim)} ${mes(fim)}`;
+}
+
+/** Chave estável de um dia: "2026-01-07", no fuso local. */
+function chaveDoDia(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/** O domingo 00:00 da semana em que `d` cai. Espelha o domínio. */
+function domingoDa(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - x.getDay());
+  return x;
+}
+
+/**
+ * O calendário do mês, com as semanas como LINHAS.
+ *
+ * ============================================================
+ * UMA GRADE, DOIS CLIQUES DIFERENTES
+ * ============================================================
+ * Clicar no rótulo da esquerda escolhe a SEMANA; clicar num dia abre o
+ * resumo daquele DIA. São perguntas diferentes — "a abordagem funciona?"
+ * e "o que saiu na terça?" — e juntá-las num controle só evita a tela
+ * ter dois calendários dizendo a mesma coisa.
+ *
+ * Dias de outro mês aparecem apagados, mas continuam clicáveis: a semana
+ * que atravessa a virada do mês é uma semana só, e cortá-la ao meio
+ * esconderia metade dela.
+ */
+function Calendario({
+  mes,
+  aoMudarMes,
+  porDia,
+  semanaAtiva,
+  aoEscolherSemana,
+  diaAtivo,
+  aoEscolherDia,
+}: {
+  mes: Date;
+  aoMudarMes: (d: Date) => void;
+  porDia: Map<string, number>;
+  semanaAtiva: string | null;
+  aoEscolherSemana: (iso: string) => void;
+  diaAtivo: string | null;
+  aoEscolherDia: (iso: string | null) => void;
+}) {
+  const primeiro = new Date(mes.getFullYear(), mes.getMonth(), 1);
+  const ultimo = new Date(mes.getFullYear(), mes.getMonth() + 1, 0);
+
+  // As semanas que cobrem o mês, inclusive as que entram por fora.
+  const linhas: Date[] = [];
+  for (
+    let d = domingoDa(primeiro);
+    d <= ultimo;
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)
+  ) {
+    linhas.push(d);
+  }
+
+  const hoje = chaveDoDia(new Date());
+  const semanaAtivaMs = semanaAtiva ? domingoDa(new Date(semanaAtiva)).getTime() : null;
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <button
+          type="button"
+          className="rounded p-1 hover:bg-[var(--color-fundo)]"
+          onClick={() => aoMudarMes(new Date(mes.getFullYear(), mes.getMonth() - 1, 1))}
+          aria-label="Mês anterior"
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <span className="text-sm font-medium capitalize">
+          {mes.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+        </span>
+        <button
+          type="button"
+          className="rounded p-1 hover:bg-[var(--color-fundo)]"
+          onClick={() => aoMudarMes(new Date(mes.getFullYear(), mes.getMonth() + 1, 1))}
+          aria-label="Próximo mês"
+        >
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <table className="w-full">
+        <thead>
+          <tr>
+            <th className="w-8" />
+            {DIAS.map((d) => (
+              <th
+                key={d}
+                className="pb-1 text-center text-[11px] font-medium uppercase text-[var(--color-texto-fraco)]"
+              >
+                {d}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((domingo) => {
+            const iso = domingo.toISOString();
+            const daSemana = semanaAtivaMs === domingo.getTime();
+
+            // O total da linha decide se vale oferecer o clique: uma
+            // semana sem envio nenhum não tem relatório para mostrar.
+            const totalDaSemana = Array.from({ length: 7 }, (_, i) => {
+              const d = new Date(domingo);
+              d.setDate(d.getDate() + i);
+              return porDia.get(chaveDoDia(d)) ?? 0;
+            }).reduce((t, n) => t + n, 0);
+
+            return (
+              <tr key={iso}>
+                <td className="pr-1 align-middle">
+                  <button
+                    type="button"
+                    className={`h-7 w-7 rounded text-[10px] ${
+                      daSemana
+                        ? 'bg-[var(--color-marca)] text-white'
+                        : totalDaSemana > 0
+                          ? 'text-[var(--color-texto-suave)] hover:bg-[var(--color-fundo)]'
+                          : 'cursor-not-allowed text-[var(--color-texto-fraco)] opacity-40'
+                    }`}
+                    onClick={() => {
+                      if (totalDaSemana === 0) return;
+                      aoEscolherSemana(iso);
+                      // Trocar de semana fecha o dia aberto: ele era da
+                      // semana anterior, e deixá-lo aberto faria a tela
+                      // mostrar duas semanas ao mesmo tempo.
+                      aoEscolherDia(null);
+                    }}
+                    disabled={totalDaSemana === 0}
+                    title={
+                      totalDaSemana > 0
+                        ? `Ver a semana de ${rotuloDaSemana(iso)}`
+                        : 'Nenhuma mensagem saiu nesta semana'
+                    }
+                  >
+                    sem
+                  </button>
+                </td>
+
+                {Array.from({ length: 7 }, (_, i) => {
+                  const d = new Date(domingo);
+                  d.setDate(d.getDate() + i);
+                  const chave = chaveDoDia(d);
+                  const qtd = porDia.get(chave) ?? 0;
+                  const foraDoMes = d.getMonth() !== mes.getMonth();
+                  const ativo = diaAtivo === chave;
+
+                  return (
+                    <td key={chave} className="p-0.5 text-center">
+                      <button
+                        type="button"
+                        className={`flex h-9 w-full flex-col items-center justify-center rounded text-[11px] leading-none ${
+                          ativo
+                            ? 'bg-[var(--color-marca)] text-white'
+                            : qtd > 0
+                              ? 'bg-[var(--color-fundo)] hover:ring-1 hover:ring-[var(--color-marca)]'
+                              : 'hover:bg-[var(--color-fundo)]'
+                        } ${foraDoMes && !ativo ? 'opacity-40' : ''} ${
+                          chave === hoje && !ativo
+                            ? 'ring-1 ring-[var(--color-borda)]'
+                            : ''
+                        }`}
+                        onClick={() => aoEscolherDia(ativo ? null : chave)}
+                        title={
+                          qtd > 0
+                            ? `${qtd} mensagem(ns) em ${d.toLocaleDateString('pt-BR')}`
+                            : d.toLocaleDateString('pt-BR')
+                        }
+                      >
+                        <span className="num">{d.getDate()}</span>
+                        {qtd > 0 && (
+                          <span
+                            className={`num mt-0.5 text-[9px] ${
+                              ativo ? 'opacity-80' : 'text-[var(--color-texto-fraco)]'
+                            }`}
+                          >
+                            {qtd}
+                          </span>
+                        )}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
+        O número menor em cada dia são as mensagens que saíram. Clique num
+        <strong> dia</strong> para o resumo dele, ou em <strong>sem</strong> à
+        esquerda para o relatório da semana inteira.
+      </p>
+    </div>
+  );
+}
+
+/** O resumo de um dia — a linha do tempo do que saiu e do que voltou. */
+function PainelDoDia({ chave, aoFechar }: { chave: string; aoFechar: () => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['dia', chave],
+    // A chave é local ("2026-01-07"); `new Date` no servidor a lê como
+    // meia-noite local dele, que é a mesma máquina. Mandar ISO com fuso
+    // aqui é o que faria o dia escorregar.
+    queryFn: () => get<ResumoDoDia>(`/api/dias/${chave}`),
+  });
+
+  const rotulo = new Date(`${chave}T12:00:00`).toLocaleDateString('pt-BR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="capitalize">{rotulo}</CardTitle>
+        <button
+          type="button"
+          className="text-xs text-[var(--color-texto-fraco)] underline"
+          onClick={aoFechar}
+        >
+          fechar
+        </button>
+      </CardHeader>
+      <CardContent>
+        {isLoading || !data ? (
+          <p className="py-6 text-center text-sm text-[var(--color-texto-fraco)]">
+            Carregando…
+          </p>
+        ) : data.enviadas === 0 && data.respostas === 0 ? (
+          <p className="py-6 text-center text-sm text-[var(--color-texto-suave)]">
+            Nada saiu e nada chegou neste dia.
+          </p>
+        ) : (
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-lg border border-[var(--color-borda)] p-3">
+                <p className="num text-xl font-semibold">
+                  {formatarNumero(data.enviadas)}
+                </p>
+                <p className="text-[11px] text-[var(--color-texto-suave)]">
+                  mensagens saíram
+                </p>
+              </div>
+              <div className="rounded-lg border border-[var(--color-borda)] p-3">
+                <p className="num text-xl font-semibold">
+                  {formatarNumero(data.pessoasAbordadas)}
+                </p>
+                <p className="text-[11px] text-[var(--color-texto-suave)]">
+                  pessoas abordadas
+                </p>
+              </div>
+              <div className="rounded-lg border border-[var(--color-borda)] p-3">
+                <p className="num text-xl font-semibold">
+                  {formatarNumero(data.respostas)}
+                </p>
+                <p className="text-[11px] text-[var(--color-texto-suave)]">
+                  respostas chegaram
+                </p>
+              </div>
+            </div>
+
+            {data.porEtapa.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {data.porEtapa.map((e) => (
+                  <Badge key={e.ordem} variant="neutro">
+                    {e.rotulo}: {formatarNumero(e.enviadas)}
+                  </Badge>
+                ))}
+                {data.porNicho.map((n) => (
+                  <Badge key={n.nicho} variant="info">
+                    {n.nicho}: {formatarNumero(n.enviadas)}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            {data.listaRespostas.length > 0 && (
+              <div>
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+                  <ArrowDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  O que voltou
+                </p>
+                <ul className="divide-y divide-[var(--color-borda)]">
+                  {data.listaRespostas.map((r, i) => (
+                    <li key={`${r.leadId}-${i}`} className="py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">
+                          {r.nome ?? 'Lead sem nome'}
+                        </span>
+                        {r.categoria ? (
+                          <Badge variant="info">{r.categoria.toLowerCase()}</Badge>
+                        ) : (
+                          <Badge variant="neutro">não entendida</Badge>
+                        )}
+                        <span className="num text-[11px] text-[var(--color-texto-fraco)]">
+                          {new Date(r.quando).toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-[var(--color-texto-suave)]">
+                        {r.texto}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {data.envios.length > 0 && (
+              <div>
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+                  <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  O que saiu
+                </p>
+                <ul className="divide-y divide-[var(--color-borda)]">
+                  {data.envios.map((e, i) => (
+                    <li
+                      key={`${e.leadId}-${i}`}
+                      className="flex flex-wrap items-center justify-between gap-2 py-1.5"
+                    >
+                      <span className="text-sm">{e.nome ?? 'Lead sem nome'}</span>
+                      <span className="flex items-center gap-2">
+                        <Badge variant="neutro">
+                          {e.etapaNome?.trim() || `Mensagem ${e.ordem}`}
+                        </Badge>
+                        <span className="num text-[11px] text-[var(--color-texto-fraco)]">
+                          {new Date(e.quando).toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className="text-[11px] text-[var(--color-texto-fraco)]">
+              As duas listas são independentes: a resposta que chegou hoje quase
+              sempre é sobre uma mensagem de ontem. Por isso não há “taxa de
+              resposta do dia” — ela não teria significado.
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /** Uma linha do funil. `de` desenha a barra proporcional. */
@@ -92,13 +453,24 @@ function LinhaFunil({
 
 export function Semanas() {
   const [selecionada, setSelecionada] = useState<string | null>(null);
+  const [dia, setDia] = useState<string | null>(null);
+  const [mes, setMes] = useState(() => {
+    const hoje = new Date();
+    return new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  });
 
   const { data: lista, isLoading: carregandoLista } = useQuery({
     queryKey: ['semanas'],
-    queryFn: () => get<{ semanas: SemanaNaLista[] }>('/api/semanas'),
+    queryFn: () =>
+      get<{ semanas: SemanaNaLista[]; dias: { dia: string; enviadas: number }[] }>(
+        '/api/semanas'
+      ),
   });
 
   const semanas = lista?.semanas ?? [];
+  const porDia = new Map(
+    (lista?.dias ?? []).map((d) => [chaveDoDia(new Date(d.dia)), d.enviadas])
+  );
   // Sem escolha explícita, a mais recente — que é a que você quer ver ao
   // abrir a tela.
   const alvo = selecionada ?? semanas[0]?.inicio ?? null;
@@ -140,52 +512,33 @@ export function Semanas() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
+        <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
           {/* ---- O calendário ---- */}
           <Card className="h-fit">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm">
                 <CalendarDays className="h-4 w-4" aria-hidden="true" />
-                Semanas
+                Calendário
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-1">
-                {semanas.map((s) => {
-                  const ativa = s.inicio === alvo;
-                  return (
-                    <li key={s.inicio}>
-                      <button
-                        type="button"
-                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-sm ${
-                          ativa
-                            ? 'bg-[var(--color-marca)] text-white'
-                            : 'hover:bg-[var(--color-fundo)]'
-                        }`}
-                        onClick={() => setSelecionada(s.inicio)}
-                        aria-current={ativa ? 'true' : undefined}
-                      >
-                        <span>{rotuloDaSemana(s.inicio)}</span>
-                        <span
-                          className={`num text-xs ${
-                            ativa ? 'opacity-80' : 'text-[var(--color-texto-fraco)]'
-                          }`}
-                        >
-                          {formatarNumero(s.enviadas)}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
-                Só aparecem semanas em que alguma mensagem saiu. A semana vai
-                de domingo a sábado.
-              </p>
+              <Calendario
+                mes={mes}
+                aoMudarMes={setMes}
+                porDia={porDia}
+                semanaAtiva={alvo}
+                aoEscolherSemana={setSelecionada}
+                diaAtivo={dia}
+                aoEscolherDia={setDia}
+              />
             </CardContent>
           </Card>
 
           <div className="space-y-6">
+            {/* O dia escolhido vem ANTES do relatório da semana: você
+                clicou nele agora, e é o que quer ver. */}
+            {dia !== null && <PainelDoDia chave={dia} aoFechar={() => setDia(null)} />}
+
             {carregandoRelatorio || !relatorio || !f ? (
               <p className="py-8 text-center text-sm text-[var(--color-texto-fraco)]">
                 Carregando…

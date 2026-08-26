@@ -33,12 +33,18 @@
 import { prisma } from '@prospector/database';
 import {
   montarRelatorioSemana,
+  montarResumoDoDia,
   inicioDaSemana,
   fimDaSemana,
+  inicioDoDia,
+  fimDoDia,
   type EnvioDaSemana,
   type RespostaDaSemana,
   type EstadoDoLead,
   type RelatorioSemana,
+  type ResumoDoDia,
+  type EnvioDoDia,
+  type RespostaDoDia,
 } from '@prospector/domain';
 
 export interface SemanaNaLista {
@@ -115,6 +121,36 @@ export async function semanasComAtividade(): Promise<SemanaNaLista[]> {
         abordados: v.leads.size,
       };
     });
+}
+
+/**
+ * Quantas mensagens sairam em cada DIA que teve envio.
+ *
+ * E o que pinta o calendario: sem isto, a grade do mes so saberia quais
+ * SEMANAS tiveram atividade, e voce nao teria como escolher um dia
+ * sabendo se ha algo nele.
+ *
+ * So dias com envio aparecem. Dia vazio nao vira linha — a ausencia ja
+ * diz o que precisa dizer, e o calendario desenha os vazios de qualquer
+ * forma.
+ */
+export async function diasComAtividade(): Promise<
+  { dia: string; enviadas: number }[]
+> {
+  const envios = await prisma.outboundMessage.findMany({
+    where: { status: 'ENVIADA' },
+    select: { processedAt: true, createdAt: true },
+  });
+
+  const porDia = new Map<number, number>();
+  for (const e of envios) {
+    const chave = inicioDoDia(e.processedAt ?? e.createdAt).getTime();
+    porDia.set(chave, (porDia.get(chave) ?? 0) + 1);
+  }
+
+  return [...porDia.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ms, enviadas]) => ({ dia: new Date(ms).toISOString(), enviadas }));
 }
 
 /**
@@ -221,4 +257,83 @@ export async function relatorioDaSemana(quando: Date): Promise<RelatorioSemana> 
     estados,
     ordemDaPrevia: previa,
   });
+}
+
+/**
+ * O resumo de UM dia.
+ *
+ * As duas pontas sao buscadas de forma INDEPENDENTE, e e proposital: a
+ * resposta que chegou hoje quase sempre e sobre uma mensagem de ontem.
+ * Cruza-las numa "taxa do dia" produziria um numero sem significado.
+ */
+export async function resumoDoDia(quando: Date): Promise<ResumoDoDia> {
+  const inicio = inicioDoDia(quando);
+  const fim = fimDoDia(inicio);
+
+  const [linhas, respostasCruas] = await Promise.all([
+    prisma.outboundMessage.findMany({
+      where: {
+        status: 'ENVIADA',
+        OR: [
+          { processedAt: { gte: inicio, lt: fim } },
+          { processedAt: null, createdAt: { gte: inicio, lt: fim } },
+        ],
+      },
+      select: {
+        leadId: true,
+        processedAt: true,
+        createdAt: true,
+        campaignStep: { select: { ordem: true, nome: true } },
+        lead: {
+          select: {
+            nomeCompleto: true,
+            empresa: true,
+            captureSession: { select: { nicho: true } },
+          },
+        },
+      },
+    }),
+    prisma.message.findMany({
+      where: {
+        direcao: 'RECEBIDA',
+        OR: [
+          { recebidaEm: { gte: inicio, lt: fim } },
+          { recebidaEm: null, createdAt: { gte: inicio, lt: fim } },
+        ],
+      },
+      select: {
+        leadId: true,
+        texto: true,
+        categoria: true,
+        confianca: true,
+        recebidaEm: true,
+        createdAt: true,
+        lead: { select: { nomeCompleto: true, empresa: true } },
+      },
+    }),
+  ]);
+
+  const envios: EnvioDoDia[] = linhas
+    .filter((l) => l.campaignStep !== null)
+    .map((l) => ({
+      leadId: l.leadId,
+      nome: l.lead?.empresa ?? l.lead?.nomeCompleto ?? null,
+      nicho: l.lead?.captureSession?.nicho ?? null,
+      ordem: l.campaignStep!.ordem,
+      etapaNome: l.campaignStep!.nome,
+      quando: l.processedAt ?? l.createdAt,
+    }));
+
+  const respostas: RespostaDoDia[] = respostasCruas
+    .filter((r) => r.leadId !== null)
+    .map((r) => ({
+      leadId: r.leadId!,
+      nome: r.lead?.empresa ?? r.lead?.nomeCompleto ?? null,
+      texto: r.texto,
+      categoria: r.categoria,
+      confianca: r.confianca ?? 0,
+      quando: r.recebidaEm ?? r.createdAt,
+    }));
+
+  return montarResumoDoDia({ dia: inicio, envios, respostas });
 }

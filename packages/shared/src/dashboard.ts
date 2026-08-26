@@ -299,3 +299,53 @@ export interface RelatorioSemana {
   porNicho: ResumoNicho[];
   travou: TravaEtapa[];
 }
+
+
+// ---------------------------------------------------------------------------
+// O RESUMO DE UM DIA
+//
+// A semana responde "a abordagem funciona?". O dia responde "o que saiu
+// na terca, e o que voltou?" — a pergunta que voce faz quando um numero
+// da semana parece errado.
+//
+// NAO ha "taxa de resposta do dia" aqui, de proposito: a resposta que
+// chega hoje quase sempre e sobre uma mensagem de ontem, entao
+// respostas-de-hoje / envios-de-hoje seria um numero sem significado.
+// ---------------------------------------------------------------------------
+
+/** Uma mensagem que saiu naquele dia. */
+export interface EnvioDoDia {
+  leadId: string;
+  nome: string | null;
+  nicho: string | null;
+  ordem: number;
+  etapaNome: string | null;
+  quando: Date;
+}
+
+/** Uma resposta que chegou naquele dia. */
+export interface RespostaDoDia {
+  leadId: string;
+  nome: string | null;
+  texto: string;
+  /** `null` quando a confianca ficou abaixo do piso. */
+  categoria: string | null;
+  confianca: number;
+  quando: Date;
+}
+
+export interface ResumoDoDia {
+  /** ISO da meia-noite local daquele dia. */
+  dia: string;
+  /** Mensagens que sairam. Um lead com 2 etapas no dia conta 2. */
+  enviadas: number;
+  /** Pessoas distintas que receberam alguma coisa. */
+  pessoasAbordadas: number;
+  /** Respostas que chegaram — de qualquer abordagem, nao so a de hoje. */
+  respostas: number;
+  porNicho: { nicho: string; enviadas: number }[];
+  porEtapa: { ordem: number; rotulo: string; enviadas: number }[];
+  /** A linha do tempo do dia, mais antigo primeiro. */
+  envios: EnvioDoDia[];
+  listaRespostas: RespostaDoDia[];
+}

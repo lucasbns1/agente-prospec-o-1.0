@@ -395,3 +395,131 @@ describe('o que fica de fora', () => {
     expect(r.travou).toEqual([]);
   });
 });
+
+// ============================================================
+// O RESUMO DE UM DIA
+// ============================================================
+// A semana responde "a abordagem funciona?". O dia responde "o que saiu
+// na terça, e o que voltou?" — a pergunta que você faz quando um número
+// da semana parece estranho.
+describe('GET /api/dias/:data', () => {
+  const doDia = async (d: Date) =>
+    (await chamar(`/api/dias/${encodeURIComponent(d.toISOString())}`)).json();
+
+  it('conta mensagens e pessoas como números diferentes', async () => {
+    // Um lead que recebeu duas etapas no mesmo dia é UMA pessoa
+    // abordada e DUAS mensagens.
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }, { ordem: 2 }]);
+    await enviou(l.id, c.id, etapas[0]!.id, QUARTA);
+    await enviou(l.id, c.id, etapas[1]!.id, QUARTA);
+
+    const r = await doDia(QUARTA);
+    expect(r.enviadas).toBe(2);
+    expect(r.pessoasAbordadas).toBe(1);
+    expect(r.envios).toHaveLength(2);
+  });
+
+  it('envio de outro dia não entra', async () => {
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }]);
+    await enviou(l.id, c.id, etapas[0]!.id, new Date(2026, 0, 8, 10, 0, 0));
+
+    const r = await doDia(QUARTA);
+    expect(r.enviadas).toBe(0);
+  });
+
+  it('um envio das 22h pertence AQUELE dia, e não ao seguinte', async () => {
+    // O corte é local, não UTC. Com corte em UTC, tudo enviado depois
+    // das 21h migraria para o dia seguinte e o gráfico da semana
+    // passaria a discordar do que você viu acontecer.
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }]);
+    const tarde = new Date(2026, 0, 7, 22, 30, 0);
+    await enviou(l.id, c.id, etapas[0]!.id, tarde);
+
+    expect((await doDia(QUARTA)).enviadas).toBe(1);
+    expect((await doDia(new Date(2026, 0, 8, 10, 0, 0))).enviadas).toBe(0);
+  });
+
+  it('traz as respostas que chegaram naquele dia, com quem e o quê', async () => {
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }]);
+    await enviou(l.id, c.id, etapas[0]!.id, QUARTA);
+    await respondeu(l.id, c.id, new Date(2026, 0, 7, 18, 0, 0));
+
+    const r = await doDia(QUARTA);
+    expect(r.respostas).toBe(1);
+    expect(r.listaRespostas[0].categoria).toBe('POSITIVO');
+    expect(r.listaRespostas[0].texto).toContain('quero');
+    expect(r.listaRespostas[0].nome).not.toBeNull();
+  });
+
+  it('resposta com confiança baixa aparece SEM categoria', async () => {
+    // "ok" com 35 pode ser "ok, manda" ou "ok, deixa pra lá". Mostrar um
+    // rótulo que o sistema não sustenta é pior do que dizer "não
+    // entendida".
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }]);
+    await enviou(l.id, c.id, etapas[0]!.id, QUARTA);
+    await respondeu(l.id, c.id, QUARTA, 'POSITIVO', 35);
+
+    const r = await doDia(QUARTA);
+    expect(r.respostas).toBe(1);
+    expect(r.listaRespostas[0].categoria).toBeNull();
+  });
+
+  it('a resposta conta no dia em que CHEGOU, não no da abordagem', async () => {
+    // As duas listas do dia são independentes de propósito: a resposta
+    // que chega hoje quase sempre é sobre uma mensagem de ontem.
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }]);
+    await enviou(l.id, c.id, etapas[0]!.id, QUARTA);
+    const sexta = new Date(2026, 0, 9, 11, 0, 0);
+    await respondeu(l.id, c.id, sexta);
+
+    expect((await doDia(QUARTA)).respostas).toBe(0);
+    const naSexta = await doDia(sexta);
+    expect(naSexta.respostas).toBe(1);
+    expect(naSexta.enviadas).toBe(0);
+  });
+
+  it('quebra por etapa e por nicho', async () => {
+    const a = await lead('Estética automotiva');
+    const b = await lead('Psicólogo');
+    const { c, etapas } = await campanha([{ ordem: 1 }, { ordem: 2 }]);
+    await enviou(a.id, c.id, etapas[0]!.id, QUARTA);
+    await enviou(b.id, c.id, etapas[1]!.id, QUARTA);
+
+    const r = await doDia(QUARTA);
+    expect(r.porEtapa.map((e: { ordem: number }) => e.ordem)).toEqual([1, 2]);
+    expect(r.porNicho).toHaveLength(2);
+  });
+
+  it('dia vazio devolve tudo zerado, sem quebrar', async () => {
+    const r = await doDia(QUARTA);
+    expect(r.enviadas).toBe(0);
+    expect(r.respostas).toBe(0);
+    expect(r.envios).toEqual([]);
+    expect(r.listaRespostas).toEqual([]);
+  });
+
+  it('data inválida é recusada', async () => {
+    const r = await chamar('/api/dias/banana');
+    expect(r.statusCode).toBe(422);
+  });
+});
+
+describe('GET /api/semanas traz os dias, para pintar o calendário', () => {
+  it('cada dia com envio aparece com o total', async () => {
+    const l = await lead();
+    const { c, etapas } = await campanha([{ ordem: 1 }, { ordem: 2 }]);
+    await enviou(l.id, c.id, etapas[0]!.id, QUARTA);
+    await enviou(l.id, c.id, etapas[1]!.id, QUARTA);
+
+    const { dias } = (await chamar('/api/semanas')).json();
+    expect(dias).toHaveLength(1);
+    expect(dias[0].enviadas).toBe(2);
+    expect(new Date(dias[0].dia).getDate()).toBe(7);
+  });
+});

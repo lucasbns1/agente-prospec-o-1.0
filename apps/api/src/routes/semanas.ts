@@ -14,14 +14,24 @@ import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 import {
   semanasComAtividade,
+  diasComAtividade,
   relatorioDaSemana,
+  resumoDoDia,
 } from '../services/semana-service.js';
 
 export async function rotasSemanas(app: FastifyInstance): Promise<void> {
   app.get(
     '/api/semanas',
     { preHandler: exigirAutenticacao },
-    async () => ({ semanas: await semanasComAtividade() })
+    async () => {
+      // As duas listas juntas: o calendario precisa das duas para
+      // desenhar uma tela so, e sao duas varreduras da mesma tabela.
+      const [semanas, dias] = await Promise.all([
+        semanasComAtividade(),
+        diasComAtividade(),
+      ]);
+      return { semanas, dias };
+    }
   );
 
   /**
@@ -49,6 +59,30 @@ export async function rotasSemanas(app: FastifyInstance): Promise<void> {
       }
 
       return relatorioDaSemana(quando);
+    }
+  );
+
+  /**
+   * GET /api/dias/:data
+   *
+   * O resumo de um dia. A semana responde "a abordagem funciona?"; o dia
+   * responde "o que saiu na terca, e o que voltou?" — a pergunta que
+   * voce faz quando um numero da semana parece estranho.
+   */
+  app.get<{ Params: { data: string } }>(
+    '/api/dias/:data',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { data } = z
+        .object({ data: z.string().min(4) })
+        .parse(request.params);
+
+      const quando = new Date(data);
+      if (Number.isNaN(quando.getTime())) {
+        throw new AppError(`"${data}" não é uma data válida`, 422, 'DATA_INVALIDA');
+      }
+
+      return resumoDoDia(quando);
     }
   );
 }

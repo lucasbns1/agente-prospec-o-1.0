@@ -154,7 +154,7 @@ async function main(): Promise<void> {
   console.log('  - devolve o status para AGUARDANDO_RESPOSTA;');
   console.log('  - limpa a "próxima ação" que dizia que você conduzia;');
   console.log('  - RETOMA a automação que tinha sido pausada;');
-  console.log('  - apaga as mensagens sem etapa que o eco criou;');
+  console.log('  - RELIGA as mensagens do eco à etapa certa (não apaga);');
   console.log('  - apaga os eventos "você respondeu manualmente".');
   console.log('');
 
@@ -195,11 +195,44 @@ async function main(): Promise<void> {
     },
   });
 
-  // As linhas duplicadas que o eco criou. Elas nao tem etapa — a do
-  // worker tem, e e a que fica.
-  const mensagens = await prisma.message.deleteMany({
-    where: { leadId: { in: ids }, direcao: 'ENVIADA', campaignStepId: null },
-  });
+  // ============================================================
+  // AS MENSAGENS DO ECO SAO CONSERTADAS, E NAO APAGADAS
+  // ============================================================
+  // A primeira versao deste script apagava as linhas sem etapa. Estava
+  // errado: quando o eco venceu a corrida, foi a linha DELE que ficou
+  // com o `whatsapp_message_id`, e o worker — ao bater na UNIQUE —
+  // vinculou o envio a ela. Apagar levaria junto a mensagem que aparece
+  // na conversa, e o /conversas ficaria com um buraco.
+  //
+  // O que falta nela e so a etapa. Entao ela recebe a etapa da ordem de
+  // envio que tem o mesmo texto, e vira a linha correta.
+  let mensagens = 0;
+  for (const leadId of ids) {
+    const semEtapa = await prisma.message.findMany({
+      where: { leadId, direcao: 'ENVIADA', campaignStepId: null },
+      select: { id: true, texto: true },
+    });
+    if (semEtapa.length === 0) continue;
+
+    const ordens = await prisma.outboundMessage.findMany({
+      where: { leadId, textoRenderizado: { not: null } },
+      select: { campaignStepId: true, campaignId: true, textoRenderizado: true },
+    });
+
+    for (const m of semEtapa) {
+      const ordem = ordens.find((o) => o.textoRenderizado === m.texto);
+      if (!ordem?.campaignStepId) continue;
+
+      await prisma.message.update({
+        where: { id: m.id },
+        data: {
+          campaignStepId: ordem.campaignStepId,
+          campaignId: ordem.campaignId,
+        },
+      });
+      mensagens += 1;
+    }
+  }
 
   const eventos = await prisma.leadEvent.deleteMany({
     where: { leadId: { in: ids }, origem: 'whatsapp-manual' },
@@ -208,7 +241,7 @@ async function main(): Promise<void> {
   console.log('--- APLICADO ---');
   console.log(`  leads corrigidos:        ${leads.count}`);
   console.log(`  automações retomadas:    ${vinculos.count}`);
-  console.log(`  mensagens duplicadas:    ${mensagens.count} apagadas`);
+  console.log(`  mensagens religadas:     ${mensagens}`);
   console.log(`  eventos do eco:          ${eventos.count} apagados`);
   console.log('');
   console.log('Recarregue o dashboard.');
