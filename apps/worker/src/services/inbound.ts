@@ -519,6 +519,53 @@ async function registrarMensagemManual(p: {
 }): Promise<ResultadoInbound> {
   const { entrada, leadId, campaignId } = p;
 
+  // ============================================================
+  // ISTO SAIU DE VOCE, OU SAIU DO PROPRIO SISTEMA?
+  // ============================================================
+  // `message_create` do whatsapp-web.js dispara para TUDO que sai do
+  // numero conectado — o que voce digita no celular E o que o worker
+  // acabou de enviar. Os dois chegam aqui com `deMim: true`.
+  //
+  // A primeira versao separava os dois pela UNIQUE do
+  // `whatsapp_message_id`, apostando que o worker ja teria gravado a
+  // linha em `messages` quando o eco chegasse. Ele NAO grava antes: o
+  // worker envia, so entao muda o status para ENVIADA, e so entao grava
+  // o historico. O eco chega no meio disso.
+  //
+  // O resultado em uso real foi 46 leads marcados QUENTE numa base com
+  // UMA resposta — cada mensagem da campanha voltava como se fosse voce
+  // assumindo a conversa a mao.
+  //
+  // A ordem das escritas do worker esta certa (o transporte confirmado
+  // vira ENVIADA antes de qualquer outra gravacao), entao quem tem que
+  // parar de depender dela e este arquivo.
+  //
+  // A pergunta certa nao e "ja gravaram?", e sim "existe uma ORDEM DE
+  // ENVIO com este texto para este lead?". A linha em `outbound_messages`
+  // nasce no enfileiramento, com o `textoRenderizado` ja pronto — muito
+  // antes do envio. Nao ha janela para perder essa corrida.
+  const ordemDoSistema = await prisma.outboundMessage.findFirst({
+    where: {
+      leadId,
+      textoRenderizado: entrada.texto,
+      // Uma ordem ainda PENDENTE nao produziu eco nenhum. Estas tres sao
+      // as que ja passaram pelo transporte, ou estao passando.
+      status: { in: ['PROCESSANDO', 'ENVIADA', 'SIMULADA'] },
+    },
+    select: { id: true },
+  });
+
+  if (ordemDoSistema) {
+    // O worker e o dono desta mensagem: e ele que grava o historico, com
+    // etapa, chave de idempotencia e ACK. Gravar aqui tambem criaria uma
+    // linha sem etapa competindo com a dele.
+    return {
+      processada: false,
+      motivo: 'Eco de um envio do próprio sistema',
+      leadId,
+    };
+  }
+
   const conversa = await prisma.conversation.upsert({
     where: { id: `${leadId}-${campaignId ?? 'sem-campanha'}` },
     update: {

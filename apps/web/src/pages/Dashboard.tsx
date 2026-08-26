@@ -390,6 +390,32 @@ const COR_DESTAQUE: Record<string, string> = {
 
 export function Dashboard() {
   const [leadAberto, setLeadAberto] = useState<string | null>(null);
+  const cliente = useQueryClient();
+
+  // ============================================================
+  // "JÁ CUIDEI DISSO"
+  // ============================================================
+  // O item não some no clique: fica riscado com "desfazer" ao lado, e
+  // sai de verdade quando você pede a atualização da lista. Numa lista
+  // de vinte nomes empilhados, um item que evapora leva o desfazer
+  // junto — e o de baixo pula para debaixo do seu cursor.
+  const [resolvidos, setResolvidos] = useState<Record<string, boolean>>({});
+
+  const resolver = useMutation({
+    mutationFn: (leadId: string) =>
+      post(`/api/leads/${leadId}/atencao/resolver`).then(() => leadId),
+    onSuccess: (leadId) => setResolvidos((r) => ({ ...r, [leadId]: true })),
+  });
+
+  const desfazerResolvido = useMutation({
+    mutationFn: (leadId: string) =>
+      del(`/api/leads/${leadId}/atencao/resolver`).then(() => leadId),
+    onSuccess: (leadId) =>
+      setResolvidos((r) => {
+        const { [leadId]: _fora, ...resto } = r;
+        return resto;
+      }),
+  });
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['dashboard'],
@@ -443,49 +469,104 @@ export function Dashboard() {
               </p>
             </div>
           ) : (
+            <>
             <ul className="divide-y divide-[var(--color-borda)]">
-              {atencao.map((item) => (
-                <li key={item.leadId} className="py-3">
-                  <button
-                    type="button"
-                    className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
-                    onClick={() => setLeadAberto(item.leadId)}
+              {atencao.map((item) => {
+                const feito = resolvidos[item.leadId] === true;
+                return (
+                  <li
+                    key={item.leadId}
+                    className="flex flex-wrap items-center gap-2 py-3"
                   >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium">
-                          {item.nome ?? 'Lead sem nome'}
-                        </span>
-                        <Badge variant={variantePorTemperatura(item.temperatura)}>
-                          {item.temperatura.toLowerCase()}
-                        </Badge>
-                        {item.totalMotivos > 1 && (
-                          <Badge variant="neutro">
-                            +{item.totalMotivos - 1} motivo(s)
+                    <button
+                      type="button"
+                      className={`flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 text-left ${
+                        feito ? 'opacity-50' : ''
+                      }`}
+                      onClick={() => setLeadAberto(item.leadId)}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`text-sm font-medium ${
+                              feito ? 'line-through' : ''
+                            }`}
+                          >
+                            {item.nome ?? 'Lead sem nome'}
+                          </span>
+                          <Badge variant={variantePorTemperatura(item.temperatura)}>
+                            {item.temperatura.toLowerCase()}
                           </Badge>
+                          {item.totalMotivos > 1 && (
+                            <Badge variant="neutro">
+                              +{item.totalMotivos - 1} motivo(s)
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-xs text-[var(--color-texto-suave)]">
+                          {[item.categoria, item.bairro, item.cidade]
+                            .filter(Boolean)
+                            .join(' · ') || 'sem localização'}
+                          {' · espera desde '}
+                          {formatarDataHora(item.em)}
+                        </p>
+                        {item.ultimaMensagem && (
+                          <p className="mt-1 truncate text-xs text-[var(--color-texto-fraco)]">
+                            {item.ultimaMensagem}
+                          </p>
                         )}
                       </div>
-                      <p className="mt-0.5 text-xs text-[var(--color-texto-suave)]">
-                        {[item.categoria, item.bairro, item.cidade]
-                          .filter(Boolean)
-                          .join(' · ') || 'sem localização'}
-                        {' · espera desde '}
-                        {formatarDataHora(item.em)}
-                      </p>
-                      {item.ultimaMensagem && (
-                        <p className="mt-1 truncate text-xs text-[var(--color-texto-fraco)]">
-                          {item.ultimaMensagem}
-                        </p>
-                      )}
-                    </div>
 
-                    <Badge variant={varianteMotivo(item.motivo)}>
-                      {item.acaoNecessaria}
-                    </Badge>
-                  </button>
-                </li>
-              ))}
+                      <Badge variant={varianteMotivo(item.motivo)}>
+                        {item.acaoNecessaria}
+                      </Badge>
+                    </button>
+
+                    {/*
+                      O item não some na hora: fica riscado com "desfazer"
+                      ao lado, e sai de verdade na próxima leitura da
+                      lista. Um item que evapora ao clique leva o desfazer
+                      junto, e aqui a lista tem vinte nomes empilhados.
+                    */}
+                    {feito ? (
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs text-[var(--color-texto-fraco)] underline"
+                        onClick={() => desfazerResolvido.mutate(item.leadId)}
+                        disabled={desfazerResolvido.isPending}
+                      >
+                        desfazer
+                      </button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="secundario"
+                        className="shrink-0"
+                        onClick={() => resolver.mutate(item.leadId)}
+                        disabled={resolver.isPending}
+                        title="Tira este lead da lista. Não altera nada do histórico dele."
+                      >
+                        <Check className="mr-1 h-3 w-3" aria-hidden="true" />
+                        Resolvido
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
+            {Object.keys(resolvidos).length > 0 && (
+              <button
+                type="button"
+                className="mt-3 text-xs text-[var(--color-texto-fraco)] underline"
+                onClick={() => {
+                  setResolvidos({});
+                  void cliente.invalidateQueries({ queryKey: ['dashboard'] });
+                }}
+              >
+                Atualizar a lista
+              </button>
+            )}
+            </>
           )}
         </CardContent>
       </Card>

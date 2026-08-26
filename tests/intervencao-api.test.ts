@@ -738,3 +738,96 @@ describe('GET /api/dashboard/nichos', () => {
     expect(corpo.total.leads).toBe(1);
   });
 });
+
+// ============================================================
+// "JÁ CUIDEI DISSO" NA LISTA DE ATENÇÃO
+// ============================================================
+// Pedido: "quero que eu consiga marcar como resolvido só com um botão".
+//
+// O que só o banco prova: que o lead SAI da lista, que nada do histórico
+// dele foi alterado para isso acontecer, e que ele VOLTA quando algo
+// novo acontece.
+describe('POST /api/leads/:id/atencao/resolver', () => {
+  const nomesNaAtencao = async (): Promise<string[]> => {
+    const r = await chamar('GET', '/api/dashboard');
+    return r.json().atencao.map((i: { leadId: string }) => i.leadId);
+  };
+
+  it('tira o lead da lista sem alterar nada dele', async () => {
+    // A parte que importa: um lead quente está ali porque a coluna diz
+    // QUENTE. Rebaixar a temperatura limparia a tela e falsificaria o
+    // sinal que o lead realmente deu.
+    const lead = await criarLead({
+      temperatura: 'QUENTE',
+      status: 'EM_CONVERSA',
+      ultimaInteracaoEm: new Date(Date.now() - 60_000),
+    });
+    expect(await nomesNaAtencao()).toContain(lead.id);
+
+    const r = await chamar('POST', `/api/leads/${lead.id}/atencao/resolver`);
+    expect(r.statusCode).toBe(200);
+
+    expect(await nomesNaAtencao()).not.toContain(lead.id);
+
+    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(depois.temperatura).toBe('QUENTE');
+    expect(depois.status).toBe('EM_CONVERSA');
+  });
+
+  it('silencia as notificações abertas daquele lead', async () => {
+    // O sino tem que concordar com a tela.
+    const lead = await criarLead({ temperatura: 'QUENTE' });
+    await prisma.notification.create({
+      data: {
+        leadId: lead.id,
+        tipo: 'INTERVENCAO_NECESSARIA',
+        titulo: 'Precisa de você',
+        mensagem: 'x',
+        lida: false,
+      } as never,
+    });
+
+    await chamar('POST', `/api/leads/${lead.id}/atencao/resolver`);
+
+    expect(
+      await prisma.notification.count({ where: { leadId: lead.id, lida: false } })
+    ).toBe(0);
+  });
+
+  it('o lead VOLTA quando algo novo acontece', async () => {
+    // É o ponto do carimbo de tempo: dispensar não é "nunca mais me
+    // mostre este lead", é "as pendências até agora eu já tratei".
+    const lead = await criarLead({
+      temperatura: 'QUENTE',
+      ultimaInteracaoEm: new Date(Date.now() - 60_000),
+    });
+    await chamar('POST', `/api/leads/${lead.id}/atencao/resolver`);
+    expect(await nomesNaAtencao()).not.toContain(lead.id);
+
+    // O lead se mexeu depois da dispensa.
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { ultimaInteracaoEm: new Date(Date.now() + 60_000) },
+    });
+
+    expect(await nomesNaAtencao()).toContain(lead.id);
+  });
+
+  it('desfazer devolve o lead à lista', async () => {
+    const lead = await criarLead({
+      temperatura: 'QUENTE',
+      ultimaInteracaoEm: new Date(Date.now() - 60_000),
+    });
+    await chamar('POST', `/api/leads/${lead.id}/atencao/resolver`);
+    expect(await nomesNaAtencao()).not.toContain(lead.id);
+
+    const r = await app.inject({
+      method: 'DELETE',
+      url: `/api/leads/${lead.id}/atencao/resolver`,
+      headers: { cookie },
+    });
+    expect(r.json().desfeitos).toBe(1);
+
+    expect(await nomesNaAtencao()).toContain(lead.id);
+  });
+});

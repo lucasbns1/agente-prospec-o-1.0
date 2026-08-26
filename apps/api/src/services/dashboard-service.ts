@@ -15,7 +15,9 @@ import {
   agruparSemResposta,
   contarLeadsPorEtapa,
   montarResumoPorNicho,
+  peneirarResolvidos,
   priorizarAtencao,
+  ORIGEM_ATENCAO_RESOLVIDA,
   estadoAoAssumirConversa,
   ORIGEM_MARCADO_A_MAO,
   DESCRICAO_MARCADO_A_MAO,
@@ -185,7 +187,30 @@ export async function montarAtencao(limite = 20): Promise<ItemAtencao[]> {
       ),
   ];
 
-  return priorizarAtencao(candidatos, { limite });
+  // ============================================================
+  // O QUE VOCE JA MARCOU COMO RESOLVIDO
+  // ============================================================
+  // A lista e recalculada do zero a cada carga, das seis consultas
+  // acima. Nao ha linha para apagar — um lead quente esta ali porque a
+  // coluna `temperatura` diz QUENTE.
+  //
+  // Entao a dispensa e um evento com carimbo de tempo, e o que ela
+  // esconde sao as pendencias mais VELHAS que ela. As mais novas passam:
+  // se o lead responder de novo amanha, ele volta — e deve voltar.
+  //
+  // Ver `peneirarResolvidos`.
+  const dispensas = await prisma.leadEvent.groupBy({
+    by: ['leadId'],
+    where: { origem: ORIGEM_ATENCAO_RESOLVIDA },
+    _max: { createdAt: true },
+  });
+
+  const ate = new Map<string, Date>();
+  for (const d of dispensas) {
+    if (d._max.createdAt) ate.set(d.leadId, d._max.createdAt);
+  }
+
+  return priorizarAtencao(peneirarResolvidos(candidatos, ate), { limite });
 }
 
 export interface ResumoCampanhaAtiva {

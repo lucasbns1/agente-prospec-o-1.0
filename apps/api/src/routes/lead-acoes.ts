@@ -28,6 +28,8 @@ import {
   estadoAoAssumirConversa,
   ORIGEM_MARCADO_A_MAO,
   DESCRICAO_MARCADO_A_MAO,
+  ORIGEM_ATENCAO_RESOLVIDA,
+  DESCRICAO_ATENCAO_RESOLVIDA,
 } from '@prospector/domain';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
@@ -469,6 +471,76 @@ export async function rotasLeadAcoes(app: FastifyInstance): Promise<void> {
       eventsBus.publicar('dashboard.atualizar');
 
       return { lead: atualizado, canceladas };
+    }
+  );
+
+  // ---------------------------------------- "já cuidei disso" na atenção
+  //
+  // ============================================================
+  // POR QUE ISTO NÃO MEXE EM NADA DO LEAD
+  // ============================================================
+  // "Precisa da sua atenção" não é uma tabela — ela é recalculada a cada
+  // carga, de seis consultas. Não há linha para apagar: um lead quente
+  // está ali porque a coluna `temperatura` diz QUENTE.
+  //
+  // A saída óbvia seria o botão MUDAR o dado que colocou o lead ali —
+  // rebaixar a temperatura, limpar a última categoria, cancelar o envio
+  // que falhou. A lista encolheria, e o histórico passaria a mentir: o
+  // lead REALMENTE perguntou preço; o envio REALMENTE falhou.
+  //
+  // Em vez disso, grava uma DISPENSA com carimbo de tempo. A lista
+  // esconde as pendências mais VELHAS que ela — e mostra as mais novas.
+  // Se o lead responder de novo amanhã, ele volta, porque aquilo é
+  // posterior ao seu "já cuidei". Ver `peneirarResolvidos`.
+  app.post<{ Params: { id: string } }>(
+    '/api/leads/:id/atencao/resolver',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      await buscarLead(id);
+
+      const evento = await prisma.leadEvent.create({
+        data: {
+          leadId: id,
+          tipo: 'INTERVENCAO_RESOLVIDA',
+          descricao: DESCRICAO_ATENCAO_RESOLVIDA,
+          origem: ORIGEM_ATENCAO_RESOLVIDA,
+        },
+      });
+
+      // O sino tem que concordar com a tela. Deixar a notificação aberta
+      // faria o ponto vermelho continuar cobrando o que você acabou de
+      // dizer que resolveu.
+      await prisma.notification.updateMany({
+        where: { leadId: id, lida: false },
+        data: { lida: true, lidaEm: new Date() },
+      });
+
+      eventsBus.publicar('dashboard.atualizar');
+      return { resolvidoEm: evento.createdAt };
+    }
+  );
+
+  // Desfazer: apaga só a dispensa mais recente, e não todas. Cada uma
+  // cobre um momento diferente, e apagar o histórico inteiro traria de
+  // volta pendências que você resolveu semanas atrás.
+  app.delete<{ Params: { id: string } }>(
+    '/api/leads/:id/atencao/resolver',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { id } = idSchema.parse(request.params);
+      await buscarLead(id);
+
+      const ultima = await prisma.leadEvent.findFirst({
+        where: { leadId: id, origem: ORIGEM_ATENCAO_RESOLVIDA },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (!ultima) return { desfeitos: 0 };
+
+      await prisma.leadEvent.delete({ where: { id: ultima.id } });
+      eventsBus.publicar('dashboard.atualizar');
+      return { desfeitos: 1 };
     }
   );
 

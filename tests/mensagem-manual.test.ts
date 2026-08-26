@@ -234,6 +234,150 @@ describe('o lead muda de lugar no quadro', () => {
   });
 });
 
+// ============================================================
+// O ECO DO PRÓPRIO SISTEMA
+// ============================================================
+// `message_create` dispara para TUDO que sai do número conectado — o
+// que você digita no celular E o que o worker acabou de enviar. Os dois
+// chegam com `deMim: true`.
+//
+// A primeira versão separava os dois pela UNIQUE do
+// `whatsapp_message_id`, apostando que o worker já teria gravado a linha
+// em `messages` quando o eco chegasse. Ele NÃO grava antes: envia, muda
+// o status para ENVIADA, e só então grava o histórico.
+//
+// Em uso real isso deu 46 leads marcados QUENTE numa base com UMA
+// resposta — cada mensagem da campanha voltava como se fosse você
+// assumindo a conversa.
+describe('o eco de um envio do sistema não é mensagem sua', () => {
+  /** Uma ordem de envio já processada, como o worker a deixa. */
+  async function ordemEnviada(
+    leadId: string,
+    campanhaId: string,
+    texto: string
+  ) {
+    const etapa = await prisma.campaignStep.create({
+      data: { campaignId: campanhaId, ordem: 1, texto, ativo: true },
+    });
+    return prisma.outboundMessage.create({
+      data: {
+        leadId,
+        campaignId: campanhaId,
+        campaignStepId: etapa.id,
+        idempotencyKey: `eco-${leadId}-${Date.now()}`,
+        status: 'ENVIADA',
+        textoRenderizado: texto,
+        processedAt: new Date(),
+        dryRun: false,
+      },
+    });
+  }
+
+  it('NÃO marca o lead como QUENTE — este é o bug dos 46 quentes', async () => {
+    // A asserção que descreve o sintoma relatado.
+    const { lead, campanha } = await cenario();
+    const TEXTO = 'Oi, prazer, me chamo Lucas.';
+    await ordemEnviada(lead.id, campanha.id, TEXTO);
+
+    await inbound.processarMensagemRecebida(entrada(lead, TEXTO, true));
+
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.temperatura).toBe('FRIO');
+    expect(l.status).toBe('AGUARDANDO_RESPOSTA');
+  });
+
+  it('vale mesmo quando o worker AINDA NÃO gravou em messages', async () => {
+    // A corrida em si: nenhuma linha em `messages` existe ainda, então
+    // a UNIQUE do `whatsapp_message_id` não tem o que barrar. O que
+    // separa os dois é a ORDEM DE ENVIO, que nasce no enfileiramento.
+    const { lead, campanha } = await cenario();
+    const TEXTO = 'Mensagem 2 da sequência';
+    await ordemEnviada(lead.id, campanha.id, TEXTO);
+    expect(await prisma.message.count({ where: { leadId: lead.id } })).toBe(0);
+
+    const r = await inbound.processarMensagemRecebida(entrada(lead, TEXTO, true));
+
+    expect(r.processada).toBe(false);
+    expect(r.motivo).toContain('Eco');
+    // E não cria a linha sem etapa que competiria com a do worker.
+    expect(await prisma.message.count({ where: { leadId: lead.id } })).toBe(0);
+  });
+
+  it('não pausa a automação do lead', async () => {
+    // O pior efeito colateral: a campanha inteira se pausando sozinha a
+    // cada mensagem que ela mesma manda.
+    const { lead, campanha } = await cenario();
+    const TEXTO = 'Mensagem 1 da campanha';
+    await ordemEnviada(lead.id, campanha.id, TEXTO);
+    await prisma.leadCampaign.updateMany({
+      where: { leadId: lead.id },
+      data: { status: 'EM_ANDAMENTO' },
+    });
+
+    await inbound.processarMensagemRecebida(entrada(lead, TEXTO, true));
+
+    const v = await prisma.leadCampaign.findFirstOrThrow({
+      where: { leadId: lead.id, campaignId: campanha.id },
+    });
+    expect(v.status).toBe('EM_ANDAMENTO');
+    expect(v.aguardandoLiberacao).toBe(false);
+  });
+
+  it('mas uma mensagem SUA de verdade continua passando', async () => {
+    // A garantia do outro lado: o filtro não pode ter desligado o
+    // recurso inteiro. Texto que nenhuma ordem de envio tem.
+    const { lead, campanha } = await cenario();
+    await ordemEnviada(lead.id, campanha.id, 'Oi, prazer, me chamo Lucas.');
+
+    await inbound.processarMensagemRecebida(
+      entrada(lead, 'consigo te mostrar uma prévia amanhã, pode ser?', true)
+    );
+
+    const l = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(l.status).toBe('EM_CONVERSA');
+    expect(l.temperatura).toBe('QUENTE');
+  });
+
+  it('uma ordem ainda PENDENTE não silencia nada', async () => {
+    // Ela não produziu eco nenhum — não passou pelo transporte. Se
+    // silenciasse, uma mensagem sua com o texto de uma etapa futura
+    // sumiria.
+    const { lead, campanha } = await cenario();
+    const TEXTO = 'Texto de uma etapa que ainda não saiu';
+    const etapa = await prisma.campaignStep.create({
+      data: { campaignId: campanha.id, ordem: 1, texto: TEXTO, ativo: true },
+    });
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapa.id,
+        idempotencyKey: `pend-${lead.id}-${Date.now()}`,
+        status: 'PENDENTE',
+        textoRenderizado: TEXTO,
+        dryRun: false,
+      },
+    });
+
+    const r = await inbound.processarMensagemRecebida(entrada(lead, TEXTO, true));
+    expect(r.processada).toBe(true);
+  });
+
+  it('o eco de OUTRO lead não silencia este', async () => {
+    // O texto de uma campanha é o mesmo para todos os leads. Sem o
+    // recorte por lead, mandar na mão para o lead A seria descartado
+    // porque o lead B recebeu aquele texto.
+    const { lead: outro, campanha } = await cenario();
+    const TEXTO = 'Oi, prazer, me chamo Lucas.';
+    await ordemEnviada(outro.id, campanha.id, TEXTO);
+
+    const { lead } = await cenario();
+    const r = await inbound.processarMensagemRecebida(entrada(lead, TEXTO, true));
+
+    expect(r.processada).toBe(true);
+  });
+});
+
 describe('o que NÃO mudou', () => {
   it('a resposta do LEAD continua sendo classificada', async () => {
     // A garantia do outro lado: o conserto não pode ter desligado o
