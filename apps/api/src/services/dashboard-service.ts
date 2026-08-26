@@ -14,6 +14,7 @@ import { prisma } from '@prospector/database';
 import {
   agruparSemResposta,
   contarLeadsPorEtapa,
+  montarResumoPorNicho,
   priorizarAtencao,
   estadoAoAssumirConversa,
   ORIGEM_MARCADO_A_MAO,
@@ -22,6 +23,8 @@ import {
   type EnvioSemResposta,
   type EtapaComLeads,
   type GrupoSemResposta,
+  type LeadDoNicho,
+  type ResumoPorNicho,
   type ItemAtencao,
 } from '@prospector/domain';
 
@@ -401,4 +404,73 @@ export async function leadsPorEtapa(): Promise<EtapaComLeads[]> {
         etapaNome: e.campaignStep!.nome,
       }))
   );
+}
+
+/**
+ * A prospeccao separada por nicho, mais o total de tudo.
+ *
+ * ============================================================
+ * O NICHO EXISTIA E NAO APARECIA
+ * ============================================================
+ * Pedido: "quero que tenha um total — todos os nichos mandados — e as
+ * informacoes de quantos mandaram e etc de cada nicho tambem".
+ *
+ * Desde a importacao, "psicologos em Campinas" vira uma CaptureSession
+ * que etiqueta cada lead do lote. Esse dado estava no banco e nao
+ * chegava em tela nenhuma: todo numero do painel era a soma de tudo — e
+ * a soma de tudo esconde a decisao que a semana seguinte pede, que e
+ * qual lista vale continuar.
+ *
+ * ============================================================
+ * TRES CONSULTAS, E NAO UMA POR NICHO
+ * ============================================================
+ * A tentacao aqui e um `count` por nicho por metrica, que vira dezenas
+ * de idas ao banco e cresce com o numero de planilhas importadas.
+ *
+ * Em vez disso: uma linha por lead, uma contagem de envios por lead, e a
+ * lista de quem respondeu. O cruzamento e feito em memoria pelo dominio.
+ * E um CRM local de uma pessoa — alguns milhares de linhas cabem
+ * folgado, e a conta fica num lugar que da para testar.
+ *
+ * SIMULADA nao conta como envio: um ensaio nao abordou ninguem.
+ */
+export async function resumoPorNicho(): Promise<ResumoPorNicho> {
+  const [leads, envios, responderam] = await Promise.all([
+    prisma.lead.findMany({
+      select: {
+        id: true,
+        temperatura: true,
+        status: true,
+        optOut: true,
+        captureSession: { select: { nicho: true } },
+      },
+    }),
+    prisma.outboundMessage.groupBy({
+      by: ['leadId'],
+      where: { status: 'ENVIADA' },
+      _count: { _all: true },
+    }),
+    prisma.message.findMany({
+      where: { direcao: 'RECEBIDA' },
+      select: { leadId: true },
+      distinct: ['leadId'],
+    }),
+  ]);
+
+  const enviadasPorLead = new Map(envios.map((e) => [e.leadId, e._count._all]));
+  const falaram = new Set(
+    responderam.map((r) => r.leadId).filter((id): id is string => id !== null)
+  );
+
+  const linhas: LeadDoNicho[] = leads.map((l) => ({
+    leadId: l.id,
+    nicho: l.captureSession?.nicho ?? null,
+    temperatura: l.temperatura,
+    status: l.status,
+    optOut: l.optOut,
+    enviadas: enviadasPorLead.get(l.id) ?? 0,
+    respondeu: falaram.has(l.id),
+  }));
+
+  return montarResumoPorNicho(linhas);
 }

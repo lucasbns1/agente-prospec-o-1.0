@@ -20,6 +20,7 @@ import { exigirAutenticacao } from '../plugins/auth.js';
 import {
   leadsSemResposta,
   leadsPorEtapa,
+  resumoPorNicho,
   montarAtencao,
   resumoCampanhaAtiva,
 } from '../services/dashboard-service.js';
@@ -157,5 +158,18 @@ export async function rotasDashboard(app: FastifyInstance): Promise<void> {
     '/api/dashboard/sem-resposta',
     { preHandler: exigirAutenticacao },
     async () => ({ grupos: await leadsSemResposta() })
+  );
+
+  /**
+   * GET /api/dashboard/nichos
+   *
+   * Rota separada pelo mesmo motivo da de cima: ela varre TODOS os
+   * leads, e o /api/dashboard e carregado a cada visita. Aqui a conta
+   * so acontece quando a secao esta na tela.
+   */
+  app.get(
+    '/api/dashboard/nichos',
+    { preHandler: exigirAutenticacao },
+    async () => resumoPorNicho()
   );
 }

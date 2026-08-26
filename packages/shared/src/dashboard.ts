@@ -127,6 +127,42 @@ export interface EtapaComLeads {
   leads: number;
 }
 
+/**
+ * A prospeccao separada por nicho.
+ *
+ * Pedido: "quero que tenha um total — todos os nichos mandados — e as
+ * informacoes de quantos mandaram e etc de cada nicho tambem".
+ *
+ * O nicho existia no banco desde a importacao e nao aparecia em tela
+ * nenhuma. Todo numero do painel era a soma de tudo, e a soma de tudo
+ * esconde a decisao que a semana seguinte pede: qual lista continuar.
+ */
+export interface ResumoDoNicho {
+  nicho: string;
+  /** Leads que existem neste nicho, abordados ou nao. */
+  leads: number;
+  /** Destes, quantos receberam ao menos uma mensagem. */
+  abordados: number;
+  /** Ainda nao abordados. */
+  naFila: number;
+  /** Mensagens que sairam. Um lead com 3 etapas conta 3. */
+  enviadas: number;
+  responderam: number;
+  semResposta: number;
+  /** 0 a 100. `null` quando ninguem foi abordado. */
+  taxaResposta: number | null;
+  quentes: number;
+  clientes: number;
+  optOuts: number;
+}
+
+export interface ResumoPorNicho {
+  /** Todos os leads de uma vez — calculado por fora, nao somando. */
+  total: ResumoDoNicho;
+  /** Do maior volume de envios para o menor. */
+  nichos: ResumoDoNicho[];
+}
+
 export interface DashboardResponse {
   metricas: DashboardMetricas;
   atencao: ItemAtencao[];

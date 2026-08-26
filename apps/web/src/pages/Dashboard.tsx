@@ -16,7 +16,12 @@ import {
 } from '@/components/ui/primitives';
 import { formatarNumero, formatarDataHora } from '@/lib/utils';
 import { LeadDetalhe } from '@/components/LeadDetalhe';
-import type { DashboardResponse, GrupoSemResposta, LeadSemResposta } from '@prospector/shared';
+import type {
+  DashboardResponse,
+  GrupoSemResposta,
+  LeadSemResposta,
+  ResumoPorNicho,
+} from '@prospector/shared';
 
 /**
  * Quem recebeu e nunca respondeu.
@@ -217,6 +222,121 @@ function SemResposta({ aoAbrirLead }: { aoAbrirLead: (id: string) => void }) {
             ))}
           </ul>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * A prospecção separada por nicho.
+ *
+ * ============================================================
+ * POR QUE ISTO GANHOU LUGAR PRÓPRIO
+ * ============================================================
+ * O nicho existia no banco desde a importação — "psicólogos em
+ * Campinas" vira uma etiqueta em cada lead do lote — e não aparecia em
+ * tela nenhuma. Todo número desta página era a soma de tudo, e a soma
+ * de tudo esconde exatamente a decisão que a semana seguinte pede:
+ * qual lista vale continuar.
+ *
+ * Estética automotiva com 40% de resposta e psicólogo com 4% davam um
+ * único "22%" — um número que não descreve nenhum dos dois.
+ *
+ * A linha do total vem primeiro e fica destacada: é a leitura de "quanto
+ * eu mandei no total", e ela é calculada sobre todos os leads de uma
+ * vez, não somando as linhas de baixo.
+ */
+function PorNicho() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard-nichos'],
+    queryFn: () => get<ResumoPorNicho>('/api/dashboard/nichos'),
+    refetchInterval: 60_000,
+  });
+
+  const linhas = data ? [data.total, ...data.nichos] : [];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Por nicho</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="py-6 text-center text-sm text-[var(--color-texto-fraco)]">
+            Carregando…
+          </p>
+        ) : linhas.length === 0 ? (
+          <p className="py-6 text-center text-sm text-[var(--color-texto-suave)]">
+            Nenhum lead importado ainda.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px] text-sm">
+              <thead>
+                <tr className="border-b border-[var(--color-borda)] text-left text-[11px] uppercase tracking-wide text-[var(--color-texto-fraco)]">
+                  <th className="py-2 pr-3 font-medium">Nicho</th>
+                  <th className="py-2 px-2 text-right font-medium">Leads</th>
+                  <th className="py-2 px-2 text-right font-medium">Mandei</th>
+                  <th className="py-2 px-2 text-right font-medium">Msgs</th>
+                  <th className="py-2 px-2 text-right font-medium">Na fila</th>
+                  <th className="py-2 px-2 text-right font-medium">Responderam</th>
+                  <th className="py-2 px-2 text-right font-medium">Calados</th>
+                  <th className="py-2 px-2 text-right font-medium">Taxa</th>
+                  <th className="py-2 px-2 text-right font-medium">Quentes</th>
+                  <th className="py-2 pl-2 text-right font-medium">Clientes</th>
+                </tr>
+              </thead>
+              <tbody className="num">
+                {linhas.map((n, i) => (
+                  <tr
+                    key={n.nicho}
+                    className={`border-b border-[var(--color-borda)] last:border-0 ${
+                      i === 0 ? 'bg-[var(--color-fundo)] font-semibold' : ''
+                    }`}
+                  >
+                    <th
+                      scope="row"
+                      className="py-2 pr-3 text-left font-medium normal-case"
+                    >
+                      {n.nicho}
+                    </th>
+                    <td className="py-2 px-2 text-right">{formatarNumero(n.leads)}</td>
+                    <td className="py-2 px-2 text-right">
+                      {formatarNumero(n.abordados)}
+                    </td>
+                    <td className="py-2 px-2 text-right">
+                      {formatarNumero(n.enviadas)}
+                    </td>
+                    <td className="py-2 px-2 text-right text-[var(--color-texto-suave)]">
+                      {formatarNumero(n.naFila)}
+                    </td>
+                    <td className="py-2 px-2 text-right">
+                      {formatarNumero(n.responderam)}
+                    </td>
+                    <td className="py-2 px-2 text-right text-[var(--color-texto-suave)]">
+                      {formatarNumero(n.semResposta)}
+                    </td>
+                    <td className="py-2 px-2 text-right">
+                      {/* Sem ninguém abordado, "0%" seria uma afirmação
+                          sobre um teste que não foi feito. */}
+                      {n.taxaResposta === null ? '—' : `${n.taxaResposta}%`}
+                    </td>
+                    <td className="py-2 px-2 text-right">{formatarNumero(n.quentes)}</td>
+                    <td className="py-2 pl-2 text-right">
+                      {formatarNumero(n.clientes)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
+          <strong>Mandei</strong> são as pessoas que receberam ao menos uma
+          mensagem; <strong>Msgs</strong> são as mensagens que saíram (um lead
+          com 3 etapas conta 3). A taxa é sobre quem foi abordado, não sobre a
+          lista inteira. Leads importados sem nicho aparecem como “Sem nicho”.
+        </p>
       </CardContent>
     </Card>
   );
@@ -466,6 +586,8 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      <PorNicho />
 
       {/* ---- Onde a prospecção está ---- */}
       {/*

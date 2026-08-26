@@ -58,6 +58,7 @@ beforeEach(async () => {
   await prisma.campaignStep.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.lead.deleteMany();
+  await prisma.captureSession.deleteMany();
 });
 
 let seq = 0;
@@ -656,5 +657,84 @@ describe('GET /api/dashboard/sem-resposta depois do "já mandei"', () => {
       headers: { cookie },
     });
     expect(await idsNaLista()).toContain(lead.id);
+  });
+});
+
+// ============================================================
+// POR NICHO
+// ============================================================
+// Pedido: "quero que tenha um total — todos os nichos mandados — e as
+// informações de quantos mandaram e etc de cada nicho também".
+//
+// O que só o banco prova: que o nicho sai mesmo da CaptureSession que a
+// importação criou, e não de um campo do lead que ninguém preenche.
+describe('GET /api/dashboard/nichos', () => {
+  async function leadDoNicho(nicho: string, comEnvio: boolean) {
+    seq += 1;
+    const sessao = await prisma.captureSession.create({
+      data: { nicho, cidade: 'Campinas' },
+    });
+    const lead = await criarLead({ captureSessionId: sessao.id });
+
+    if (comEnvio) {
+      const campanha = await prisma.campaign.create({
+        data: { nome: `N${seq}-${Date.now()}`, status: 'ATIVA' } as never,
+      });
+      const etapa = await prisma.campaignStep.create({
+        data: { campaignId: campanha.id, ordem: 1, texto: 'oi', ativo: true },
+      });
+      await prisma.outboundMessage.create({
+        data: {
+          leadId: lead.id,
+          campaignId: campanha.id,
+          campaignStepId: etapa.id,
+          idempotencyKey: `n-${seq}-${Date.now()}`,
+          status: 'ENVIADA',
+          processedAt: new Date(),
+          dryRun: false,
+        },
+      });
+    }
+    return lead;
+  }
+
+  it('separa por nicho e traz o total de todos', async () => {
+    await leadDoNicho('Estética automotiva', true);
+    await leadDoNicho('Estética automotiva', true);
+    await leadDoNicho('Psicólogo', false);
+
+    const r = await chamar('GET', '/api/dashboard/nichos');
+    expect(r.statusCode).toBe(200);
+    const corpo = r.json();
+
+    expect(corpo.total.nicho).toBe('Todos os nichos');
+    expect(corpo.total.leads).toBe(3);
+    expect(corpo.total.abordados).toBe(2);
+    expect(corpo.total.naFila).toBe(1);
+
+    const estetica = corpo.nichos.find(
+      (n: { nicho: string }) => n.nicho === 'Estética automotiva'
+    );
+    expect(estetica.abordados).toBe(2);
+
+    const psi = corpo.nichos.find(
+      (n: { nicho: string }) => n.nicho === 'Psicólogo'
+    );
+    expect(psi.abordados).toBe(0);
+    // Ninguém abordado: a taxa não pode virar 0%.
+    expect(psi.taxaResposta).toBeNull();
+  });
+
+  it('lead sem planilha etiquetada aparece como "Sem nicho"', async () => {
+    // Ele não pode sumir da conta: o total deixaria de bater com a
+    // realidade justamente nos leads mais antigos.
+    await criarLead();
+
+    const corpo = (await chamar('GET', '/api/dashboard/nichos')).json();
+
+    expect(corpo.nichos.map((n: { nicho: string }) => n.nicho)).toContain(
+      'Sem nicho'
+    );
+    expect(corpo.total.leads).toBe(1);
   });
 });
