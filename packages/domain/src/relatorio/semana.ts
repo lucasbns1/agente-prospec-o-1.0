@@ -23,6 +23,26 @@
  * calendario brasileira. Um mesmo envio nunca cai em duas semanas.
  */
 
+import type {
+  DiaDaSemana,
+  FunilSemana,
+  TravaEtapa,
+  ResumoNicho,
+  RelatorioSemana,
+} from '@prospector/shared';
+
+// O contrato de SAIDA mora em `shared` porque a tela precisa dele:
+// `apps/web` depende de `shared` e nao de `domain`. As tres interfaces
+// de ENTRADA ficam aqui — elas descrevem linhas cruas do banco, e o
+// frontend nunca as ve.
+export type {
+  DiaDaSemana,
+  FunilSemana,
+  TravaEtapa,
+  ResumoNicho,
+  RelatorioSemana,
+};
+
 /** Uma mensagem que saiu, com o que ela precisa para ser contada. */
 export interface EnvioDaSemana {
   leadId: string;
@@ -51,61 +71,10 @@ export interface EstadoDoLead {
   status: string;
 }
 
-export interface DiaDaSemana {
-  /** ISO da meia-noite daquele dia. */
-  dia: string;
-  enviadas: number;
-}
 
-export interface FunilSemana {
-  /** Leads distintos que receberam ao menos uma mensagem na semana. */
-  abordados: number;
-  /** Destes, quantos nao disseram nada ate agora. */
-  semResposta: number;
-  /** Destes, quantos responderam qualquer coisa. */
-  responderam: number;
-  /** Disseram nao, sem interesse, ou pediram para parar. */
-  negativos: number;
-  /** Demonstraram interesse ou aceitaram. */
-  interessados: number;
-  /** Perguntaram preco. */
-  perguntaramPreco: number;
-  /** Receberam a etapa da previa — ou seja, voce chegou a mandar. */
-  receberamPrevia: number;
-  /** Viraram cliente. */
-  fecharam: number;
-  /**
-   * Responderam algo que o sistema NAO entendeu. Nao e uma categoria de
-   * interesse: e a medida de quanto o dicionario esta cego, e o alvo da
-   * releitura pela IA.
-   */
-  naoEntendidas: number;
-}
 
-export interface TravaEtapa {
-  ordem: number;
-  rotulo: string;
-  /** Leads cuja conversa parou nesta etapa. */
-  leads: number;
-}
 
-export interface ResumoNicho {
-  nicho: string;
-  enviadas: number;
-  funil: FunilSemana;
-}
 
-export interface RelatorioSemana {
-  /** ISO do domingo 00:00 em que a semana comeca. */
-  inicio: string;
-  /** ISO do domingo 00:00 seguinte, exclusivo. */
-  fim: string;
-  enviadas: number;
-  porDia: DiaDaSemana[];
-  funil: FunilSemana;
-  porNicho: ResumoNicho[];
-  travou: TravaEtapa[];
-}
 
 /** Piso de confianca. O mesmo do resto do sistema. */
 const CONFIANCA_MINIMA = 50;

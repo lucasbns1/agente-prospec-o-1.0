@@ -13,6 +13,7 @@ import {
   KanbanSquare,
   Brain,
   FileSpreadsheet,
+  CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +25,7 @@ const NAVEGACAO = [
   { para: '/campanhas', rotulo: 'Campanhas', icone: Rocket },
   { para: '/estado', rotulo: 'Estado das campanhas', icone: KanbanSquare },
   { para: '/conversas', rotulo: 'Conversas', icone: MessagesSquare },
+  { para: '/semanas', rotulo: 'Semanas', icone: CalendarDays },
   { para: '/tarefas', rotulo: 'Tarefas', icone: CheckSquare },
   { para: '/notificacoes', rotulo: 'Notificações', icone: Bell },
   { para: '/ia', rotulo: 'IA', icone: Brain },
