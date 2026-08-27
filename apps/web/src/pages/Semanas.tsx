@@ -269,6 +269,68 @@ function Calendario({
 }
 
 /**
+ * O botão "Gemini ler o dia".
+ *
+ * ============================================================
+ * ELE DIZ QUAL DIA VAI LER
+ * ============================================================
+ * O rótulo muda com a seleção: sem dia escolhido ele lê HOJE, e diz
+ * "hoje". Com um dia escolhido, diz a data.
+ *
+ * Um botão que gasta dinheiro não pode ser ambíguo sobre o que vai
+ * fazer — "ler o dia" sozinho deixaria você adivinhar qual.
+ */
+function BotaoLerODia({
+  chave,
+  rotulo,
+  aoTerminar,
+}: {
+  chave: string;
+  rotulo: string;
+  aoTerminar?: () => void;
+}) {
+  const cliente = useQueryClient();
+
+  const ler = useMutation({
+    mutationFn: () => post<ResultadoLeitura>(`/api/dias/${chave}/ler`),
+    onSuccess: () => {
+      void cliente.invalidateQueries({ queryKey: ['ficha', chave] });
+      void cliente.invalidateQueries({ queryKey: ['dia', chave] });
+      aoTerminar?.();
+    },
+  });
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        size="sm"
+        variant="secundario"
+        onClick={() => ler.mutate()}
+        disabled={ler.isPending}
+        title="Pede ao Gemini para ler as respostas deste dia — inclusive as conversas que você tocou na mão. Não envia nada, não muda status: só extrai 'pediu prévia' e 'objeção'."
+      >
+        <Brain className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+        {ler.isPending ? 'Lendo…' : `Gemini ler ${rotulo}`}
+      </Button>
+
+      {ler.data && (
+        <p className="max-w-xs text-right text-[11px] text-[var(--color-texto-fraco)]">
+          {ler.data.motivo ??
+            `${ler.data.total} resposta(s) · ${ler.data.lidas} lida(s) agora · ` +
+              `${ler.data.puladas} já tinham leitura · ${ler.data.falhas} sem resultado.`}
+        </p>
+      )}
+      {ler.isError && (
+        <p className="max-w-xs text-right text-[11px] text-[var(--color-alerta)]">
+          Não deu para ler. Confira se a API está rodando e se você já rodou
+          `pnpm db:migrate`.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * A FICHA DO DIA, por nicho.
  *
  * ============================================================
@@ -288,19 +350,9 @@ function Calendario({
  * diz isso, em vez de deixar você achar que ninguém pediu nada.
  */
 function FichaDoDiaCard({ chave }: { chave: string }) {
-  const cliente = useQueryClient();
-
   const { data, isLoading } = useQuery({
     queryKey: ['ficha', chave],
     queryFn: () => get<FichaDoDia>(`/api/dias/${chave}/ficha`),
-  });
-
-  const ler = useMutation({
-    mutationFn: () => post<ResultadoLeitura>(`/api/dias/${chave}/ler`),
-    onSuccess: () => {
-      void cliente.invalidateQueries({ queryKey: ['ficha', chave] });
-      void cliente.invalidateQueries({ queryKey: ['dia', chave] });
-    },
   });
 
   if (isLoading || !data) return null;
@@ -315,33 +367,10 @@ function FichaDoDiaCard({ chave }: { chave: string }) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle>Ficha do dia</CardTitle>
-        <Button
-          size="sm"
-          variant="secundario"
-          onClick={() => ler.mutate()}
-          disabled={ler.isPending}
-          title="Pede ao Gemini para ler as respostas deste dia. Não envia nada, não muda status — só extrai 'pediu prévia' e 'objeção'."
-        >
-          <Brain className="mr-1 h-3 w-3" aria-hidden="true" />
-          {ler.isPending ? 'Lendo…' : 'Gemini ler o dia'}
-        </Button>
       </CardHeader>
       <CardContent>
-        {ler.data?.motivo && (
-          <p className="mb-4 rounded-lg bg-[var(--color-fundo)] p-3 text-xs text-[var(--color-texto-suave)]">
-            {ler.data.motivo}
-          </p>
-        )}
-        {ler.data && !ler.data.motivo && (
-          <p className="mb-4 rounded-lg bg-[var(--color-fundo)] p-3 text-xs text-[var(--color-texto-suave)]">
-            {ler.data.total} resposta(s) no dia · {ler.data.lidas} lida(s) agora ·{' '}
-            {ler.data.puladas} já tinham leitura · {ler.data.falhas} sem
-            resultado.
-          </p>
-        )}
-
         <div className="space-y-4">
           {mostrar.map((f) => (
             <div
@@ -671,11 +700,31 @@ export function Semanas() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Semanas</h1>
-        <p className="mt-0.5 text-sm text-[var(--color-texto-suave)]">
-          O que aconteceu com quem você abordou em cada semana.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Semanas</h1>
+          <p className="mt-0.5 text-sm text-[var(--color-texto-suave)]">
+            O que aconteceu com quem você abordou em cada semana.
+          </p>
+        </div>
+
+        {/*
+          O botão fica no topo, sempre visível — antes ele só existia
+          dentro da ficha, que só aparece depois de escolher um dia. Sem
+          dia escolhido ele lê HOJE, e o rótulo diz isso: um botão que
+          gasta dinheiro não pode deixar você adivinhar o que vai ler.
+        */}
+        <BotaoLerODia
+          chave={dia ?? chaveDoDia(new Date())}
+          rotulo={
+            dia === null
+              ? 'hoje'
+              : new Date(`${dia}T12:00:00`).toLocaleDateString('pt-BR', {
+                  day: 'numeric',
+                  month: 'short',
+                })
+          }
+        />
       </div>
 
       {carregandoLista ? (
