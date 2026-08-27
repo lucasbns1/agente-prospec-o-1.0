@@ -1,0 +1,11 @@
+-- A OBJECAO QUE A IA EXTRAIU DE UMA RESPOSTA
+--
+-- Uma coluna nova, anulavel, sem valor padrao: nada muda para quem ja
+-- tem dados, e as mensagens antigas ficam com NULL ate uma leitura da IA
+-- passar por elas.
+--
+-- Ela alimenta a linha "objecao mais comum" da ficha do dia. Fica
+-- separada de `ai_intent` porque sao perguntas diferentes: o intent diz
+-- o que a pessoa QUER, a objecao diz o que impede — e uma resposta pode
+-- trazer as duas ("gostei, mas ja tenho site").
+ALTER TABLE "messages" ADD COLUMN "ai_objecao" TEXT;

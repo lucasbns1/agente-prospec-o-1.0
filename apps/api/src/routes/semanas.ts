@@ -17,7 +17,9 @@ import {
   diasComAtividade,
   relatorioDaSemana,
   resumoDoDia,
+  fichaDoDia,
 } from '../services/semana-service.js';
+import { lerMensagensDoDia } from '../services/leitura-do-dia-service.js';
 
 export async function rotasSemanas(app: FastifyInstance): Promise<void> {
   app.get(
@@ -83,6 +85,59 @@ export async function rotasSemanas(app: FastifyInstance): Promise<void> {
       }
 
       return resumoDoDia(quando);
+    }
+  );
+
+  /**
+   * GET /api/dias/:data/ficha
+   *
+   * A ficha do dia por nicho — "o dia que eu mandei". O recorte e a
+   * turma de quem recebeu alguma coisa naquele dia; tudo o mais e sobre
+   * essas pessoas, em qualquer data.
+   */
+  app.get<{ Params: { data: string } }>(
+    '/api/dias/:data/ficha',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { data } = z.object({ data: z.string().min(4) }).parse(request.params);
+
+      const quando = new Date(data);
+      if (Number.isNaN(quando.getTime())) {
+        throw new AppError(`"${data}" não é uma data válida`, 422, 'DATA_INVALIDA');
+      }
+
+      return fichaDoDia(quando);
+    }
+  );
+
+  /**
+   * POST /api/dias/:data/ler
+   *
+   * Pede ao Gemini para LER as respostas daquele dia e extrair dois
+   * sinais que o dicionario nao da: quem pediu previa, e qual foi a
+   * objecao.
+   *
+   * NAO decide nada — nao enfileira, nao pausa, nao muda status. Por
+   * isso pode rodar sobre historico antigo, e por isso cobre tambem as
+   * conversas que voce tocou na mao.
+   *
+   * POST porque gasta: cada mensagem e uma chamada paga ao modelo.
+   */
+  app.post<{ Params: { data: string } }>(
+    '/api/dias/:data/ler',
+    { preHandler: exigirAutenticacao },
+    async (request) => {
+      const { data } = z.object({ data: z.string().min(4) }).parse(request.params);
+      const { forcar } = z
+        .object({ forcar: z.boolean().default(false) })
+        .parse(request.body ?? {});
+
+      const quando = new Date(data);
+      if (Number.isNaN(quando.getTime())) {
+        throw new AppError(`"${data}" não é uma data válida`, 422, 'DATA_INVALIDA');
+      }
+
+      return lerMensagensDoDia({ quando, forcar });
     }
   );
 }

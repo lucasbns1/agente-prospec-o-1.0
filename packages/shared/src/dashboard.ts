@@ -349,3 +349,54 @@ export interface ResumoDoDia {
   envios: EnvioDoDia[];
   listaRespostas: RespostaDoDia[];
 }
+
+
+// ---------------------------------------------------------------------------
+// A FICHA DO DIA, POR NICHO
+//
+// O pedido, literal:
+//   DIA / NICHO / Mandei / Responderam: abordagem / follow up 1 /
+//   follow up 2 / Pediram previa / Perguntaram preco / Fecharam /
+//   Objecao mais comum.
+//
+// O dia aqui e O DIA EM QUE VOCE MANDOU: o recorte e a turma de quem
+// recebeu alguma coisa naquele dia, e tudo o mais e sobre essas pessoas
+// em qualquer data posterior.
+// ---------------------------------------------------------------------------
+
+export interface RespostaPorEtapa {
+  ordem: number;
+  /** "Abordagem", "Follow up 1"… ou o nome que a etapa tiver. */
+  rotulo: string;
+  /** PESSOAS, e nao mensagens. */
+  leads: number;
+}
+
+export interface FichaDoNicho {
+  nicho: string;
+  /** Mensagens que sairam naquele dia. */
+  mandei: number;
+  /** Pessoas distintas que receberam alguma coisa. */
+  pessoas: number;
+  /** Destas, quantas responderam qualquer coisa. */
+  responderam: number;
+  /** A qual etapa cada uma respondeu. */
+  responderamPorEtapa: RespostaPorEtapa[];
+  /** So a IA produz este sinal — fica em zero com o Gemini desligado. */
+  pediramPrevia: number;
+  perguntaramPreco: number;
+  fecharam: number;
+  /** A objecao mais repetida, ou `null` quando nao ha nenhuma. */
+  objecaoMaisComum: { texto: string; vezes: number } | null;
+  /** Todas as objecoes, da mais comum para a menos. */
+  objecoes: { texto: string; vezes: number }[];
+}
+
+export interface FichaDoDia {
+  /** ISO da meia-noite local. */
+  dia: string;
+  /** Todos os leads de uma vez — calculado por fora, nao somando. */
+  total: FichaDoNicho;
+  /** Do maior volume enviado para o menor. */
+  nichos: FichaDoNicho[];
+}

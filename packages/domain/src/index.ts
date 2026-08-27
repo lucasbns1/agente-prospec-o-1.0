@@ -45,6 +45,7 @@ export * from './dashboard/por-nicho.js';
 export * from './dashboard/resolver-atencao.js';
 export * from './relatorio/semana.js';
 export * from './relatorio/dia.js';
+export * from './relatorio/ficha-do-dia.js';
 // --- Recebimento (Fase 6A) ---
 export * from './inbound/identificar-lead.js';
 export * from './inbound/confirmacao-entrega.js';
@@ -61,6 +62,7 @@ export * from './ai/mapear-intent.js';
 export * from './ai/resposta-permite-avancar.js';
 export * from './ai/validar-decisao.js';
 export * from './ai/prompt.js';
+export * from './ai/leitura-de-mensagem.js';
 // --- Reconciliacao (Fase 9) ---
 //
 // Deteccao pura: recebe um retrato ja lido e diz onde o banco discorda

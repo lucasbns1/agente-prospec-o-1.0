@@ -34,6 +34,7 @@ import { prisma } from '@prospector/database';
 import {
   montarRelatorioSemana,
   montarResumoDoDia,
+  montarFichaDoDia,
   inicioDaSemana,
   fimDaSemana,
   inicioDoDia,
@@ -45,6 +46,8 @@ import {
   type ResumoDoDia,
   type EnvioDoDia,
   type RespostaDoDia,
+  type FichaDoDia,
+  type EnvioDaFicha,
 } from '@prospector/domain';
 
 export interface SemanaNaLista {
@@ -336,4 +339,112 @@ export async function resumoDoDia(quando: Date): Promise<ResumoDoDia> {
     }));
 
   return montarResumoDoDia({ dia: inicio, envios, respostas });
+}
+
+/**
+ * A ficha do dia, por nicho.
+ *
+ * O recorte e a TURMA de quem recebeu alguma coisa naquele dia — "o dia
+ * que eu mandei". Tudo o mais e sobre essas pessoas, em qualquer data.
+ *
+ * Por isso as tres buscas seguintes NAO tem recorte de data: o historico
+ * de envios (que a atribuicao por etapa precisa), as respostas, e o
+ * estado atual dos leads.
+ */
+export async function fichaDoDia(quando: Date): Promise<FichaDoDia> {
+  const inicio = inicioDoDia(quando);
+  const fim = fimDoDia(inicio);
+
+  const doDia = await prisma.outboundMessage.findMany({
+    where: {
+      status: 'ENVIADA',
+      OR: [
+        { processedAt: { gte: inicio, lt: fim } },
+        { processedAt: null, createdAt: { gte: inicio, lt: fim } },
+      ],
+    },
+    select: {
+      leadId: true,
+      processedAt: true,
+      createdAt: true,
+      campaignStep: { select: { ordem: true, nome: true } },
+      lead: { select: { captureSession: { select: { nicho: true } } } },
+    },
+  });
+
+  const envios: EnvioDaFicha[] = doDia
+    .filter((l) => l.campaignStep !== null)
+    .map((l) => ({
+      leadId: l.leadId,
+      nicho: l.lead?.captureSession?.nicho ?? null,
+      ordem: l.campaignStep!.ordem,
+      etapaNome: l.campaignStep!.nome,
+      quando: l.processedAt ?? l.createdAt,
+    }));
+
+  const turma = [...new Set(envios.map((e) => e.leadId))];
+
+  if (turma.length === 0) {
+    return montarFichaDoDia({
+      dia: inicio,
+      envios: [],
+      historicoDeEnvios: [],
+      respostas: [],
+      estados: [],
+    });
+  }
+
+  const [historico, respostasCruas, leads] = await Promise.all([
+    // TODOS os envios daquela turma, e nao so os do dia: sem as etapas
+    // anteriores, a atribuicao "a qual etapa ela respondeu" nao tem
+    // como saber que a abordagem saiu na segunda.
+    prisma.outboundMessage.findMany({
+      where: { status: 'ENVIADA', leadId: { in: turma } },
+      select: {
+        leadId: true,
+        processedAt: true,
+        createdAt: true,
+        campaignStep: { select: { ordem: true, nome: true } },
+      },
+    }),
+    prisma.message.findMany({
+      where: { direcao: 'RECEBIDA', leadId: { in: turma } },
+      select: {
+        leadId: true,
+        categoria: true,
+        confianca: true,
+        aiIntent: true,
+        aiObjecao: true,
+        recebidaEm: true,
+        createdAt: true,
+      },
+    }),
+    prisma.lead.findMany({
+      where: { id: { in: turma } },
+      select: { id: true, status: true },
+    }),
+  ]);
+
+  return montarFichaDoDia({
+    dia: inicio,
+    envios,
+    historicoDeEnvios: historico
+      .filter((l) => l.campaignStep !== null)
+      .map((l) => ({
+        leadId: l.leadId,
+        nicho: null,
+        ordem: l.campaignStep!.ordem,
+        etapaNome: l.campaignStep!.nome,
+        quando: l.processedAt ?? l.createdAt,
+      })),
+    respostas: respostasCruas.map((r) => ({
+      leadId: r.leadId!,
+      categoria: r.categoria,
+      aiIntent: r.aiIntent,
+      confianca: r.confianca ?? 0,
+      objecao: r.aiObjecao,
+      quando: r.recebidaEm ?? r.createdAt,
+    })),
+    estados: leads.map((l) => ({ leadId: l.id, status: l.status })),
+  });
 }

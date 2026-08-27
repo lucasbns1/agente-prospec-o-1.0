@@ -15,6 +15,9 @@ import {
   montarPrompt,
   proximaEtapaEsperada,
   validarDecisao,
+  interpretarLeitura,
+  montarPromptDeLeitura,
+  OBJECOES_CONHECIDAS,
   type ContextoCadencia,
   type DecisaoIA,
 } from '../packages/domain/src/index.js';
@@ -523,5 +526,112 @@ describe('montarPrompt', () => {
   it('e puro: a mesma entrada produz exatamente o mesmo texto', () => {
     const c = contexto();
     expect(montarPrompt(c)).toBe(montarPrompt(c));
+  });
+});
+
+// -----------------------------------------------------------------------------
+// A LEITURA de uma mensagem
+// -----------------------------------------------------------------------------
+//
+// Contrato SEPARADO do de decisão, de propósito. `validarDecisao` guarda
+// a porta que autoriza envio; isto aqui só extrai o que a pessoa disse e
+// grava ao lado da mensagem. Um caminho só, com um parâmetro de modo,
+// faria uma releitura de histórico passar pela porta que manda mensagem.
+describe('interpretarLeitura — o contrato da leitura', () => {
+  it('aceita a forma completa', () => {
+    const r = interpretarLeitura({
+      pediu_previa: true,
+      objecao: 'já tenho site',
+      confianca: 80,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.leitura).toEqual({
+      pediuPrevia: true,
+      objecao: 'já tenho site',
+      confianca: 80,
+    });
+  });
+
+  it('objecao null é válido — nem toda resposta tem objeção', () => {
+    const r = interpretarLeitura({
+      pediu_previa: false,
+      objecao: null,
+      confianca: 90,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.leitura?.objecao).toBeNull();
+  });
+
+  it('devolve ok:false em vez de lançar', () => {
+    // São dezenas de mensagens por lote. Uma malformada não pode levar
+    // as outras junto.
+    const r = interpretarLeitura({ pediu_previa: 'sim' });
+    expect(r.ok).toBe(false);
+    expect(r.erro).toBeTruthy();
+  });
+
+  it('objeção longa demais é recusada', () => {
+    // O limite existe para as frases agruparem: se o modelo devolver a
+    // fala inteira do lead, cada lead vira uma objeção única e
+    // "objeção mais comum" nunca sai de "1 vez".
+    const r = interpretarLeitura({
+      pediu_previa: false,
+      objecao: 'a'.repeat(200),
+      confianca: 90,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it('confiança fora de 0–100 é recusada', () => {
+    expect(
+      interpretarLeitura({ pediu_previa: false, objecao: null, confianca: 150 }).ok
+    ).toBe(false);
+  });
+});
+
+describe('montarPromptDeLeitura', () => {
+  const base = {
+    texto: 'já tenho site, obrigado',
+    ultimaMensagemEnviada: 'Oi, prazer, me chamo Lucas.',
+    empresa: 'Studio X',
+  };
+
+  it('traz a mensagem anterior — sem ela, "sim" é ilegível', () => {
+    const p = montarPromptDeLeitura(base);
+    expect(p).toContain('Oi, prazer, me chamo Lucas.');
+    expect(p).toContain('já tenho site');
+  });
+
+  it('oferece os rótulos conhecidos, para as objeções agruparem', () => {
+    const p = montarPromptDeLeitura(base);
+    for (const o of OBJECOES_CONHECIDAS) expect(p).toContain(o);
+  });
+
+  it('deixa o modelo criar um rótulo novo', () => {
+    // Uma lista fechada perderia justamente a objeção que você ainda não
+    // conhece — que é a que mais vale descobrir.
+    expect(montarPromptDeLeitura(base)).toContain('rótulo curto seu');
+  });
+
+  it('funciona sem contexto nenhum', () => {
+    const p = montarPromptDeLeitura({
+      texto: 'oi',
+      ultimaMensagemEnviada: null,
+      empresa: null,
+    });
+    expect(p).toContain('oi');
+    expect(p.length).toBeGreaterThan(100);
+  });
+
+  it('corta textos enormes', () => {
+    // Um encaminhamento de 10 mil caracteres não pode virar um prompt de
+    // 10 mil caracteres — são dezenas de chamadas por dia.
+    const p = montarPromptDeLeitura({
+      texto: 'x'.repeat(5000),
+      ultimaMensagemEnviada: 'y'.repeat(5000),
+      empresa: null,
+    });
+    expect(p.length).toBeLessThan(2000);
   });
 });

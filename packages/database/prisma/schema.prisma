@@ -1136,6 +1136,20 @@ model Message {
   aiLatenciaMs Int? @map("ai_latencia_ms")
   /// OK | FALHOU | DESLIGADO
   aiStatus String? @map("ai_status")
+  /// A OBJECAO, em forma curta e canonica.
+  ///
+  /// Preenchida por uma leitura da IA sobre a mensagem: "ja tenho site",
+  /// "ja aparecao no Google", "achei caro", "sem tempo". E o que alimenta
+  /// a linha "objecao mais comum" da ficha do dia.
+  ///
+  /// Separada de `aiIntent` porque sao coisas diferentes: o intent diz o
+  /// que a pessoa QUER (duvida, preco, aceite); a objecao diz o que
+  /// impede. Uma resposta pode ser OBJECAO sem que se saiba qual, e pode
+  /// trazer uma objecao junto de um aceite ("gostei, mas ja tenho site").
+  ///
+  /// Texto livre de proposito, mas o prompt pede forma curta: agrupar
+  /// "objecao mais comum" depende de as frases se repetirem.
+  aiObjecao String? @map("ai_objecao")
   /// true quando a IA discordou do motor deterministico.
   ///
   /// E O CAMPO MAIS IMPORTANTE DO MODO SOMBRA: `WHERE ai_divergiu` e o

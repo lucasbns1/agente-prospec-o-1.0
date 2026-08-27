@@ -23,12 +23,21 @@
  * testes. Aqui é só apresentação.
  */
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Inbox, ChevronLeft, ChevronRight, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
-import { get } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui/primitives';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { CalendarDays, Inbox, ChevronLeft, ChevronRight, ArrowUpRight, ArrowDownLeft, Brain } from 'lucide-react';
+import { get, post } from '@/lib/api';
+import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from '@/components/ui/primitives';
 import { formatarNumero } from '@/lib/utils';
-import type { RelatorioSemana, ResumoDoDia } from '@prospector/shared';
+import type { RelatorioSemana, ResumoDoDia, FichaDoDia } from '@prospector/shared';
+
+/** O que a rota de leitura devolve. */
+interface ResultadoLeitura {
+  total: number;
+  lidas: number;
+  puladas: number;
+  falhas: number;
+  motivo?: string;
+}
 
 interface SemanaNaLista {
   inicio: string;
@@ -259,6 +268,179 @@ function Calendario({
   );
 }
 
+/**
+ * A FICHA DO DIA, por nicho.
+ *
+ * ============================================================
+ * O FORMATO É O QUE FOI PEDIDO, LITERALMENTE
+ * ============================================================
+ *   DIA / NICHO / Mandei / Responderam: abordagem / follow up 1 /
+ *   follow up 2 / Pediram prévia / Perguntaram preço / Fecharam /
+ *   Objeção mais comum.
+ *
+ * O dia aqui é O DIA EM QUE VOCÊ MANDOU: o recorte é a turma de quem
+ * recebeu alguma coisa naquele dia, e o resto é sobre essas pessoas em
+ * qualquer data. É diferente do resumo do dia logo acima, que conta o
+ * que ACONTECEU naquele dia.
+ *
+ * Duas linhas dependem do Gemini ter lido as mensagens: "pediram prévia"
+ * e "objeção mais comum". Sem a leitura elas ficam em zero — e a tela
+ * diz isso, em vez de deixar você achar que ninguém pediu nada.
+ */
+function FichaDoDiaCard({ chave }: { chave: string }) {
+  const cliente = useQueryClient();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['ficha', chave],
+    queryFn: () => get<FichaDoDia>(`/api/dias/${chave}/ficha`),
+  });
+
+  const ler = useMutation({
+    mutationFn: () => post<ResultadoLeitura>(`/api/dias/${chave}/ler`),
+    onSuccess: () => {
+      void cliente.invalidateQueries({ queryKey: ['ficha', chave] });
+      void cliente.invalidateQueries({ queryKey: ['dia', chave] });
+    },
+  });
+
+  if (isLoading || !data) return null;
+  if (data.total.mandei === 0) return null;
+
+  const fichas = [data.total, ...data.nichos];
+  // Só faz sentido mostrar o total separado quando há mais de um nicho.
+  const mostrar = data.nichos.length > 1 ? fichas : data.nichos;
+
+  const semLeitura =
+    data.total.pediramPrevia === 0 && data.total.objecoes.length === 0;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Ficha do dia</CardTitle>
+        <Button
+          size="sm"
+          variant="secundario"
+          onClick={() => ler.mutate()}
+          disabled={ler.isPending}
+          title="Pede ao Gemini para ler as respostas deste dia. Não envia nada, não muda status — só extrai 'pediu prévia' e 'objeção'."
+        >
+          <Brain className="mr-1 h-3 w-3" aria-hidden="true" />
+          {ler.isPending ? 'Lendo…' : 'Gemini ler o dia'}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {ler.data?.motivo && (
+          <p className="mb-4 rounded-lg bg-[var(--color-fundo)] p-3 text-xs text-[var(--color-texto-suave)]">
+            {ler.data.motivo}
+          </p>
+        )}
+        {ler.data && !ler.data.motivo && (
+          <p className="mb-4 rounded-lg bg-[var(--color-fundo)] p-3 text-xs text-[var(--color-texto-suave)]">
+            {ler.data.total} resposta(s) no dia · {ler.data.lidas} lida(s) agora ·{' '}
+            {ler.data.puladas} já tinham leitura · {ler.data.falhas} sem
+            resultado.
+          </p>
+        )}
+
+        <div className="space-y-4">
+          {mostrar.map((f) => (
+            <div
+              key={f.nicho}
+              className="rounded-lg border border-[var(--color-borda)] p-4"
+            >
+              <p className="mb-3 text-sm font-semibold">{f.nicho}</p>
+
+              <dl className="space-y-1.5 text-sm">
+                <Linha rotulo="Mandei" valor={f.mandei} nota={`${f.pessoas} pessoas`} />
+
+                {/* Sem resposta nenhuma, listar "abordagem 0 / follow up
+                    1 0 / follow up 2 0" é ruído. Uma linha honesta diz
+                    mais. */}
+                {f.responderamPorEtapa.length === 0 ? (
+                  <Linha rotulo="Responderam" valor={0} />
+                ) : (
+                  f.responderamPorEtapa.map((e) => (
+                    <Linha
+                      key={e.ordem}
+                      rotulo={`Responderam: ${e.rotulo.toLowerCase()}`}
+                      valor={e.leads}
+                    />
+                  ))
+                )}
+
+                <Linha rotulo="Pediram prévia/site" valor={f.pediramPrevia} />
+                <Linha rotulo="Perguntaram preço" valor={f.perguntaramPreco} />
+                <Linha rotulo="Fecharam" valor={f.fecharam} />
+
+                <div className="flex items-baseline justify-between gap-3 pt-1">
+                  <dt className="text-[var(--color-texto-suave)]">
+                    Objeção mais comum
+                  </dt>
+                  <dd className="text-right">
+                    {f.objecaoMaisComum ? (
+                      <>
+                        <span className="font-medium">
+                          “{f.objecaoMaisComum.texto}”
+                        </span>{' '}
+                        <span className="num text-xs text-[var(--color-texto-fraco)]">
+                          ({f.objecaoMaisComum.vezes}×)
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-[var(--color-texto-fraco)]">—</span>
+                    )}
+                  </dd>
+                </div>
+              </dl>
+
+              {f.objecoes.length > 1 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {f.objecoes.slice(1, 6).map((o) => (
+                    <Badge key={o.texto} variant="neutro">
+                      {o.texto} ({o.vezes})
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {semLeitura && (
+          <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
+            “Pediram prévia” e “objeção” só aparecem depois que o Gemini lê as
+            respostas — o dicionário não tem como extrair essas duas. Use o
+            botão acima; ele lê inclusive as conversas que você tocou na mão.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Uma linha rótulo/número da ficha. */
+function Linha({
+  rotulo,
+  valor,
+  nota,
+}: {
+  rotulo: string;
+  valor: number;
+  nota?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-[var(--color-texto-suave)]">{rotulo}</dt>
+      <dd className="flex items-baseline gap-2">
+        {nota && (
+          <span className="text-xs text-[var(--color-texto-fraco)]">{nota}</span>
+        )}
+        <span className="num font-medium">{formatarNumero(valor)}</span>
+      </dd>
+    </div>
+  );
+}
+
 /** O resumo de um dia — a linha do tempo do que saiu e do que voltou. */
 function PainelDoDia({ chave, aoFechar }: { chave: string; aoFechar: () => void }) {
   const { data, isLoading } = useQuery({
@@ -445,7 +627,10 @@ function LinhaFunil({
         {formatarNumero(valor)}
       </span>
       <span className="w-14 shrink-0 text-right text-[11px] text-[var(--color-texto-fraco)]">
-        {nota ?? (de > 0 && valor > 0 ? `${Math.round(largura)}%` : '')}
+        {/* 0% aparece. Deixar em branco fazia a coluna parecer quebrada
+            justamente nas linhas que mais interessam quando estão em
+            zero. */}
+        {nota ?? (de > 0 ? `${Math.round(largura)}%` : '')}
       </span>
     </div>
   );
@@ -537,7 +722,12 @@ export function Semanas() {
           <div className="space-y-6">
             {/* O dia escolhido vem ANTES do relatório da semana: você
                 clicou nele agora, e é o que quer ver. */}
-            {dia !== null && <PainelDoDia chave={dia} aoFechar={() => setDia(null)} />}
+            {dia !== null && (
+              <>
+                <FichaDoDiaCard chave={dia} />
+                <PainelDoDia chave={dia} aoFechar={() => setDia(null)} />
+              </>
+            )}
 
             {carregandoRelatorio || !relatorio || !f ? (
               <p className="py-8 text-center text-sm text-[var(--color-texto-fraco)]">
@@ -586,66 +776,157 @@ export function Semanas() {
                     <CardTitle>O que aconteceu com eles</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-2">
-                      <LinhaFunil
-                        rotulo="Abordados"
-                        valor={f.abordados}
-                        de={f.abordados}
-                        nota="pessoas"
-                      />
-                      <LinhaFunil
-                        rotulo="Não responderam"
-                        valor={f.semResposta}
-                        de={f.abordados}
-                      />
-                      <LinhaFunil
-                        rotulo="Responderam"
-                        valor={f.responderam}
-                        de={f.abordados}
-                      />
-                      <LinhaFunil
-                        rotulo="Disseram não"
-                        valor={f.negativos}
-                        de={f.abordados}
-                      />
-                      <LinhaFunil
-                        rotulo="Demonstraram interesse"
-                        valor={f.interessados}
-                        de={f.abordados}
-                      />
-                      <LinhaFunil
-                        rotulo="Perguntaram preço"
-                        valor={f.perguntaramPreco}
-                        de={f.abordados}
-                      />
-                      <LinhaFunil
-                        rotulo="Receberam a prévia"
-                        valor={f.receberamPrevia}
-                        de={f.abordados}
-                      />
-                      <LinhaFunil
-                        rotulo="Fecharam"
-                        valor={f.fecharam}
-                        de={f.abordados}
-                      />
-                    </div>
-
-                    {f.naoEntendidas > 0 && (
-                      <p className="mt-3 rounded-lg bg-[var(--color-fundo)] p-3 text-xs text-[var(--color-texto-suave)]">
-                        <strong>{formatarNumero(f.naoEntendidas)}</strong>{' '}
-                        {f.naoEntendidas === 1 ? 'pessoa respondeu' : 'pessoas responderam'}{' '}
-                        algo que o sistema não conseguiu classificar. Elas contam
-                        em “responderam”, mas não entram em nenhuma linha de
-                        intenção.
+                    {f.abordados === 0 ? (
+                      <p className="py-6 text-center text-sm text-[var(--color-texto-suave)]">
+                        Nenhuma mensagem saiu nesta semana.
                       </p>
-                    )}
+                    ) : (
+                      <div className="space-y-5">
+                        {/*
+                          A DIVISÃO — as duas únicas linhas exclusivas.
+                          Uma barra empilhada diz o que oito barras soltas
+                          não diziam: que estas duas somam o total, e que
+                          as outras são subconjuntos.
+                        */}
+                        <div>
+                          <p className="mb-2 text-sm">
+                            <strong className="num text-lg">
+                              {formatarNumero(f.abordados)}
+                            </strong>{' '}
+                            <span className="text-[var(--color-texto-suave)]">
+                              {f.abordados === 1 ? 'pessoa abordada' : 'pessoas abordadas'}
+                            </span>
+                          </p>
 
-                    <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
-                      As linhas se sobrepõem de propósito: quem perguntou preço e
-                      depois fechou aparece nas duas. Só “não responderam” e
-                      “responderam” são exclusivas — essas duas somam o total.
-                      Resposta que chegou depois do fim da semana também conta.
-                    </p>
+                          <div className="flex h-7 overflow-hidden rounded">
+                            {f.semResposta > 0 && (
+                              <div
+                                className="flex items-center justify-center bg-[var(--color-borda)] text-[11px] text-[var(--color-texto-suave)]"
+                                style={{ width: `${(f.semResposta / f.abordados) * 100}%` }}
+                                title={`${f.semResposta} não responderam`}
+                              >
+                                {f.semResposta / f.abordados > 0.15 &&
+                                  formatarNumero(f.semResposta)}
+                              </div>
+                            )}
+                            {f.responderam > 0 && (
+                              <div
+                                className="flex items-center justify-center bg-[var(--color-marca)] text-[11px] text-white"
+                                style={{ width: `${(f.responderam / f.abordados) * 100}%` }}
+                                title={`${f.responderam} responderam`}
+                              >
+                                {f.responderam / f.abordados > 0.15 &&
+                                  formatarNumero(f.responderam)}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-1.5 flex flex-wrap gap-4 text-xs">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2.5 w-2.5 rounded-sm bg-[var(--color-borda)]" />
+                              <span className="text-[var(--color-texto-suave)]">
+                                Não responderam
+                              </span>
+                              <strong className="num">{formatarNumero(f.semResposta)}</strong>
+                              <span className="text-[var(--color-texto-fraco)]">
+                                ({Math.round((f.semResposta / f.abordados) * 100)}%)
+                              </span>
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2.5 w-2.5 rounded-sm bg-[var(--color-marca)]" />
+                              <span className="text-[var(--color-texto-suave)]">
+                                Responderam
+                              </span>
+                              <strong className="num">{formatarNumero(f.responderam)}</strong>
+                              <span className="text-[var(--color-texto-fraco)]">
+                                ({Math.round((f.responderam / f.abordados) * 100)}%)
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/*
+                          O QUE ELES DISSERAM — subconjuntos de "responderam".
+                          A porcentagem aqui é sobre QUEM RESPONDEU, e não
+                          sobre a lista inteira: "3 de 5 que responderam
+                          perguntaram preço" é uma informação; "3 de 200
+                          abordados" dilui o mesmo fato até ele não dizer
+                          mais nada.
+                        */}
+                        {f.responderam > 0 ? (
+                          <div>
+                            <p className="mb-2 text-xs font-medium">
+                              Do que responderam
+                            </p>
+                            <div className="space-y-2">
+                              <LinhaFunil
+                                rotulo="Disseram não"
+                                valor={f.negativos}
+                                de={f.responderam}
+                              />
+                              <LinhaFunil
+                                rotulo="Demonstraram interesse"
+                                valor={f.interessados}
+                                de={f.responderam}
+                              />
+                              <LinhaFunil
+                                rotulo="Perguntaram preço"
+                                valor={f.perguntaramPreco}
+                                de={f.responderam}
+                              />
+                              {f.naoEntendidas > 0 && (
+                                <LinhaFunil
+                                  rotulo="Não entendidas"
+                                  valor={f.naoEntendidas}
+                                  de={f.responderam}
+                                />
+                              )}
+                            </div>
+                            <p className="mt-2 text-[11px] text-[var(--color-texto-fraco)]">
+                              Sobre quem respondeu, e não sobre a lista inteira.
+                              As linhas se sobrepõem: quem perguntou preço e
+                              depois aceitou aparece nas duas.
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="rounded-lg bg-[var(--color-fundo)] p-3 text-xs text-[var(--color-texto-suave)]">
+                            Ninguém respondeu ainda. Se alguém responder depois,
+                            a resposta entra aqui — ela conta na semana em que a
+                            abordagem saiu, não na semana em que chegou.
+                          </p>
+                        )}
+
+                        {/*
+                          NÃO DEPENDEM DE RESPOSTA. "Recebeu a prévia" é ter
+                          chegado naquela etapa; "fechou" é o status atual do
+                          lead. Misturá-los com o grupo de cima sugeriria que
+                          são coisas que o lead disse.
+                        */}
+                        <div>
+                          <p className="mb-2 text-xs font-medium">
+                            Independente da resposta
+                          </p>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-lg border border-[var(--color-borda)] p-3">
+                              <p className="num text-xl font-semibold">
+                                {formatarNumero(f.receberamPrevia)}
+                              </p>
+                              <p className="text-[11px] text-[var(--color-texto-suave)]">
+                                receberam a prévia
+                              </p>
+                            </div>
+                            <div className="rounded-lg border border-[var(--color-borda)] p-3">
+                              <p className="num text-xl font-semibold">
+                                {formatarNumero(f.fecharam)}
+                              </p>
+                              <p className="text-[11px] text-[var(--color-texto-suave)]">
+                                fecharam
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 

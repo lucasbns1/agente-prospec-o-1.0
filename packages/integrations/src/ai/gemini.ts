@@ -32,7 +32,11 @@ import {
   INSTRUCAO_SISTEMA,
   INTENT_IA,
   ACAO_IA,
+  montarPromptDeLeitura,
+  interpretarLeitura,
   type ContextoCadencia,
+  type MensagemParaLer,
+  type ResultadoLeitura,
 } from '@prospector/domain';
 import type { AnalisadorDeCadencia, OrigemDaFalha, ResultadoAnalise } from './analisador.js';
 
@@ -279,4 +283,92 @@ function classificar(err: unknown): OrigemDaFalha {
 function redigir(texto: string, chave: string): string {
   if (!chave) return texto;
   return texto.split(chave).join('***');
+}
+
+/**
+ * A LEITURA de uma mensagem — separada da decisao de cadencia.
+ *
+ * ============================================================
+ * POR QUE UM METODO A PARTE, E NAO UM MODO DO `analisar`
+ * ============================================================
+ * `analisar` responde "o que EU faco agora?", e o que ele devolve vira
+ * acao: enfileirar, pausar, encerrar. Por isso passa por uma guarda
+ * inteira.
+ *
+ * Isto responde "o que esta pessoa DISSE?" e nao aciona nada — grava ao
+ * lado da mensagem e serve para contar. Um caminho so, com um parametro
+ * de modo, faria uma releitura de historico passar pela mesma porta que
+ * autoriza envio. Sao portas diferentes de proposito.
+ */
+export class LeitorGemini {
+  readonly modelo: string;
+  private readonly apiKey: string;
+  private readonly timeoutMs: number;
+  private cliente: unknown = null;
+
+  constructor(opcoes: OpcoesGemini) {
+    this.modelo = opcoes.modelo;
+    this.apiKey = opcoes.apiKey;
+    this.timeoutMs = opcoes.timeoutMs ?? 20_000;
+  }
+
+  private async obterCliente(): Promise<{
+    models: { generateContent: (p: unknown) => Promise<{ text?: string }> };
+  }> {
+    if (this.cliente) return this.cliente as never;
+    const { GoogleGenAI } = await import('@google/genai');
+    this.cliente = new GoogleGenAI({ apiKey: this.apiKey });
+    return this.cliente as never;
+  }
+
+  async ler(m: MensagemParaLer): Promise<ResultadoLeitura> {
+    try {
+      const cliente = await this.obterCliente();
+
+      const resposta = await comPrazo(
+        cliente.models.generateContent({
+          model: this.modelo,
+          contents: montarPromptDeLeitura(m),
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'object',
+              properties: {
+                pediu_previa: { type: 'boolean' },
+                objecao: { type: 'string', nullable: true },
+                confianca: { type: 'integer' },
+              },
+              required: ['pediu_previa', 'objecao', 'confianca'],
+            },
+            // Zero pelo mesmo motivo de sempre: a mesma frase tem que
+            // ser lida do mesmo jeito toda vez, ou "objecao mais comum"
+            // vira ruido — a mesma objecao viraria dois rotulos.
+            temperature: 0,
+          },
+        }),
+        this.timeoutMs
+      );
+
+      const texto = resposta.text;
+      if (!texto || texto.trim() === '') {
+        return { ok: false, erro: 'O modelo devolveu resposta vazia' };
+      }
+
+      let bruto: unknown;
+      try {
+        bruto = JSON.parse(texto);
+      } catch {
+        return { ok: false, erro: 'O modelo nao devolveu JSON valido' };
+      }
+
+      return interpretarLeitura(bruto);
+    } catch (err) {
+      // Nao relanca: sao dezenas de mensagens por lote, e uma falha nao
+      // pode levar as outras junto.
+      return {
+        ok: false,
+        erro: redigir(err instanceof Error ? err.message : String(err), this.apiKey),
+      };
+    }
+  }
 }
