@@ -433,44 +433,40 @@ export async function rotasLeadAcoes(app: FastifyInstance): Promise<void> {
         },
       });
 
-      // O lead anda no quadro pela MESMA regra da mensagem manual que
-      // chega pelo WhatsApp: quem ja esta adiante nao e rebaixado.
-      const novo = estadoAoAssumirConversa(lead.status);
+      // ============================================================
+      // ELE E UMA ANOTACAO, E SO ISSO
+      // ============================================================
+      // A primeira versao copiava o comportamento de "assumir a
+      // conversa": marcava QUENTE, punha EM_CONVERSA, cancelava a fila e
+      // pausava a campanha com `aguardandoLiberacao`.
+      //
+      // Estava errado, e o erro apareceu em uso real: 39 leads clicados
+      // de uma vez viraram 39 cartoes em "Precisa de voce", pedindo uma
+      // decisao que a pessoa acabara de tomar. O oposto de "atualizar a
+      // lista".
+      //
+      // As duas acoes SAO diferentes:
+      //
+      //   - assumir a conversa = alguem RESPONDEU e voce entrou. Pausar
+      //     faz sentido: o robo mandando a etapa 3 por cima de uma
+      //     negociacao e o jeito mais rapido de perder a venda.
+      //
+      //   - "ja mandei" = a pessoa NAO respondeu nada, e voce deu um
+      //     empurrao a mao. Nada nela ficou mais quente — ela continua em
+      //     silencio — e a sequencia dela nao tem por que congelar.
+      //
+      // Entao aqui: o evento acima (que e o que tira o lead da lista de
+      // "nao responderam"), e o carimbo de tempo. Nada mais. Se voce
+      // quiser parar a sequencia de alguem, o botao de pausar existe e e
+      // explicito.
       const atualizado = await prisma.lead.update({
         where: { id },
-        data: {
-          ultimaInteracaoEm: new Date(),
-          ...(novo.status !== null
-            ? {
-                status: novo.status as never,
-                temperatura: novo.temperatura as never,
-                proximaAcao: novo.proximaAcao,
-              }
-            : {}),
-        },
+        data: { ultimaInteracaoEm: new Date() },
       });
 
-      // A automacao daquele lead para. Voce entrou na conversa; mandar a
-      // etapa seguinte por cima seria o robo falando junto com voce.
-      const canceladas = await cancelarFilaDoLead(
-        id,
-        'Você marcou que mandou mensagem na mão'
-      );
-      await prisma.leadCampaign.updateMany({
-        where: { leadId: id, status: { notIn: ['CONCLUIDO', 'PARADO', 'OPT_OUT'] } },
-        data: {
-          status: 'PAUSADO',
-          aguardandoLiberacao: true,
-          motivoParada: 'Você marcou que mandou mensagem na mão',
-        },
-      });
-
-      if (novo.status !== null) {
-        eventsBus.publicar('lead.status_alterado', { leadId: id, status: novo.status });
-      }
       eventsBus.publicar('dashboard.atualizar');
 
-      return { lead: atualizado, canceladas };
+      return { lead: atualizado };
     }
   );
 

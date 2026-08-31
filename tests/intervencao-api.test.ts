@@ -509,16 +509,28 @@ describe('notificações', () => {
 // feito, ela nunca encolhe, e na próxima visita você reescreve para os
 // mesmos leads — que é a forma mais rápida de queimar um número.
 describe('POST /api/leads/:id/marcar-mandado', () => {
-  it('grava o rastro, move o lead e para a automação', async () => {
-    const lead = await criarLead({ status: 'AGUARDANDO_RESPOSTA' });
+  it('grava o rastro e NÃO mexe em mais nada', async () => {
+    // ============================================================
+    // O ERRO QUE ESTE TESTE TRAVA
+    // ============================================================
+    // A primeira versão copiava "assumir a conversa": QUENTE,
+    // EM_CONVERSA, fila cancelada, campanha pausada com
+    // `aguardandoLiberacao`.
+    //
+    // Em uso real, 39 leads clicados de uma vez viraram 39 cartões em
+    // "Precisa de você" — cada um pedindo uma decisão que a pessoa
+    // acabara de tomar. O oposto de "atualizar a lista".
+    //
+    // As duas ações são diferentes: assumir é quando alguém RESPONDEU;
+    // "já mandei" é um empurrão em quem NÃO respondeu nada.
+    const lead = await criarLead({
+      status: 'AGUARDANDO_RESPOSTA',
+      temperatura: 'FRIO',
+    });
     const fila = await enfileirarPara(lead.id);
 
     const r = await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
     expect(r.statusCode).toBe(200);
-
-    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
-    expect(depois.status).toBe('EM_CONVERSA');
-    expect(depois.temperatura).toBe('QUENTE');
 
     // O rastro: "quem mudou isso?" tem que ter resposta.
     const ev = await prisma.leadEvent.findFirstOrThrow({
@@ -526,10 +538,32 @@ describe('POST /api/leads/:id/marcar-mandado', () => {
     });
     expect(ev.tipo).toBe('MENSAGEM_ENVIADA');
 
-    // A automação para: mandar a etapa 2 por cima seria o robô falando
-    // junto com você.
+    const depois = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    // Ninguém respondeu. Nada nele ficou mais quente.
+    expect(depois.temperatura).toBe('FRIO');
+    expect(depois.status).toBe('AGUARDANDO_RESPOSTA');
+    // Mas a conversa se mexeu, e isso conta.
+    expect(depois.ultimaInteracaoEm).not.toBeNull();
+
+    // A fila NÃO é cancelada: a sequência dele não tem por que congelar.
     const m = await prisma.outboundMessage.findUniqueOrThrow({ where: { id: fila.id } });
-    expect(m.status).toBe('CANCELADA');
+    expect(m.status).toBe('AGENDADA');
+  });
+
+  it('NÃO joga o lead em "Precisa de você"', async () => {
+    // A asserção que descreve o sintoma relatado: o vínculo não pode
+    // sair pausado nem esperando liberação.
+    const lead = await criarLead({ status: 'AGUARDANDO_RESPOSTA' });
+    await enfileirarPara(lead.id);
+
+    await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);
+
+    const v = await prisma.leadCampaign.findFirst({ where: { leadId: lead.id } });
+    if (v) {
+      expect(v.status).not.toBe('PAUSADO');
+      expect(v.aguardandoLiberacao).toBe(false);
+      expect(v.motivoParada).toBeNull();
+    }
   });
 
   it('NÃO envia mensagem nenhuma', async () => {
@@ -559,7 +593,7 @@ describe('POST /api/leads/:id/marcar-mandado', () => {
     ).toBe(0);
   });
 
-  it('não rebaixa quem já está adiante', async () => {
+  it('não mexe no status de ninguém, nem de quem está adiante', async () => {
     const lead = await criarLead({ status: 'CLIENTE' });
 
     await chamar('POST', `/api/leads/${lead.id}/marcar-mandado`);

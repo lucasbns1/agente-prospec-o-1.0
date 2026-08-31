@@ -29,6 +29,7 @@
     "diagnostico": "tsx scripts/diagnostico-lead.ts",
     "publico": "tsx scripts/publico.ts",
     "reparar-quentes": "tsx scripts/reparar-quentes.ts",
+    "reparar-ja-mandei": "tsx scripts/reparar-ja-mandei.ts",
     "ia:testar": "tsx scripts/testar-gemini.ts",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
