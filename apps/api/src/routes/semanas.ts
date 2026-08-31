@@ -20,6 +20,8 @@ import {
   fichaDoDia,
 } from '../services/semana-service.js';
 import { lerMensagensDoDia } from '../services/leitura-do-dia-service.js';
+import { pedirReconciliacao } from '../lib/pedir-reconciliacao.js';
+import { estadoDaSincronizacao } from '../services/sincronizacao-service.js';
 
 export async function rotasSemanas(app: FastifyInstance): Promise<void> {
   app.get(
@@ -110,34 +112,115 @@ export async function rotasSemanas(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // ============================================================
+  // DUAS OPERACOES QUE UM NOME SO ESCONDIA
+  // ============================================================
+  // "Ler o dia" fazia UMA coisa — extrair sinais das mensagens que ja
+  // estavam no banco — e o nome sugeria outra. Se uma resposta nunca
+  // chegou pelo evento do WhatsApp, ela nao estava no banco, e o botao
+  // nao tinha o que ler. Ele nao abria o WhatsApp, nao buscava conversa,
+  // nao comparava nada.
+  //
+  // Agora sao tres rotas com semantica explicita:
+  //
+  //   /extrair      — so interpreta o que ja esta aqui (o antigo "ler")
+  //   /reconciliar  — busca no WhatsApp o que faltou, E interpreta
+  //   /ler          — alias de /reconciliar, para o botao antigo
+  //
+  // A separacao importa porque as duas custam coisas diferentes:
+  // extrair gasta chamadas ao modelo; reconciliar gasta tempo do
+  // Chromium. Quem quer so uma nao deveria pagar as duas.
+
+  /** Interpreta o que ja esta no banco. Nao busca nada. */
+  const rotaExtrair = async (request: {
+    params: unknown;
+    body: unknown;
+  }): Promise<unknown> => {
+    const { data } = z.object({ data: z.string().min(4) }).parse(request.params);
+    const { forcar } = z
+      .object({ forcar: z.boolean().default(false) })
+      .parse(request.body ?? {});
+
+    const quando = new Date(data);
+    if (Number.isNaN(quando.getTime())) {
+      throw new AppError(`"${data}" não é uma data válida`, 422, 'DATA_INVALIDA');
+    }
+
+    return lerMensagensDoDia({ quando, forcar });
+  };
+
+  app.post<{ Params: { data: string } }>(
+    '/api/dias/:data/extrair',
+    { preHandler: exigirAutenticacao },
+    rotaExtrair
+  );
+
   /**
-   * POST /api/dias/:data/ler
+   * POST /api/dias/:data/reconciliar
    *
-   * Pede ao Gemini para LER as respostas daquele dia e extrair dois
-   * sinais que o dicionario nao da: quem pediu previa, e qual foi a
-   * objecao.
+   * As duas metades, na ordem que faz sentido.
    *
-   * NAO decide nada — nao enfileira, nao pausa, nao muda status. Por
-   * isso pode rodar sobre historico antigo, e por isso cobre tambem as
-   * conversas que voce tocou na mao.
+   * ============================================================
+   * A BUSCA E ASSINCRONA, E A RESPOSTA DIZ ISSO
+   * ============================================================
+   * Quem tem a sessao do WhatsApp e o worker; a API so enfileira. Entao
+   * a extracao desta chamada roda sobre o que JA estava no banco — as
+   * mensagens que a varredura trouxer agora entram na proxima passada.
    *
-   * POST porque gasta: cada mensagem e uma chamada paga ao modelo.
+   * A alternativa seria segurar a resposta ate a varredura terminar, o
+   * que travaria a tela por dezenas de segundos e ainda dependeria de o
+   * worker estar de pe. Prefiro devolver na hora e dizer a verdade
+   * sobre o que ficou para depois.
+   */
+  const rotaReconciliar = async (request: {
+    params: unknown;
+    body: unknown;
+    log?: { error: (obj: unknown, msg: string) => void };
+  }): Promise<unknown> => {
+    const { data } = z.object({ data: z.string().min(4) }).parse(request.params);
+
+    const quando = new Date(data);
+    if (Number.isNaN(quando.getTime())) {
+      throw new AppError(`"${data}" não é uma data válida`, 422, 'DATA_INVALIDA');
+    }
+
+    // 1. Buscar no WhatsApp o que faltou daquele dia.
+    const inicio = new Date(quando);
+    inicio.setHours(0, 0, 0, 0);
+    const busca = await pedirReconciliacao({ desde: inicio, log: request.log });
+
+    // 2. Interpretar o que ja esta aqui.
+    const extracao = await rotaExtrair(request);
+
+    return {
+      busca: {
+        pedida: busca.enfileirado,
+        motivo: busca.motivo,
+        detalhe: busca.enfileirado
+          ? 'A varredura foi pedida ao worker. As mensagens que ela trouxer entram na próxima extração.'
+          : 'Não foi possível pedir a varredura — a periódica cobre na próxima volta.',
+      },
+      extracao,
+      sincronizacao: await estadoDaSincronizacao(),
+    };
+  };
+
+  app.post<{ Params: { data: string } }>(
+    '/api/dias/:data/reconciliar',
+    { preHandler: exigirAutenticacao },
+    rotaReconciliar
+  );
+
+  /**
+   * Alias do antigo "ler o dia".
+   *
+   * Mantido porque a rota ja esta em uso, mas com a semantica NOVA: ele
+   * reconcilia. Deixar o endpoint antigo fazendo menos do que o nome
+   * promete foi justamente o problema.
    */
   app.post<{ Params: { data: string } }>(
     '/api/dias/:data/ler',
     { preHandler: exigirAutenticacao },
-    async (request) => {
-      const { data } = z.object({ data: z.string().min(4) }).parse(request.params);
-      const { forcar } = z
-        .object({ forcar: z.boolean().default(false) })
-        .parse(request.body ?? {});
-
-      const quando = new Date(data);
-      if (Number.isNaN(quando.getTime())) {
-        throw new AppError(`"${data}" não é uma data válida`, 422, 'DATA_INVALIDA');
-      }
-
-      return lerMensagensDoDia({ quando, forcar });
-    }
+    rotaReconciliar
   );
 }

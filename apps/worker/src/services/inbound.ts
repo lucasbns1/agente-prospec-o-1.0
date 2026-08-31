@@ -612,6 +612,33 @@ async function registrarMensagemManual(p: {
     throw err;
   }
 
+  // ============================================================
+  // UMA MENSAGEM HISTORICA NAO MEXE NO PRESENTE
+  // ============================================================
+  // A varredura recupera tambem mensagens SUAS, de dias atras. Pausar
+  // hoje uma conversa por causa de algo que voce escreveu na sexta
+  // travaria o lead esperando uma decisao ja tomada.
+  //
+  // O registro acima ja aconteceu — ela entra no historico e no
+  // contexto da IA, que e o valor dela. Daqui para baixo e presente, e
+  // passado nao manda no presente.
+  if (entrada.historica) {
+    await prisma.leadEvent.create({
+      data: {
+        leadId,
+        tipo: 'MENSAGEM_ENVIADA',
+        descricao:
+          'Mensagem sua recuperada do WhatsApp (histórico) — a automação não foi tocada',
+        origem: 'whatsapp-manual-historico',
+      },
+    });
+    return {
+      processada: true,
+      leadId,
+      motivo: 'Mensagem manual histórica registrada, sem efeito no presente',
+    };
+  }
+
   if (campaignId) {
     await prisma.leadCampaign.updateMany({
       where: {
@@ -670,6 +697,25 @@ async function registrarMensagemManual(p: {
       descricao: 'Você respondeu manualmente pelo WhatsApp — automação pausada',
       origem: 'whatsapp-manual',
     },
+  });
+
+  // ============================================================
+  // A IA FICA SABENDO QUE VOCE FALOU
+  // ============================================================
+  // Ate agora a sua mensagem entrava no retrato que ela le, mas nao
+  // acordava ninguem. Se voce respondia e o lead nunca mais escrevia,
+  // nenhuma analise acontecia sobre aquela conversa.
+  //
+  // O gatilho pede RELEITURA, e nao envio: a sequencia acabou de ser
+  // pausada acima com `aguardandoLiberacao`, e a BARREIRA 3 da guarda
+  // recusa qualquer acao de envio enquanto ela estiver levantada. A IA
+  // le, opina, registra. Quem destrava e voce.
+  //
+  // `dispararGatilho` nao lanca e nao faz nada com a IA desligada.
+  await dispararGatilho({
+    leadId,
+    campaignId,
+    gatilho: 'OPERADOR_FALOU',
   });
 
   void publicarEvento('mensagem.enviada', { leadId, campaignId });

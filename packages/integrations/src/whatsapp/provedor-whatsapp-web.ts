@@ -325,7 +325,15 @@ export async function criarProvedorWhatsAppWeb(
         try {
           const msgs: any[] = await chat.fetchMessages({ limit: maxPorConversa });
           for (const m of msgs) {
-            if (m?.fromMe) continue;
+            // As SUAS mensagens tambem entram agora.
+            //
+            // Antes elas eram descartadas aqui, e o efeito era um buraco
+            // silencioso: uma conversa que voce tocou na mao enquanto o
+            // worker estava fora nunca aparecia no sistema — nem no
+            // historico, nem no contexto que a IA le.
+            //
+            // Quem decide se elas mexem no presente e o inbound, pela
+            // marca `historica`. Aqui elas so param de sumir.
             if (Number(m?.timestamp ?? 0) < corte) continue;
 
             // MESMA resolucao de telefone do caminho ao vivo. Sem ela, a

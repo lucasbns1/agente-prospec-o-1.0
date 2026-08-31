@@ -30,13 +30,32 @@ import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from '@/compo
 import { formatarNumero } from '@/lib/utils';
 import type { RelatorioSemana, ResumoDoDia, FichaDoDia } from '@prospector/shared';
 
-/** O que a rota de leitura devolve. */
+/** O que a extração devolve — a leitura do que já está no banco. */
 interface ResultadoLeitura {
   total: number;
   lidas: number;
   puladas: number;
   falhas: number;
   motivo?: string;
+}
+
+/**
+ * O que "reconciliar o dia" devolve — as duas metades, separadas.
+ *
+ * `busca` é o pedido de varredura ao worker, e ele é ASSÍNCRONO: o que
+ * ela encontrar entra na PRÓXIMA extração, não nesta. `extracao` é a
+ * leitura do que já estava aqui. Somar os dois num número só esconderia
+ * justamente a diferença que faz o botão existir.
+ */
+interface ResultadoReconciliacao {
+  busca: { pedida: boolean; motivo?: string; detalhe: string };
+  extracao: ResultadoLeitura;
+  sincronizacao: {
+    ultimaEm: string | null;
+    minutosAtras: number | null;
+    desatualizado: boolean;
+    recuperadasNaUltima: number | null;
+  };
 }
 
 interface SemanaNaLista {
@@ -269,18 +288,35 @@ function Calendario({
 }
 
 /**
- * O botão "Gemini ler o dia".
+ * O botão "Reconciliar dia".
  *
  * ============================================================
- * ELE DIZ QUAL DIA VAI LER
+ * POR QUE O NOME MUDOU
  * ============================================================
- * O rótulo muda com a seleção: sem dia escolhido ele lê HOJE, e diz
- * "hoje". Com um dia escolhido, diz a data.
+ * Ele se chamava "Gemini ler o dia" e fazia UMA coisa: interpretar as
+ * mensagens que já estavam no banco. Se uma resposta nunca chegou pelo
+ * evento do WhatsApp, ela não estava no banco, e não havia o que ler —
+ * o botão dizia "0 respostas" para um dia em que a pessoa respondeu.
  *
- * Um botão que gasta dinheiro não pode ser ambíguo sobre o que vai
- * fazer — "ler o dia" sozinho deixaria você adivinhar qual.
+ * Agora ele faz as duas: pede a varredura do WhatsApp E interpreta.
+ * "Reconciliar" é o nome do que ele de fato faz.
+ *
+ * ============================================================
+ * A BUSCA É ASSÍNCRONA, E A TELA DIZ ISSO
+ * ============================================================
+ * Quem tem a sessão do WhatsApp é o worker; a API só enfileira. Então a
+ * extração desta chamada roda sobre o que JÁ estava aqui, e o que a
+ * varredura trouxer entra na próxima. Segurar a resposta até a varredura
+ * terminar travaria a tela por dezenas de segundos e ainda dependeria de
+ * o worker estar de pé.
+ *
+ * ============================================================
+ * ELE DIZ QUAL DIA VAI RECONCILIAR
+ * ============================================================
+ * Sem dia escolhido ele usa HOJE, e o rótulo diz "hoje". Um botão que
+ * gasta dinheiro não pode deixar você adivinhar sobre o que ele age.
  */
-function BotaoLerODia({
+function BotaoReconciliarDia({
   chave,
   rotulo,
   aoTerminar,
@@ -291,39 +327,48 @@ function BotaoLerODia({
 }) {
   const cliente = useQueryClient();
 
-  const ler = useMutation({
-    mutationFn: () => post<ResultadoLeitura>(`/api/dias/${chave}/ler`),
+  const reconciliar = useMutation({
+    mutationFn: () =>
+      post<ResultadoReconciliacao>(`/api/dias/${chave}/reconciliar`),
     onSuccess: () => {
       void cliente.invalidateQueries({ queryKey: ['ficha', chave] });
       void cliente.invalidateQueries({ queryKey: ['dia', chave] });
+      void cliente.invalidateQueries({ queryKey: ['sincronizacao'] });
       aoTerminar?.();
     },
   });
+
+  const extracao = reconciliar.data?.extracao;
 
   return (
     <div className="flex flex-col items-end gap-1">
       <Button
         size="sm"
         variant="secundario"
-        onClick={() => ler.mutate()}
-        disabled={ler.isPending}
-        title="Pede ao Gemini para ler as respostas deste dia — inclusive as conversas que você tocou na mão. Não envia nada, não muda status: só extrai 'pediu prévia' e 'objeção'."
+        onClick={() => reconciliar.mutate()}
+        disabled={reconciliar.isPending}
+        title="Duas coisas: pede ao WhatsApp as mensagens deste dia que o sistema não viu, e manda o Gemini interpretar as respostas que já estão aqui — inclusive as conversas que você tocou na mão. Não envia nada e não muda status: só extrai 'pediu prévia' e 'objeção'."
       >
         <Brain className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-        {ler.isPending ? 'Lendo…' : `Gemini ler ${rotulo}`}
+        {reconciliar.isPending ? 'Reconciliando…' : `Reconciliar ${rotulo}`}
       </Button>
 
-      {ler.data && (
+      {extracao && (
         <p className="max-w-xs text-right text-[11px] text-[var(--color-texto-fraco)]">
-          {ler.data.motivo ??
-            `${ler.data.total} resposta(s) · ${ler.data.lidas} lida(s) agora · ` +
-              `${ler.data.puladas} já tinham leitura · ${ler.data.falhas} sem resultado.`}
+          {extracao.motivo ??
+            `${extracao.total} resposta(s) · ${extracao.lidas} lida(s) agora · ` +
+              `${extracao.puladas} já tinham leitura · ${extracao.falhas} sem resultado.`}
         </p>
       )}
-      {ler.isError && (
+      {reconciliar.data && (
+        <p className="max-w-xs text-right text-[11px] text-[var(--color-texto-fraco)]">
+          {reconciliar.data.busca.detalhe}
+        </p>
+      )}
+      {reconciliar.isError && (
         <p className="max-w-xs text-right text-[11px] text-[var(--color-alerta)]">
-          Não deu para ler. Confira se a API está rodando e se você já rodou
-          `pnpm db:migrate`.
+          Não deu para reconciliar. Confira se a API está rodando e se você já
+          rodou `pnpm db:migrate`.
         </p>
       )}
     </div>
@@ -711,10 +756,10 @@ export function Semanas() {
         {/*
           O botão fica no topo, sempre visível — antes ele só existia
           dentro da ficha, que só aparece depois de escolher um dia. Sem
-          dia escolhido ele lê HOJE, e o rótulo diz isso: um botão que
-          gasta dinheiro não pode deixar você adivinhar o que vai ler.
+          dia escolhido ele usa HOJE, e o rótulo diz isso: um botão que
+          gasta dinheiro não pode deixar você adivinhar sobre o que age.
         */}
-        <BotaoLerODia
+        <BotaoReconciliarDia
           chave={dia ?? chaveDoDia(new Date())}
           rotulo={
             dia === null

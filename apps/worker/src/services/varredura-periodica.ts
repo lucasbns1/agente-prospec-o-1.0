@@ -1,0 +1,155 @@
+/**
+ * A varredura que se repete.
+ *
+ * ============================================================
+ * POR QUE UMA VEZ SO NAO BASTAVA
+ * ============================================================
+ * `recuperarMensagensPerdidas` sempre funcionou. O problema era
+ * QUANDO ela rodava: uma unica vez, dez segundos depois de o WhatsApp
+ * conectar, e nunca mais.
+ *
+ * O efeito em uso real: o worker cai numa sexta, ninguem percebe, e na
+ * segunda as respostas do fim de semana estao fora da janela. Um lead
+ * respondeu duas vezes no WhatsApp e o diagnostico mostrava
+ * `RESPOSTAS DELE (0)` — a cadencia congelada esperando algo que o
+ * sistema nunca soube que existia.
+ *
+ * ============================================================
+ * ELA NAO E UM SEGUNDO PIPELINE
+ * ============================================================
+ * Este arquivo NAO processa mensagem. Ele so chama a funcao que ja
+ * existe, no relogio. Toda mensagem recuperada passa exatamente pelo
+ * mesmo `processarMensagemRecebida` das mensagens ao vivo — e e essa
+ * identidade que torna o replay seguro, porque a idempotencia por
+ * `provider_message_id` mora la.
+ *
+ * ============================================================
+ * POR QUE UM INTERVALO CURTO E BARATO
+ * ============================================================
+ * A varredura descarta as conversas paradas pelo `timestamp` do chat
+ * ANTES de buscar mensagem nenhuma. Numa base sem movimento, cinco
+ * minutos custam quase nada; numa base com movimento, o custo e
+ * proporcional ao que de fato mudou.
+ */
+import type { WhatsAppAdapter } from '@prospector/integrations';
+import type { Logger } from 'pino';
+import {
+  recuperarMensagensPerdidas,
+  type ResultadoRecuperacao,
+} from './recuperar-perdidas.js';
+
+/**
+ * Uma varredura por vez.
+ *
+ * Ler as conversas leva segundos. Se o intervalo for menor que a
+ * duracao de uma varredura, duas passariam a correr juntas sobre as
+ * mesmas conversas — e os efeitos de uma resposta (avancar etapa,
+ * cancelar fila, opt-out) sairiam fora de ordem.
+ *
+ * A idempotencia impediria mensagem duplicada, mas nao impediria dois
+ * caminhos disputando o mesmo estado. E mais simples nao deixar
+ * comecar.
+ */
+let emAndamento = false;
+
+/** O resultado da ultima varredura, para quem quiser olhar sem esperar. */
+let ultimo: ResultadoRecuperacao | null = null;
+
+export function ultimaVarredura(): ResultadoRecuperacao | null {
+  return ultimo;
+}
+
+/**
+ * Roda uma varredura, se nao houver outra correndo.
+ *
+ * NUNCA lanca: e chamada de um timer e de uma rota, e em nenhum dos
+ * dois uma falha pode derrubar quem chamou. Recuperacao e acessorio —
+ * ela nao pode quebrar o que funciona sem ela.
+ */
+export async function varrerAgora(p: {
+  adapter: WhatsAppAdapter;
+  log: Logger;
+  janelaHoras: number;
+  /** De onde veio o pedido, para o log dizer quem mandou. */
+  origem: 'conexao' | 'periodica' | 'manual';
+}): Promise<ResultadoRecuperacao | { pulada: true; motivo: string }> {
+  if (emAndamento) {
+    return { pulada: true, motivo: 'Já há uma varredura em andamento' };
+  }
+
+  emAndamento = true;
+  try {
+    const r = await recuperarMensagensPerdidas(
+      p.adapter,
+      p.log,
+      new Date(),
+      p.janelaHoras
+    );
+    ultimo = r;
+
+    // Silencio quando nao ha nada: a varredura periodica roda o dia
+    // inteiro, e uma linha de log a cada cinco minutos dizendo "nada
+    // novo" afogaria as linhas que importam.
+    if (r.lidas > 0) {
+      p.log.info(
+        { ...r, desde: r.desde.toISOString(), origem: p.origem },
+        r.novas > 0
+          ? 'Varredura recuperou mensagens que o worker nao tinha visto'
+          : 'Varredura concluida — nada havia se perdido'
+      );
+    }
+
+    return r;
+  } catch (err) {
+    p.log.error({ err, origem: p.origem }, 'Falha na varredura de mensagens perdidas');
+    return { pulada: true, motivo: err instanceof Error ? err.message : String(err) };
+  } finally {
+    emAndamento = false;
+  }
+}
+
+/**
+ * Liga o relogio.
+ *
+ * Devolve a funcao que desliga — o worker a chama no encerramento, para
+ * o processo nao ficar preso a um timer.
+ */
+export function iniciarVarreduraPeriodica(p: {
+  adapter: WhatsAppAdapter;
+  log: Logger;
+  intervaloMinutos: number;
+  janelaHoras: number;
+}): () => void {
+  // Zero desliga. Nao e o mesmo que um intervalo enorme: quem depura
+  // quer a varredura de conexao sem o ruido da periodica.
+  if (p.intervaloMinutos <= 0) {
+    p.log.info(
+      'Varredura periodica desligada (WHATSAPP_RECONCILIATION_INTERVAL_MINUTES=0)'
+    );
+    return () => {};
+  }
+
+  const ms = p.intervaloMinutos * 60_000;
+
+  const timer = setInterval(() => {
+    // Sem `await`: o timer nao pode ficar preso a uma varredura lenta.
+    // O `emAndamento` ja impede a sobreposicao.
+    void varrerAgora({
+      adapter: p.adapter,
+      log: p.log,
+      janelaHoras: p.janelaHoras,
+      origem: 'periodica',
+    });
+  }, ms);
+
+  // Sem isto o processo nao encerraria sozinho enquanto o timer
+  // estivesse armado.
+  timer.unref?.();
+
+  p.log.info(
+    { intervaloMinutos: p.intervaloMinutos, janelaHoras: p.janelaHoras },
+    'Varredura periodica do WhatsApp ligada'
+  );
+
+  return () => clearInterval(timer);
+}

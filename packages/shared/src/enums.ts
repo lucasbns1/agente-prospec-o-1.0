@@ -187,6 +187,15 @@ export const QUEUES = {
   WEBSITE_CHECK: 'website_check',
   IMPORT_CSV: 'import_csv',
   CLEANUP_IMPORT: 'cleanup_import',
+  /**
+   * Pedido de varredura do WhatsApp vindo da API.
+   *
+   * Fila propria porque o payload nao tem lead nem campanha — e um
+   * pedido sobre o CANAL, e nao sobre um lead. Empurra-lo para
+   * `advance_campaign` faria o consumidor de la ter que distinguir dois
+   * formatos de job pelo formato do objeto.
+   */
+  RECONCILE_WHATSAPP: 'reconcile_whatsapp',
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 

@@ -42,12 +42,24 @@ import type { Logger } from 'pino';
 import { processarMensagemRecebida } from './inbound.js';
 
 /**
- * Ate quando olhar para tras quando nao ha nenhuma mensagem no banco.
+ * Ate quando olhar para tras quando nao ha marca melhor.
  *
- * Serve so para a primeira execucao. Nao adianta ser maior: mensagens
- * de antes de o sistema existir nao sao resposta a campanha nenhuma.
+ * ============================================================
+ * ERA UMA CONSTANTE, E ELA VIRAVA UM TETO
+ * ============================================================
+ * Com 24h fixo, quem descobria na segunda que o worker caiu na sexta
+ * perdia as respostas em definitivo — a varredura simplesmente nao
+ * olhava tao para tras.
+ *
+ * Agora quem manda e `WHATSAPP_RECONCILIATION_WINDOW_HOURS` (padrao
+ * 72h, um fim de semana inteiro). Este valor continua aqui como piso
+ * para quem chama sem configuracao — os testes, tipicamente.
+ *
+ * Nao adianta subir muito: mensagens de antes de o sistema existir nao
+ * sao resposta a campanha nenhuma, e a marca do reset de fabrica vence
+ * este valor de qualquer forma.
  */
-const JANELA_INICIAL_HORAS = 24;
+const JANELA_PADRAO_HORAS = 24;
 
 /**
  * Folga aplicada para tras a partir da ultima mensagem conhecida.
@@ -108,7 +120,24 @@ export interface ResultadoRecuperacao {
   novas: number;
   jaConhecidas: number;
   desde: Date;
+  /** Quando a varredura terminou. Vira o carimbo de sincronizacao. */
+  em: Date;
+  /** Quantas eram suas, e antigas o bastante para nao pausar nada. */
+  manuaisHistoricas: number;
 }
+
+/**
+ * Onde fica o carimbo da ultima varredura bem-sucedida.
+ *
+ * E ele que alimenta o "WhatsApp sincronizado ha X minutos" da tela. Sem
+ * um carimbo, uma varredura que parou de rodar e indistinguivel de uma
+ * que roda e nao acha nada — e as duas dao a mesma tela: zero mensagens
+ * novas.
+ */
+export const CHAVE_ULTIMA_VARREDURA = 'canal.ultima_varredura';
+
+/** Quantas mensagens NOVAS a ultima varredura trouxe. */
+export const CHAVE_RECUPERADAS_NA_ULTIMA = 'canal.ultima_varredura_novas';
 
 /**
  * De quando comecar a varredura.
@@ -117,7 +146,10 @@ export interface ResultadoRecuperacao {
  * Usar a ultima ENVIADA seria errado: se o worker ficou dias fora, a
  * ultima coisa que ele fez foi enviar, e as respostas vieram depois.
  */
-export async function inicioDaVarredura(agora: Date = new Date()): Promise<Date> {
+export async function inicioDaVarredura(
+  agora: Date = new Date(),
+  janelaHoras: number = JANELA_PADRAO_HORAS
+): Promise<Date> {
   const ultima = await prisma.message.findFirst({
     where: { direcao: 'RECEBIDA' },
     orderBy: { recebidaEm: 'desc' },
@@ -125,14 +157,14 @@ export async function inicioDaVarredura(agora: Date = new Date()): Promise<Date>
   });
 
   const base =
-    ultima?.recebidaEm ?? new Date(agora.getTime() - JANELA_INICIAL_HORAS * 3600_000);
+    ultima?.recebidaEm ?? new Date(agora.getTime() - janelaHoras * 3600_000);
 
   const comFolga = new Date(base.getTime() - FOLGA_MINUTOS * 60_000);
 
   // Nunca antes da janela inicial: um banco com uma mensagem antiga e
   // nada depois faria a varredura reler meses de conversa a cada
   // reconexao.
-  const piso = new Date(agora.getTime() - JANELA_INICIAL_HORAS * 3600_000);
+  const piso = new Date(agora.getTime() - janelaHoras * 3600_000);
   const resultado = comFolga < piso ? piso : comFolga;
 
   // A marca do reset vence os dois. Ela e uma afirmacao explicita —
@@ -156,22 +188,50 @@ export async function inicioDaVarredura(agora: Date = new Date()): Promise<Date>
 export async function recuperarMensagensPerdidas(
   adapter: WhatsAppAdapter,
   log: Logger,
-  agora: Date = new Date()
+  agora: Date = new Date(),
+  janelaHoras: number = JANELA_PADRAO_HORAS
 ): Promise<ResultadoRecuperacao> {
-  const desde = await inicioDaVarredura(agora);
+  const desde = await inicioDaVarredura(agora, janelaHoras);
   const resultado: ResultadoRecuperacao = {
     lidas: 0,
     novas: 0,
     jaConhecidas: 0,
     desde,
+    em: agora,
+    manuaisHistoricas: 0,
   };
 
   const mensagens = await adapter.mensagensPerdidas(desde);
   resultado.lidas = mensagens.length;
 
+  // ============================================================
+  // O QUE E "HISTORICO", E POR QUE ISSO IMPORTA
+  // ============================================================
+  // A varredura tambem recupera mensagens SUAS, digitadas no celular.
+  // No caminho ao vivo, uma mensagem sua PAUSA a automacao daquele lead
+  // — voce entrou na conversa, o robo sai.
+  //
+  // Aplicar isso a uma mensagem de tres dias atras seria absurdo:
+  // pausaria hoje uma conversa por causa de algo que ja aconteceu, e o
+  // lead ficaria travado esperando uma decisao que voce tomou na
+  // sexta-feira.
+  //
+  // O corte e a mesma FOLGA que a janela usa: mais nova que isso ainda
+  // e "efetivamente agora" (worker reiniciando), e se comporta como ao
+  // vivo. Mais velha e passado, e so entra no historico.
+  const corteDoAoVivo = new Date(agora.getTime() - FOLGA_MINUTOS * 60_000);
+
   for (const m of mensagens) {
     try {
-      const r = await processarMensagemRecebida(m);
+      const quando = m.recebidaEm ?? agora;
+      const historica = m.deMim === true && quando < corteDoAoVivo;
+      if (historica) resultado.manuaisHistoricas += 1;
+
+      // MESMO pipeline das mensagens ao vivo. Nao ha um segundo caminho
+      // para mensagem recuperada — a idempotencia por
+      // `provider_message_id` e o que torna o replay seguro, e ela so
+      // vale se for o mesmo processamento.
+      const r = await processarMensagemRecebida({ ...m, historica });
       if (r.processada && r.messageId) resultado.novas += 1;
       else resultado.jaConhecidas += 1;
     } catch (err) {
@@ -183,6 +243,27 @@ export async function recuperarMensagensPerdidas(
       );
     }
   }
+
+  // O carimbo so e gravado no fim, e so quando chegou aqui: uma
+  // varredura que estourou no meio nao pode dizer "sincronizado agora".
+  await prisma.setting.upsert({
+    where: { chave: CHAVE_ULTIMA_VARREDURA },
+    update: { valor: agora.toISOString() },
+    create: {
+      chave: CHAVE_ULTIMA_VARREDURA,
+      valor: agora.toISOString(),
+      descricao: 'Quando a ultima varredura do WhatsApp terminou bem',
+    },
+  });
+  await prisma.setting.upsert({
+    where: { chave: CHAVE_RECUPERADAS_NA_ULTIMA },
+    update: { valor: resultado.novas },
+    create: {
+      chave: CHAVE_RECUPERADAS_NA_ULTIMA,
+      valor: resultado.novas,
+      descricao: 'Mensagens novas trazidas pela ultima varredura',
+    },
+  });
 
   return resultado;
 }

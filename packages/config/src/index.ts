@@ -54,6 +54,53 @@ const envSchema = z.object({
     .default('info'),
 
   // ---------------------------------------------------------------------------
+  // RECONCILIACAO COM O WHATSAPP
+  // ---------------------------------------------------------------------------
+  //
+  // O evento `message` do WhatsApp so existe AO VIVO. Worker fora do ar
+  // no instante da resposta = mensagem que o sistema nunca soube que
+  // existiu. A varredura le as conversas e recupera o que se perdeu.
+  //
+  // Ate agora ela rodava UMA vez, ao conectar. Estas duas variaveis
+  // existem porque essa escolha se mostrou errada em uso real: quem
+  // descobre na segunda que o worker caiu na sexta perdia tudo.
+
+  /**
+   * De quanto em quanto tempo a varredura roda.
+   *
+   * 5 minutos e barato: a varredura descarta as conversas paradas pelo
+   * `timestamp` do chat antes de buscar mensagem nenhuma, entao numa
+   * base parada ela custa quase nada.
+   *
+   * Zero DESLIGA a varredura periodica — a que roda ao conectar
+   * continua. Util para quem esta depurando e nao quer o ruido.
+   */
+  WHATSAPP_RECONCILIATION_INTERVAL_MINUTES: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(1440)
+    .default(5),
+
+  /**
+   * Ate quando olhar para tras quando nao ha marca melhor.
+   *
+   * Era 24h fixo, e virava um TETO: quem descobria na segunda que o
+   * worker caiu na sexta perdia as respostas em definitivo. 72h cobre um
+   * fim de semana inteiro.
+   *
+   * Nao adianta subir muito: mensagens de antes de o sistema existir nao
+   * sao resposta a campanha nenhuma, e a marca do reset de fabrica vence
+   * este valor de qualquer forma.
+   */
+  WHATSAPP_RECONCILIATION_WINDOW_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(720)
+    .default(72),
+
+  // ---------------------------------------------------------------------------
   // GEMINI (Fase 9)
   // ---------------------------------------------------------------------------
   //
@@ -97,9 +144,22 @@ const envSchema = z.object({
   /** Passou disto, o motor deterministico assume. */
   GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(20_000),
 
-  /** Teto de decisoes encadeadas numa execucao. Trava contra laco infinito. */
-  GEMINI_MAX_STEPS: z.coerce.number().int().min(1).max(10).default(3),
 });
+
+// GEMINI_MAX_STEPS FOI REMOVIDA, e vale dizer por que.
+//
+// Ela prometia "teto de decisoes encadeadas numa execucao — trava contra
+// laco infinito", e era lida por exatamente nenhum arquivo. Mudar o
+// valor no .env nao fazia nada.
+//
+// Nao ha o que ligar: o orquestrador faz UMA chamada ao modelo por
+// gatilho, sem encadeamento. As cadeias que existem sao entre gatilhos
+// (SEND_STEP -> envio -> ETAPA_CONCLUIDA -> orquestrador), e elas
+// terminam sozinhas pela guarda — `ETAPA_JA_ENVIADA` barra o repetido e
+// `SEQUENCIA_TERMINOU` barra o fim da fila.
+//
+// Configuracao morta e pior do que configuracao ausente: ela faz alguem
+// mexer num valor achando que esta protegido por ele.
 
 export type Env = z.infer<typeof envSchema>;
 

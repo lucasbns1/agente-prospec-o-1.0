@@ -24,7 +24,11 @@ import { criarAnalisador } from '@prospector/integrations';
 import { configurarIA } from './services/gatilhos-ia.js';
 import { iniciarReconciliacao } from './services/reconciliacao.js';
 import { processarConfirmacaoEntrega } from './services/inbound.js';
-import { recuperarMensagensPerdidas } from './services/recuperar-perdidas.js';
+import {
+  iniciarVarreduraPeriodica,
+  varrerAgora,
+} from './services/varredura-periodica.js';
+import { criarWorkerReconciliacaoWhatsApp } from './workers/reconciliacao-whatsapp.js';
 import { fecharPublicador } from './redis.js';
 import { publicarEvento } from './events.js';
 import { publicarEstadoCanal, publicarQr, limparQr } from './estado-canal.js';
@@ -246,6 +250,8 @@ async function main(): Promise<void> {
   // segundos, e segurar a inicializacao atrasaria as filas e o
   // despachante por causa de um trabalho de recuperacao.
   let jaVarreu = false;
+  /** Desliga o timer da varredura. Chamado no encerramento. */
+  let pararVarredura: (() => void) | null = null;
   adapter.onStatusChange((s) => {
     if (s.status !== 'CONECTADO' || jaVarreu) return;
     // Uma vez por processo: o status oscila em reconexoes curtas, e
@@ -266,15 +272,26 @@ async function main(): Promise<void> {
         // o que ficou para tras, nao o que esta chegando agora.
         await new Promise((r) => setTimeout(r, 10_000));
 
-        const r = await recuperarMensagensPerdidas(adapter, log);
-        if (r.lidas > 0) {
-          log.info(
-            { ...r, desde: r.desde.toISOString() },
-            r.novas > 0
-              ? 'Varredura recuperou respostas que chegaram com o worker fora do ar'
-              : 'Varredura concluida — nenhuma resposta havia se perdido'
-          );
-        }
+        await varrerAgora({
+          adapter,
+          log,
+          janelaHoras: env.WHATSAPP_RECONCILIATION_WINDOW_HOURS,
+          origem: 'conexao',
+        });
+
+        // ============================================================
+        // E A PARTIR DAQUI ELA SE REPETE
+        // ============================================================
+        // Rodar uma vez so era o buraco: worker que cai na sexta e volta
+        // na segunda perdia o fim de semana inteiro. O timer sobe depois
+        // da primeira varredura, e nao antes, para as duas nao
+        // disputarem a mesma pagina do Chromium que acabou de carregar.
+        pararVarredura = iniciarVarreduraPeriodica({
+          adapter,
+          log,
+          intervaloMinutos: env.WHATSAPP_RECONCILIATION_INTERVAL_MINUTES,
+          janelaHoras: env.WHATSAPP_RECONCILIATION_WINDOW_HOURS,
+        });
       } catch (err) {
         // Recuperacao nao e caminho critico: falhar aqui nao pode
         // impedir o worker de atender o que vier ao vivo.
@@ -309,6 +326,10 @@ async function main(): Promise<void> {
     // Consome os pedidos que a API enfileira quando voce libera uma
     // intervencao. Sem ele, o gatilho OPERADOR_LIBEROU existia so no tipo.
     criarWorkerOrquestracao(log),
+    // Consome os pedidos de "buscar o que faltou" que a API enfileira.
+    // A sessao do WhatsApp mora aqui, entao a varredura tem que rodar
+    // aqui — a API so pede.
+    criarWorkerReconciliacaoWhatsApp(adapter, log),
   ];
 
   for (const w of workers) {
@@ -344,6 +365,7 @@ async function main(): Promise<void> {
       // varredura criaria jobs que ninguem vai consumir.
       pararDespachante();
       pararReconciliacao();
+      pararVarredura?.();
       clearInterval(batimento);
       // Fecha os workers primeiro: eles terminam o job em andamento antes
       // de parar, para nao deixar trabalho pela metade.

@@ -11,6 +11,7 @@ import { rotasAuth } from './routes/auth.js';
 import { rotasEvents } from './routes/events.js';
 import { rotasDashboard } from './routes/dashboard.js';
 import { rotasSemanas } from './routes/semanas.js';
+import { rotasSincronizacao } from './routes/sincronizacao.js';
 import { rotasSettings } from './routes/settings.js';
 import { rotasWhatsApp } from './routes/whatsapp.js';
 import { rotasLeads } from './routes/leads.js';
@@ -66,6 +67,7 @@ export async function criarApp(envParcial?: Partial<Env>): Promise<{
   await app.register(rotasEvents);
   await app.register(rotasDashboard);
   await app.register(rotasSemanas);
+  await app.register(rotasSincronizacao);
   await app.register(rotasSettings);
   await app.register(rotasWhatsApp);
   await app.register(rotasLeads);

@@ -29,7 +29,26 @@ export type GatilhoCadencia =
   /** Voce liberou uma etapa que estava parada esperando. */
   | 'OPERADOR_LIBEROU'
   /** Um envio real falhou e alguem precisa decidir o que fazer. */
-  | 'ENVIO_FALHOU';
+  | 'ENVIO_FALHOU'
+  /**
+   * VOCE falou com o lead pelo seu WhatsApp.
+   *
+   * ============================================================
+   * O QUE ELE PEDE, E O QUE ELE NAO PEDE
+   * ============================================================
+   * Ele pede uma RELEITURA do contexto: a conversa mudou, e a IA nao
+   * sabia. Ate agora a sua mensagem entrava no retrato que ela le, mas
+   * nao acordava ninguem — se voce respondia e o lead nunca mais
+   * escrevia, nenhuma analise acontecia sobre aquela conversa.
+   *
+   * Ele NAO pede envio. A sequencia daquele lead acabou de ser pausada
+   * com `aguardandoLiberacao`, e essa e uma barreira que a guarda nao
+   * deixa atravessar — a propria BARREIRA 3 de `validarDecisao` recusa
+   * qualquer acao de envio enquanto ela estiver levantada.
+   *
+   * Ou seja: a IA le, opina e registra. Quem destrava e voce.
+   */
+  | 'OPERADOR_FALOU';
 
 /** Uma etapa da sequencia, como configurada na campanha. */
 export interface EtapaContexto {

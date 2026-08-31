@@ -335,6 +335,81 @@ async function gravarDecisao(dados: {
   }
 }
 
+/**
+ * A leitura da IA, gravada NA PROPRIA MENSAGEM.
+ *
+ * ============================================================
+ * POR QUE `ai_decisions` NAO BASTAVA
+ * ============================================================
+ * As colunas `messages.ai_intent`, `ai_confidence`, `ai_motivo` e
+ * `ai_divergiu` existiam no schema desde a Fase 9, com comentarios
+ * explicando que serviam para comparar modelo e dicionario — e nada
+ * escrevia nelas.
+ *
+ * O efeito era invisivel e caro: a IA podia entender "boa noite sim"
+ * como aceite e avancar a etapa, e toda tela continuava mostrando aquele
+ * lead pela leitura de quem nao entendeu. A opiniao do modelo existia
+ * so em `ai_decisions`, que nenhuma tela consulta.
+ *
+ * `ai_decisions` continua igual: ela e a trilha de DECISAO ("o que o
+ * sistema fez, e por que"). Isto aqui e a LEITURA ("o que esta mensagem
+ * queria dizer"), e ela pertence a mensagem.
+ *
+ * ============================================================
+ * SO NO GATILHO EM QUE ISSO SIGNIFICA ALGUMA COISA
+ * ============================================================
+ * `MENSAGEM_RECEBIDA` e o unico gatilho em que a analise e SOBRE uma
+ * resposta. Num ACK ou numa falha de envio, a IA opina sobre o estado da
+ * cadencia — e carimbar essa opiniao na ultima resposta do lead diria
+ * que ele falou algo que ele nao falou.
+ *
+ * ============================================================
+ * ELA NAO DECIDE NADA
+ * ============================================================
+ * Quatro campos de leitura, ao lado da mensagem. Nao toca em
+ * `categoria` (que e do dicionario e continua sendo a palavra final do
+ * motor), nem em status, nem em etapa, nem em fila.
+ */
+async function gravarLeituraNaMensagem(dados: {
+  ctx: ContextoCadencia;
+  decisaoIa: DecisaoIA | null;
+  divergiu: boolean;
+  modelo: string | null;
+  latenciaMs: number | null;
+  status: 'OK' | 'FALHOU';
+}): Promise<void> {
+  if (dados.ctx.gatilho !== 'MENSAGEM_RECEBIDA') return;
+  if (!dados.decisaoIa) return;
+
+  try {
+    // A ultima resposta do lead e a que provocou esta analise. O
+    // contexto nao carrega ids de mensagem de proposito — o prompt nao
+    // precisa deles — entao a busca acontece aqui.
+    const alvo = await prisma.message.findFirst({
+      where: { leadId: dados.ctx.lead.id, direcao: 'RECEBIDA' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!alvo) return;
+
+    await prisma.message.update({
+      where: { id: alvo.id },
+      data: {
+        aiIntent: dados.decisaoIa.intent,
+        aiConfidence: dados.decisaoIa.confianca,
+        aiMotivo: dados.decisaoIa.motivo,
+        aiDivergiu: dados.divergiu,
+        aiModelo: dados.modelo,
+        aiLatenciaMs: dados.latenciaMs,
+        aiStatus: dados.status,
+      },
+    });
+  } catch (err) {
+    // Mesma regra da trilha: observabilidade nao derruba cadencia.
+    if (!(err instanceof Prisma.PrismaClientKnownRequestError)) throw err;
+  }
+}
+
 // -----------------------------------------------------------------------------
 // O CICLO
 // -----------------------------------------------------------------------------
@@ -530,6 +605,17 @@ export async function orquestrarCadencia(
       modelo: analise.modelo,
       latenciaMs: analise.latenciaMs,
     });
+    // Em sombra a IA nao manda, mas a LEITURA dela vale igual — e e
+    // exatamente aqui que ela mais serve: `ai_divergiu` responde se
+    // ligar a IA de verdade valeria a pena.
+    await gravarLeituraNaMensagem({
+      ctx,
+      decisaoIa: analise.decisao,
+      divergiu,
+      modelo: analise.modelo,
+      latenciaMs: analise.latenciaMs,
+      status: 'OK',
+    });
 
     return {
       modo,
@@ -573,6 +659,14 @@ export async function orquestrarCadencia(
     erro: null,
     modelo: analise.modelo,
     latenciaMs: analise.latenciaMs,
+  });
+  await gravarLeituraNaMensagem({
+    ctx,
+    decisaoIa: analise.decisao,
+    divergiu,
+    modelo: analise.modelo,
+    latenciaMs: analise.latenciaMs,
+    status: 'OK',
   });
 
   return {

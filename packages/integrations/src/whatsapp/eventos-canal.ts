@@ -42,6 +42,27 @@ export interface MensagemEntrada {
   tipo: string;
   /** true para midia — o texto pode estar vazio ou ser so a legenda. */
   temMidia: boolean;
+  /**
+   * A mensagem veio da VARREDURA e ja e passado.
+   *
+   * ============================================================
+   * POR QUE ISTO EXISTE
+   * ============================================================
+   * A varredura recupera tambem mensagens SUAS, digitadas no celular.
+   * Ao vivo, uma mensagem sua PAUSA a automacao daquele lead — voce
+   * entrou na conversa, o robo sai.
+   *
+   * Aplicar isso a uma mensagem de tres dias atras pausaria HOJE uma
+   * conversa por causa de algo que ja aconteceu, e o lead ficaria
+   * travado esperando uma decisao que voce tomou na sexta-feira.
+   *
+   * Com esta marca, a mensagem entra no historico e no contexto da IA —
+   * que e o valor dela — sem mexer no presente.
+   *
+   * O caminho ao vivo NUNCA passa isto: quem marca e so a varredura, e
+   * so para o que e mais velho que a folga.
+   */
+  historica?: boolean;
 }
 
 export interface EventoCanal {
