@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Flame, Inbox, TriangleAlert, Rocket, MessageSquareOff, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import { Flame, Inbox, TriangleAlert, Rocket, MessageSquareOff, ChevronDown, ChevronRight, Check, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { get, post, del } from '@/lib/api';
 import {
@@ -342,6 +342,134 @@ function PorNicho() {
   );
 }
 
+interface EstadoSincronizacao {
+  ultimaEm: string | null;
+  minutosAtras: number | null;
+  desatualizado: boolean;
+  recuperadasNaUltima: number | null;
+}
+
+interface StatusCanalResumo {
+  status: string;
+}
+
+/**
+ * "Os números que você está vendo são de quando?"
+ *
+ * ============================================================
+ * POR QUE ISTO PRECISA APARECER
+ * ============================================================
+ * Uma varredura que parou de rodar era indistinguível de uma que roda e
+ * não acha nada: as duas produzem a mesma tela, com os mesmos números
+ * parados. Foi assim que duas respostas de um lead ficaram invisíveis
+ * por dias, com a cadência congelada esperando algo que o sistema nunca
+ * soube que existia.
+ *
+ * O dashboard não pergunta nada ao WhatsApp. A cadeia é
+ * WhatsApp → varredura → banco → tela, e esta faixa relata o elo do
+ * meio: quando a varredura rodou pela última vez, e o que ela trouxe.
+ *
+ * ============================================================
+ * DOIS SINAIS DIFERENTES, DE PROPÓSITO
+ * ============================================================
+ * O canal pode estar CONECTADO e a varredura parada (worker vivo,
+ * relógio morto), e o contrário também. Juntar os dois num semáforo só
+ * esconderia justamente o caso em que você precisa saber qual dos dois
+ * quebrou.
+ *
+ * Ela é discreta quando está tudo bem — uma linha cinza. Um aviso que
+ * grita todo dia vira um aviso que se aprende a ignorar.
+ */
+function FaixaSincronizacao() {
+  const cliente = useQueryClient();
+
+  const { data: sinc } = useQuery({
+    queryKey: ['sincronizacao'],
+    queryFn: () => get<EstadoSincronizacao>('/api/sincronizacao'),
+    // O mesmo passo do indicador do canal na barra de cima: é uma
+    // leitura de duas linhas de `settings`, não custa nada.
+    refetchInterval: 30_000,
+  });
+
+  const { data: canal } = useQuery({
+    queryKey: ['canal-status'],
+    queryFn: () => get<StatusCanalResumo>('/api/canal/status'),
+    refetchInterval: 30_000,
+  });
+
+  const buscar = useMutation({
+    mutationFn: () => post('/api/sincronizacao/buscar'),
+    onSuccess: () => {
+      // A varredura é assíncrona: quem responde por ela é o worker. Não
+      // dá para reconsultar na hora e esperar um número novo — a marca
+      // no banco só muda quando ela termina. O passo de 30s pega.
+      void cliente.invalidateQueries({ queryKey: ['sincronizacao'] });
+    },
+  });
+
+  if (!sinc) return null;
+
+  const canalFora = canal !== undefined && canal.status !== 'CONECTADO';
+  const alarme = sinc.desatualizado || canalFora;
+
+  const quando =
+    sinc.minutosAtras === null
+      ? 'ainda não rodou nenhuma vez'
+      : sinc.minutosAtras < 1
+        ? 'agora há pouco'
+        : `há ${formatarNumero(sinc.minutosAtras)} min`;
+
+  return (
+    <div
+      className={
+        'flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-xs ' +
+        (alarme
+          ? 'border-[var(--color-alerta)] bg-[var(--color-alerta-bg)] text-[var(--color-alerta)]'
+          : 'border-[var(--color-borda)] bg-white text-[var(--color-texto-suave)]')
+      }
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="flex items-center gap-1.5">
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          <strong className="font-semibold">
+            WhatsApp sincronizado {quando}
+          </strong>
+        </span>
+
+        {sinc.recuperadasNaUltima !== null && sinc.recuperadasNaUltima > 0 && (
+          <span title="Mensagens que a última varredura encontrou e o sistema ainda não tinha.">
+            {formatarNumero(sinc.recuperadasNaUltima)} mensagem(ns) recuperada(s)
+            na última busca
+          </span>
+        )}
+
+        {canalFora && (
+          <span className="font-medium">
+            · canal {canal.status.toLowerCase()} — enquanto ele não voltar,
+            nenhuma varredura acha nada
+          </span>
+        )}
+
+        {sinc.desatualizado && !canalFora && (
+          <span className="font-medium">
+            · estes números podem estar velhos
+          </span>
+        )}
+      </div>
+
+      <Button
+        size="sm"
+        variant="secundario"
+        onClick={() => buscar.mutate()}
+        disabled={buscar.isPending}
+        title="Pede ao worker uma varredura agora, sem esperar a próxima do relógio. A varredura roda lá, não aqui — o resultado aparece nesta faixa quando ela terminar."
+      >
+        {buscar.isPending ? 'Pedindo…' : 'Buscar agora'}
+      </Button>
+    </div>
+  );
+}
+
 /** Cor do motivo. Os quatro primeiros são os que doem. */
 function varianteMotivo(motivo: string): 'alerta' | 'quente' | 'morno' | 'info' {
   if (motivo === 'INTERVENCAO_NECESSARIA') return 'alerta';
@@ -441,6 +569,11 @@ export function Dashboard() {
           Visão geral da sua prospecção.
         </p>
       </div>
+
+      {/* Antes de qualquer número: de quando eles são. Um painel que não
+          diz isso deixa "nada aconteceu" e "parei de olhar" com a mesma
+          cara. */}
+      <FaixaSincronizacao />
 
       {/* ---- PRECISA DA SUA ATENÇÃO (vem antes dos números de propósito) ---- */}
       <Card>
