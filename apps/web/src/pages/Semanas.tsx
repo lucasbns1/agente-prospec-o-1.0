@@ -334,6 +334,10 @@ function BotaoReconciliarDia({
       void cliente.invalidateQueries({ queryKey: ['ficha', chave] });
       void cliente.invalidateQueries({ queryKey: ['dia', chave] });
       void cliente.invalidateQueries({ queryKey: ['sincronizacao'] });
+      // Os números do dashboard saem das mesmas mensagens: reconciliar
+      // um dia pode mudar quantos responderam, quantos esquentaram e
+      // quantos ainda esperam você.
+      void cliente.invalidateQueries({ queryKey: ['dashboard'] });
       aoTerminar?.();
     },
   });

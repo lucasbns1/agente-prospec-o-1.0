@@ -30,7 +30,11 @@ const INVALIDACOES: Partial<Record<EventType, string[][]>> = {
   'tarefa.concluida': [['dashboard'], ['tarefas']],
   'notificacao.criada': [['notificacoes'], ['dashboard']],
   'importacao.concluida': [['dashboard'], ['leads'], ['importacoes']],
-  'whatsapp.status': [['whatsapp-status'], ['dashboard']],
+  'whatsapp.status': [['whatsapp-status'], ['dashboard'], ['canal-status']],
+  // A varredura terminou. A faixa do topo do dashboard se atualiza
+  // sozinha em vez de esperar a próxima sondagem — sem isto, "buscar o
+  // que faltou" parecia não ter feito nada por meio minuto.
+  'sincronizacao.atualizada': [['sincronizacao'], ['canal-status']],
   'dashboard.atualizar': [['dashboard']],
 };
 

@@ -584,8 +584,9 @@ async function registrarMensagemManual(p: {
     },
   });
 
+  let gravada: { id: string };
   try {
-    await prisma.message.create({
+    gravada = await prisma.message.create({
       data: {
         conversationId: conversa.id,
         leadId,
@@ -600,6 +601,7 @@ async function registrarMensagemManual(p: {
         whatsappMessageId: entrada.providerMessageId,
         enviadaEm: entrada.recebidaEm,
       },
+      select: { id: true },
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -635,6 +637,11 @@ async function registrarMensagemManual(p: {
     return {
       processada: true,
       leadId,
+      // O id vai junto: quem varre conta "quantas entraram no banco
+      // agora", e sem ele uma mensagem recem-gravada seria contada
+      // como "ja conhecida" — o relatorio da varredura mentiria
+      // justamente no numero que ela existe para dar.
+      messageId: gravada.id,
       motivo: 'Mensagem manual histórica registrada, sem efeito no presente',
     };
   }
@@ -733,7 +740,12 @@ async function registrarMensagemManual(p: {
   // mudariam na proxima vez que voce recarregasse a pagina.
   void publicarEvento('dashboard.atualizar');
 
-  return { processada: true, leadId, motivo: 'Mensagem manual registrada' };
+  return {
+    processada: true,
+    leadId,
+    messageId: gravada.id,
+    motivo: 'Mensagem manual registrada',
+  };
 }
 
 export async function processarMensagemRecebida(
@@ -975,6 +987,9 @@ export async function processarMensagemRecebida(
       leadId,
       campaignId,
       gatilho: 'MENSAGEM_RECEBIDA',
+      // ESTA mensagem, e nao "a ultima recebida". Duas respostas que
+      // chegam juntas fariam a leitura de uma cair na outra.
+      mensagemId: mensagem.id,
       // Executa de verdade: enfileira a etapa, cria a intervencao,
       // encerra por opt-out. Nao e mais observacao.
       observarApenas: false,
@@ -1032,6 +1047,7 @@ export async function processarMensagemRecebida(
       leadId,
       campaignId,
       gatilho: 'MENSAGEM_RECEBIDA',
+      mensagemId: mensagem.id,
       observarApenas: true,
     });
   }

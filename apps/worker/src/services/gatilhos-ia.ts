@@ -91,6 +91,14 @@ export async function dispararGatilho(params: {
   /** Ver `OpcoesOrquestrador.observarApenas`. */
   observarApenas?: boolean;
   agora?: Date;
+  /**
+   * A mensagem EXATA que provocou o gatilho.
+   *
+   * So faz sentido em `MENSAGEM_RECEBIDA`. Sem ela, a leitura da IA nao
+   * e gravada em mensagem nenhuma — ver `gravarLeituraNaMensagem`, que
+   * explica por que "a ultima recebida" era um palpite errado.
+   */
+  mensagemId?: string;
 }): Promise<void> {
   // Sem IA configurada nao ha o que comparar nem o que decidir: o motor
   // ja fez o trabalho no caminho normal. Sair aqui evita uma leitura de
@@ -104,6 +112,7 @@ export async function dispararGatilho(params: {
         campaignId: params.campaignId,
         gatilho: params.gatilho,
         agora: params.agora,
+        mensagemId: params.mensagemId,
       },
       {
         analisador,

@@ -34,6 +34,16 @@ export const EVENT_TYPES = [
   'importacao.progresso',
   'importacao.concluida',
   'whatsapp.status',
+  /**
+   * Uma varredura do WhatsApp terminou.
+   *
+   * Carrega o relatorio dela (`ResultadoRecuperacao` sem as datas), e e
+   * o que faz a faixa "WhatsApp sincronizado ha X min" se atualizar
+   * sozinha. Sem ele a tela so descobriria a varredura no proximo
+   * intervalo de sondagem — e "buscar o que faltou" pareceria nao ter
+   * feito nada por meio minuto.
+   */
+  'sincronizacao.atualizada',
   'dashboard.atualizar',
   'heartbeat',
 ] as const;

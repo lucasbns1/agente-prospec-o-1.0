@@ -56,6 +56,30 @@ export interface EstadoSincronizacao {
   desatualizado: boolean;
   /** Mensagens novas que a ultima varredura trouxe. */
   recuperadasNaUltima: number | null;
+  /**
+   * Quanto o Gemini discordou do dicionario, nas respostas que ele leu.
+   *
+   * ============================================================
+   * O NUMERO QUE DECIDE SE VALE LIGAR A IA
+   * ============================================================
+   * Em modo sombra a IA opina e o motor manda. `ai_divergiu` e o
+   * registro de cada vez que os dois teriam feito coisas diferentes —
+   * e a taxa disso e a unica forma honesta de responder "ligar a IA no
+   * comando mudaria alguma coisa?".
+   *
+   * Divergencia perto de zero: o dicionario ja cobre os casos, e a IA
+   * so custa dinheiro. Divergencia alta: vale olhar QUAIS casos, e ai
+   * `ai_decisions` tem o detalhe.
+   *
+   * `null` quando ainda nao ha leitura nenhuma — nao ha o que dizer, e
+   * inventar "0%" sugeriria concordancia onde nao houve comparacao.
+   */
+  divergencia: {
+    lidas: number;
+    divergentes: number;
+    /** 0 a 100, arredondado. */
+    percentual: number;
+  } | null;
 }
 
 // O ESTADO DO CANAL NAO ENTRA AQUI, de proposito.
@@ -66,7 +90,7 @@ export interface EstadoSincronizacao {
 // divergissem seria justamente a hora em que voce precisa confiar nelas.
 
 export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
-  const [marca, recuperadas] = await Promise.all([
+  const [marca, recuperadas, lidasPelaIa, divergentes] = await Promise.all([
     prisma.setting.findUnique({
       where: { chave: CHAVE_ULTIMA_VARREDURA },
       select: { valor: true },
@@ -75,7 +99,21 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
       where: { chave: CHAVE_RECUPERADAS_NA_ULTIMA },
       select: { valor: true },
     }),
+    // Duas contagens, e nao uma leitura de linhas: a tela quer uma taxa,
+    // e trazer as mensagens para conta-las aqui seria carregar a caixa
+    // inteira para saber o tamanho dela.
+    prisma.message.count({ where: { aiDivergiu: { not: null } } }),
+    prisma.message.count({ where: { aiDivergiu: true } }),
   ]);
+
+  const divergencia =
+    lidasPelaIa > 0
+      ? {
+          lidas: lidasPelaIa,
+          divergentes,
+          percentual: Math.round((divergentes / lidasPelaIa) * 100),
+        }
+      : null;
 
   const recuperadasNaUltima =
     typeof recuperadas?.valor === 'number' ? recuperadas.valor : null;
@@ -92,6 +130,7 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
       minutosAtras: null,
       desatualizado: true,
       recuperadasNaUltima,
+      divergencia,
     };
   }
 
@@ -105,5 +144,6 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
     minutosAtras,
     desatualizado: minutosAtras > MINUTOS_ATE_RECLAMAR,
     recuperadasNaUltima,
+    divergencia,
   };
 }

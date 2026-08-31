@@ -40,6 +40,7 @@ import { prisma } from '@prospector/database';
 import type { WhatsAppAdapter } from '@prospector/integrations';
 import type { Logger } from 'pino';
 import { processarMensagemRecebida } from './inbound.js';
+import { publicarEvento } from '../events.js';
 
 /**
  * Ate quando olhar para tras quando nao ha marca melhor.
@@ -115,15 +116,50 @@ async function marcaDoReset(): Promise<Date | null> {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * O relatorio de uma varredura.
+ *
+ * ============================================================
+ * POR QUE TANTOS NUMEROS, E NAO SO "N MENSAGENS"
+ * ============================================================
+ * Um total sozinho nao responde a pergunta que se faz depois de uma
+ * varredura grande: "achou o que eu esperava, ou achou outra coisa?".
+ * Sessenta mensagens lidas com sessenta ja conhecidas e uma varredura
+ * que funcionou e nao tinha nada a fazer; sessenta lidas com quarenta
+ * sem lead e um problema de cadastro. Os dois totais sao iguais.
+ *
+ * As categorias sao exclusivas de proposito, e fecham a conta:
+ *
+ *   lidas = novas + jaConhecidas + semLead + erros
+ *
+ * `manuais` e `manuaisHistoricas` cortam por outro eixo (de quem saiu a
+ * mensagem, e quao antiga ela e), entao elas NAO entram nessa soma.
+ */
 export interface ResultadoRecuperacao {
+  /** Quantas o WhatsApp devolveu na janela. */
   lidas: number;
+  /** Quantas entraram no banco agora. */
   novas: number;
+  /** Quantas ja estavam aqui — a idempotencia trabalhando. */
   jaConhecidas: number;
   desde: Date;
   /** Quando a varredura terminou. Vira o carimbo de sincronizacao. */
   em: Date;
+  /** Quantas sairam do SEU numero (manuais), de qualquer idade. */
+  manuais: number;
   /** Quantas eram suas, e antigas o bastante para nao pausar nada. */
   manuaisHistoricas: number;
+  /** Quantas vieram do lead — o complemento de `manuais`. */
+  doLead: number;
+  /**
+   * Quantas nao bateram com lead nenhum.
+   *
+   * Nao e erro: e um numero que o cadastro tem que explicar. Elas viram
+   * `unknown_contacts` e aparecem na tela de contatos desconhecidos.
+   */
+  semLead: number;
+  /** Quantas estouraram no processamento. Cada uma foi para o log. */
+  erros: number;
 }
 
 /**
@@ -198,11 +234,31 @@ export async function recuperarMensagensPerdidas(
     jaConhecidas: 0,
     desde,
     em: agora,
+    manuais: 0,
     manuaisHistoricas: 0,
+    doLead: 0,
+    semLead: 0,
+    erros: 0,
   };
 
-  const mensagens = await adapter.mensagensPerdidas(desde);
-  resultado.lidas = mensagens.length;
+  const brutas = await adapter.mensagensPerdidas(desde);
+  resultado.lidas = brutas.length;
+
+  // ============================================================
+  // ORDEM CRONOLOGICA, E NAO A ORDEM DA BIBLIOTECA
+  // ============================================================
+  // O provedor devolve conversa por conversa, e dentro de cada uma a
+  // ordem depende de como o WhatsApp pagina o historico. Reprocessar
+  // fora de ordem faz o estado do lead terminar errado: um "quanto
+  // custa?" aplicado DEPOIS de um "não tenho interesse" deixa o lead
+  // morno quando ele saiu da conversa.
+  //
+  // A cadeia inteira de efeitos (classificar, avancar etapa, cancelar
+  // fila, marcar opt-out) supoe que a mensagem anterior ja aconteceu.
+  // Ordenar aqui e o que torna essa suposicao verdadeira.
+  const mensagens = [...brutas].sort(
+    (a, b) => (a.recebidaEm?.getTime() ?? 0) - (b.recebidaEm?.getTime() ?? 0)
+  );
 
   // ============================================================
   // O QUE E "HISTORICO", E POR QUE ISSO IMPORTA
@@ -221,10 +277,18 @@ export async function recuperarMensagensPerdidas(
   // vivo. Mais velha e passado, e so entra no historico.
   const corteDoAoVivo = new Date(agora.getTime() - FOLGA_MINUTOS * 60_000);
 
+  // EM SERIE, e nao em paralelo. Nao e cautela exagerada: duas
+  // mensagens do mesmo lead processadas ao mesmo tempo disputariam o
+  // estado dele — uma avancaria a etapa que a outra acabou de cancelar.
+  // A idempotencia impede mensagem duplicada; ela nao impede dois
+  // caminhos escrevendo o mesmo lead.
   for (const m of mensagens) {
     try {
       const quando = m.recebidaEm ?? agora;
       const historica = m.deMim === true && quando < corteDoAoVivo;
+
+      if (m.deMim === true) resultado.manuais += 1;
+      else resultado.doLead += 1;
       if (historica) resultado.manuaisHistoricas += 1;
 
       // MESMO pipeline das mensagens ao vivo. Nao ha um segundo caminho
@@ -232,11 +296,14 @@ export async function recuperarMensagensPerdidas(
       // `provider_message_id` e o que torna o replay seguro, e ela so
       // vale se for o mesmo processamento.
       const r = await processarMensagemRecebida({ ...m, historica });
-      if (r.processada && r.messageId) resultado.novas += 1;
+
+      if (r.contatoDesconhecidoId) resultado.semLead += 1;
+      else if (r.processada && r.messageId) resultado.novas += 1;
       else resultado.jaConhecidas += 1;
     } catch (err) {
       // Uma mensagem problematica nao pode custar as outras. O erro vai
       // para o log com o id, para dar para investigar depois.
+      resultado.erros += 1;
       log.error(
         { err, providerMessageId: m.providerMessageId },
         'Falha ao reprocessar mensagem da varredura'
@@ -264,6 +331,37 @@ export async function recuperarMensagensPerdidas(
       descricao: 'Mensagens novas trazidas pela ultima varredura',
     },
   });
+
+  // ============================================================
+  // A TELA FICA SABENDO NA HORA
+  // ============================================================
+  // Sem isto, a faixa "WhatsApp sincronizado ha X min" so descobriria a
+  // varredura na proxima sondagem — e apertar "buscar o que faltou"
+  // pareceria nao ter feito nada por meio minuto.
+  //
+  // Ele sai SEMPRE, inclusive numa varredura que nao achou nada: e
+  // justamente ai que ele mais serve, porque e o que diferencia
+  // "rodou e nao havia nada" de "parou de rodar".
+  //
+  // As mensagens que ENTRARAM ja publicaram os eventos delas la no
+  // inbound, pelo mesmo caminho das mensagens ao vivo. Este aqui fala
+  // pela VARREDURA, nao pelas mensagens.
+  void publicarEvento('sincronizacao.atualizada', {
+    em: agora.toISOString(),
+    lidas: resultado.lidas,
+    novas: resultado.novas,
+    jaConhecidas: resultado.jaConhecidas,
+    manuais: resultado.manuais,
+    manuaisHistoricas: resultado.manuaisHistoricas,
+    doLead: resultado.doLead,
+    semLead: resultado.semLead,
+    erros: resultado.erros,
+  });
+
+  // Os cartoes do dashboard so mudam quando algo mudou de fato. Um aviso
+  // a cada cinco minutos dizendo "nada novo" faria a tela recarregar
+  // sozinha o dia inteiro sem motivo.
+  if (resultado.novas > 0) void publicarEvento('dashboard.atualizar');
 
   return resultado;
 }

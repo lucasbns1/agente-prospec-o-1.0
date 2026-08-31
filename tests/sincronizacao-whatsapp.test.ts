@@ -481,6 +481,175 @@ describe('mensagens recuperadas', () => {
 });
 
 // =============================================================================
+// O CASO REAL: 60 MENSAGENS MANUAIS DE UMA SEXTA-FEIRA
+// =============================================================================
+
+/**
+ * O cenario que motivou tudo isto.
+ *
+ * Voce passou uma sexta-feira mandando mensagem na mao pelo celular,
+ * com o worker desligado. Sessenta conversas aconteceram e o CRM nao
+ * soube de nenhuma: nem no historico, nem no contexto que a IA le, nem
+ * na ficha do dia.
+ *
+ * Na segunda, quando o worker voltasse, o comportamento ERRADO seria
+ * tao ruim quanto o silencio: pausar sessenta campanhas de uma vez, ou
+ * marcar sessenta leads como interessados porque "chegou mensagem".
+ */
+describe('as 60 mensagens manuais da sexta-feira', () => {
+  it('recupera as 60, associa aos leads certos e não mexe em nada do presente', async () => {
+    const QUANTAS = 60;
+
+    const leads = [];
+    for (let i = 0; i < QUANTAS; i += 1) leads.push(await criarLead());
+
+    // Metade tem campanha andando: é nelas que uma pausa indevida
+    // apareceria.
+    const comCampanha = [];
+    for (let i = 0; i < QUANTAS / 2; i += 1) {
+      comCampanha.push({
+        lead: leads[i]!,
+        ...(await criarCampanhaCom(leads[i]!)),
+      });
+    }
+
+    // Sexta-feira. Fora do corte do "ao vivo" por muitas horas.
+    const sexta = new Date(Date.now() - 72 * 3600_000);
+
+    const mensagens = leads.map((lead, i) =>
+      entrada(
+        lead.telefoneNormalizado!,
+        `Oi! Passando pra falar do site — mensagem ${i + 1}`,
+        new Date(sexta.getTime() + i * 60_000),
+        { deMim: true }
+      )
+    );
+
+    const ia = new AnalisadorFalso(decide({ acao: 'WAIT' }));
+    gatilhos.configurarIA({ analisador: ia, somenteAnalise: true, log });
+
+    let r;
+    try {
+      const { adapter } = adapterCom(mensagens);
+      // Janela de 120h: a sexta está a 72h, e a janela precisa alcançar.
+      r = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 120);
+
+      // NENHUMA análise foi disparada. Mensagem histórica não acorda a IA.
+      expect(ia.chamadas).toBe(0);
+    } finally {
+      gatilhos.desconfigurarIA();
+    }
+
+    // ---- O RELATÓRIO QUE A VARREDURA DEVOLVE ----
+    expect(r.lidas).toBe(QUANTAS);
+    expect(r.novas).toBe(QUANTAS);
+    expect(r.jaConhecidas).toBe(0);
+    expect(r.manuais).toBe(QUANTAS);
+    expect(r.manuaisHistoricas).toBe(QUANTAS);
+    expect(r.doLead).toBe(0);
+    expect(r.semLead).toBe(0);
+    expect(r.erros).toBe(0);
+
+    // As categorias fecham a conta.
+    expect(r.novas + r.jaConhecidas + r.semLead + r.erros).toBe(r.lidas);
+
+    // ---- CADA UMA NO BANCO, NO LEAD CERTO, COMO SAÍDA ----
+    for (let i = 0; i < QUANTAS; i += 1) {
+      const gravada = await prisma.message.findUnique({
+        where: { whatsappMessageId: mensagens[i]!.providerMessageId },
+        select: { leadId: true, direcao: true, campaignStepId: true, texto: true },
+      });
+      expect(gravada, `mensagem ${i + 1} não foi gravada`).not.toBeNull();
+      expect(gravada!.leadId).toBe(leads[i]!.id);
+      // OUTBOUND: saiu de você. Não é resposta do lead.
+      expect(gravada!.direcao).toBe('ENVIADA');
+      // MANUAL: sem etapa de campanha — não veio de uma sequência.
+      expect(gravada!.campaignStepId).toBeNull();
+    }
+
+    // ---- NENHUMA VIROU "O LEAD RESPONDEU" ----
+    const recebidas = await prisma.message.count({ where: { direcao: 'RECEBIDA' } });
+    expect(recebidas).toBe(0);
+
+    const quentes = await prisma.lead.count({ where: { temperatura: 'QUENTE' } });
+    expect(quentes).toBe(0);
+
+    // ---- NENHUMA CAMPANHA FOI PAUSADA ----
+    const pausadas = await prisma.leadCampaign.count({
+      where: { OR: [{ status: 'PAUSADO' }, { aguardandoLiberacao: true }] },
+    });
+    expect(pausadas).toBe(0);
+    expect(comCampanha).toHaveLength(QUANTAS / 2);
+
+    // ---- NENHUMA MENSAGEM AUTOMÁTICA NASCEU DISSO ----
+    const ordens = await prisma.outboundMessage.count();
+    expect(ordens).toBe(0);
+  }, 120_000);
+
+  it('rodar a mesma varredura duas vezes não duplica nenhuma das 60', async () => {
+    const QUANTAS = 60;
+
+    const leads = [];
+    for (let i = 0; i < QUANTAS; i += 1) leads.push(await criarLead());
+
+    const sexta = new Date(Date.now() - 72 * 3600_000);
+    const mensagens = leads.map((lead, i) =>
+      entrada(
+        lead.telefoneNormalizado!,
+        `Mensagem ${i + 1}`,
+        new Date(sexta.getTime() + i * 60_000),
+        { deMim: true }
+      )
+    );
+
+    const { adapter } = adapterCom(mensagens);
+
+    const primeira = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 120);
+    const segunda = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 120);
+
+    expect(primeira.novas).toBe(QUANTAS);
+    // A segunda passada lê as mesmas 60 e não escreve nenhuma. É a
+    // UNIQUE de `whatsapp_message_id` trabalhando, e é o que torna
+    // seguro apertar "buscar o que faltou" quantas vezes você quiser.
+    expect(segunda.novas).toBe(0);
+    expect(segunda.jaConhecidas).toBe(QUANTAS);
+
+    const total = await prisma.message.count();
+    expect(total).toBe(QUANTAS);
+  }, 120_000);
+
+  it('mensagens fora de ordem são processadas na ordem cronológica', async () => {
+    const lead = await criarLead();
+    const base = new Date(Date.now() - 72 * 3600_000);
+
+    // O provedor devolve conversa por conversa, e dentro de cada uma a
+    // ordem depende de como o WhatsApp pagina o histórico. Reprocessar
+    // fora de ordem faz o estado do lead terminar errado.
+    const primeira = entrada(lead.telefoneNormalizado!, 'primeira', base, {
+      deMim: true,
+    });
+    const segunda = entrada(
+      lead.telefoneNormalizado!,
+      'segunda',
+      new Date(base.getTime() + 60_000),
+      { deMim: true }
+    );
+
+    // Entregues ao contrário, de propósito.
+    const { adapter } = adapterCom([segunda, primeira]);
+    await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 120);
+
+    const linhas = await prisma.message.findMany({
+      where: { leadId: lead.id },
+      orderBy: { createdAt: 'asc' },
+      select: { texto: true },
+    });
+
+    expect(linhas.map((l) => l.texto)).toEqual(['primeira', 'segunda']);
+  });
+});
+
+// =============================================================================
 // 10 a 12 — A JANELA
 // =============================================================================
 
@@ -544,8 +713,18 @@ describe('a leitura da IA fica na mensagem', () => {
       decide({ intent: 'PEDIDO_PRECO', confianca: 88, motivo: 'perguntou preço' })
     );
 
+    const alvo = await prisma.message.findUnique({
+      where: { whatsappMessageId: m.providerMessageId },
+      select: { id: true },
+    });
+
     await orq.orquestrarCadencia(
-      { leadId: lead.id, campaignId: campanha.id, gatilho: 'MENSAGEM_RECEBIDA' },
+      {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        gatilho: 'MENSAGEM_RECEBIDA',
+        mensagemId: alvo!.id,
+      },
       { analisador: ia, somenteAnalise: false, log }
     );
 
@@ -563,17 +742,80 @@ describe('a leitura da IA fica na mensagem', () => {
     expect(gravada?.aiStatus).toBe('OK');
   });
 
-  it('14. a leitura vai para a ÚLTIMA recebida, não para uma antiga', async () => {
+  it('14. CONCORRÊNCIA: a decisão de A não pode ser gravada em B', async () => {
     const lead = await criarLead();
     const { campanha } = await criarCampanhaCom(lead);
 
-    const velha = entrada(
-      lead.telefoneNormalizado!,
-      'oi',
-      new Date(Date.now() - 3600_000)
+    // A chega primeiro e é a que o Gemini vai analisar.
+    const a = entrada(lead.telefoneNormalizado!, 'quanto custa?', new Date());
+    const { adapter } = adapterCom([a]);
+    await rec.recuperarMensagensPerdidas(adapter, log);
+
+    const linhaA = await prisma.message.findUnique({
+      where: { whatsappMessageId: a.providerMessageId },
+      select: { id: true },
+    });
+
+    // ============================================================
+    // A CORRIDA, ENCENADA
+    // ============================================================
+    // O analisador demora — como o Gemini de verdade demora. Enquanto
+    // ele pensa sobre A, B chega e é gravada. Quando a análise de A
+    // termina, "a última mensagem recebida" já não é A.
+    //
+    // Era exatamente aí que a versão anterior errava: ela procurava a
+    // última recebida na hora de gravar, e carimbava a leitura de A em
+    // B. Nada quebrava, nada aparecia em log — a ficha do dia só passava
+    // a mentir.
+    let bChegou: () => void = () => {};
+    const bPronta = new Promise<void>((r) => {
+      bChegou = r;
+    });
+
+    const iaLenta: AnalisadorDeCadencia = {
+      modelo: 'fake-1.0',
+      analisar: async () => {
+        await bPronta;
+        return decide({ intent: 'PEDIDO_PRECO', motivo: 'sobre a mensagem A' });
+      },
+    };
+
+    const analise = orq.orquestrarCadencia(
+      {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        gatilho: 'MENSAGEM_RECEBIDA',
+        mensagemId: linhaA!.id,
+      },
+      { analisador: iaLenta, somenteAnalise: false, log }
     );
-    const nova = entrada(lead.telefoneNormalizado!, 'quanto custa?', new Date());
-    const { adapter } = adapterCom([velha, nova]);
+
+    const b = entrada(lead.telefoneNormalizado!, 'e o prazo?', new Date());
+    const { adapter: adapterB } = adapterCom([b]);
+    await rec.recuperarMensagensPerdidas(adapterB, log);
+
+    bChegou();
+    await analise;
+
+    const gravadaA = await prisma.message.findUnique({
+      where: { whatsappMessageId: a.providerMessageId },
+    });
+    const gravadaB = await prisma.message.findUnique({
+      where: { whatsappMessageId: b.providerMessageId },
+    });
+
+    expect(gravadaA?.aiIntent).toBe('PEDIDO_PRECO');
+    expect(gravadaA?.aiMotivo).toBe('sobre a mensagem A');
+    // B não recebeu a leitura de A. Ela é analisada no gatilho dela.
+    expect(gravadaB?.aiIntent).toBeNull();
+  });
+
+  it('14b. sem o id da mensagem, nada é gravado — leitura no lugar errado é pior que nenhuma', async () => {
+    const lead = await criarLead();
+    const { campanha } = await criarCampanhaCom(lead);
+
+    const m = entrada(lead.telefoneNormalizado!, 'quanto custa?', new Date());
+    const { adapter } = adapterCom([m]);
     await rec.recuperarMensagensPerdidas(adapter, log);
 
     const ia = new AnalisadorFalso(decide({ intent: 'PEDIDO_PRECO' }));
@@ -582,15 +824,15 @@ describe('a leitura da IA fica na mensagem', () => {
       { analisador: ia, somenteAnalise: false, log }
     );
 
-    const a = await prisma.message.findUnique({
-      where: { whatsappMessageId: velha.providerMessageId },
-    });
-    const b = await prisma.message.findUnique({
-      where: { whatsappMessageId: nova.providerMessageId },
+    const gravada = await prisma.message.findUnique({
+      where: { whatsappMessageId: m.providerMessageId },
     });
 
-    expect(b?.aiIntent).toBe('PEDIDO_PRECO');
-    expect(a?.aiIntent).toBeNull();
+    // A decisão continua em `ai_decisions` — a trilha de auditoria não
+    // depende disto. O que não acontece é o palpite.
+    expect(gravada?.aiIntent).toBeNull();
+    const trilha = await prisma.aiDecision.count({ where: { leadId: lead.id } });
+    expect(trilha).toBeGreaterThan(0);
   });
 
   it('15. gatilho que não é resposta não escreve leitura em mensagem nenhuma', async () => {
@@ -741,5 +983,92 @@ describe('o estado de sincronização que o dashboard lê', () => {
     const corrompido = await sinc.estadoDaSincronizacao();
     expect(corrompido.ultimaEm).toBeNull();
     expect(corrompido.desatualizado).toBe(true);
+  });
+});
+
+// =============================================================================
+// 22 a 24 — O AVISO CHEGA NA TELA SEM F5
+// =============================================================================
+
+/**
+ * O canal SSE, de ponta a ponta pelo lado do worker.
+ *
+ * A cadeia real e worker -> Redis -> API -> navegador. O que estes
+ * testes cobrem e o primeiro elo, que e o unico que a varredura
+ * controla: se o evento nao sai daqui, nao ha o que a API entregue.
+ *
+ * NAO ha uma segunda conexao SSE: o evento novo entra no MESMO canal
+ * `prospector:eventos` que o resto do sistema ja usa.
+ */
+describe('a varredura avisa a tela por SSE', () => {
+  // `ioredis` por caminho relativo, e nao pelo nome: `tests/` nao e um
+  // workspace do pnpm, entao o nome do pacote nao resolve daqui. E a
+  // mesma razao pela qual os scripts importam por caminho.
+  let assinante: { quit: () => Promise<unknown>; on: Function; subscribe: Function };
+  let recebidos: Array<{ tipo: string; dados?: Record<string, unknown> }> = [];
+
+  beforeAll(async () => {
+    const mod: any = await import('../apps/worker/node_modules/ioredis/built/index.js');
+    const Redis = mod.default ?? mod;
+    const { opcoesRedis } = await import('../apps/worker/src/redis.js');
+    assinante = new Redis(opcoesRedis());
+    await assinante.subscribe('prospector:eventos');
+    assinante.on('message', (_canal: string, carga: string) => {
+      try {
+        recebidos.push(JSON.parse(carga));
+      } catch {
+        // Uma carga estranha no canal nao pode derrubar o teste.
+      }
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    await assinante?.quit();
+  });
+
+  beforeEach(() => {
+    recebidos = [];
+  });
+
+  it('22. toda varredura publica `sincronizacao.atualizada`, mesmo achando nada', async () => {
+    const { adapter } = adapterCom([]);
+    await rec.recuperarMensagensPerdidas(adapter, log);
+
+    await esperar(300);
+
+    const evento = recebidos.find((e) => e.tipo === 'sincronizacao.atualizada');
+
+    // "Rodou e não havia nada" precisa chegar na tela tanto quanto
+    // "achei três": é a diferença entre as duas que a faixa mostra, e
+    // uma varredura silenciosa é indistinguível de uma que parou.
+    expect(evento).toBeDefined();
+    expect(evento!.dados?.lidas).toBe(0);
+    expect(evento!.dados?.novas).toBe(0);
+  });
+
+  it('23. quando a varredura traz mensagens, o dashboard também é avisado', async () => {
+    const lead = await criarLead();
+    const m = entrada(lead.telefoneNormalizado!, 'respondi', new Date());
+    const { adapter } = adapterCom([m]);
+
+    await rec.recuperarMensagensPerdidas(adapter, log);
+    await esperar(300);
+
+    const sincronizacao = recebidos.find(
+      (e) => e.tipo === 'sincronizacao.atualizada'
+    );
+    expect(sincronizacao!.dados?.novas).toBe(1);
+
+    expect(recebidos.some((e) => e.tipo === 'dashboard.atualizar')).toBe(true);
+  });
+
+  it('24. varredura vazia NÃO manda o dashboard recarregar à toa', async () => {
+    const { adapter } = adapterCom([]);
+    await rec.recuperarMensagensPerdidas(adapter, log);
+    await esperar(300);
+
+    // Um aviso a cada cinco minutos dizendo "nada novo" faria a tela
+    // recarregar sozinha o dia inteiro sem motivo nenhum.
+    expect(recebidos.some((e) => e.tipo === 'dashboard.atualizar')).toBe(false);
   });
 });

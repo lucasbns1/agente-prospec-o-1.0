@@ -347,6 +347,7 @@ interface EstadoSincronizacao {
   minutosAtras: number | null;
   desatualizado: boolean;
   recuperadasNaUltima: number | null;
+  divergencia: { lidas: number; divergentes: number; percentual: number } | null;
 }
 
 interface StatusCanalResumo {
@@ -452,7 +453,24 @@ function FaixaSincronizacao() {
 
         {sinc.desatualizado && !canalFora && (
           <span className="font-medium">
-            · estes números podem estar velhos
+            · ATENÇÃO: estes números podem estar velhos
+          </span>
+        )}
+
+        {/* A taxa em que o Gemini discordou do dicionário. É o número
+            que responde "ligar a IA no comando mudaria alguma coisa?" —
+            e ele só aparece quando existe comparação para mostrar. */}
+        {sinc.divergencia && (
+          <span
+            title={
+              `O Gemini leu ${sinc.divergencia.lidas} resposta(s) e teria agido ` +
+              `diferente do dicionário em ${sinc.divergencia.divergentes}. ` +
+              'Em modo sombra quem manda é o dicionário; este número diz se ' +
+              'valeria a pena mudar isso.'
+            }
+          >
+            · IA diverge do dicionário em {sinc.divergencia.percentual}% de{' '}
+            {formatarNumero(sinc.divergencia.lidas)} leitura(s)
           </span>
         )}
       </div>
@@ -464,7 +482,7 @@ function FaixaSincronizacao() {
         disabled={buscar.isPending}
         title="Pede ao worker uma varredura agora, sem esperar a próxima do relógio. A varredura roda lá, não aqui — o resultado aparece nesta faixa quando ela terminar."
       >
-        {buscar.isPending ? 'Pedindo…' : 'Buscar agora'}
+        {buscar.isPending ? 'Pedindo…' : 'Buscar o que faltou'}
       </Button>
     </div>
   );

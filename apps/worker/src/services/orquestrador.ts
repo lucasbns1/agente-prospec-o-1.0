@@ -372,6 +372,30 @@ async function gravarDecisao(dados: {
  */
 async function gravarLeituraNaMensagem(dados: {
   ctx: ContextoCadencia;
+  /**
+   * O id da mensagem que PROVOCOU esta analise.
+   *
+   * ============================================================
+   * POR QUE NAO "A ULTIMA RECEBIDA"
+   * ============================================================
+   * A primeira versao procurava aqui a ultima mensagem recebida do
+   * lead. Funciona com uma resposta por vez, e erra em silencio quando
+   * duas chegam juntas:
+   *
+   *   A chega  -> o Gemini comeca a analisar A
+   *   B chega  -> e gravada em `messages`
+   *   A analise de A termina -> "a ultima recebida" agora e B
+   *   -> a leitura de A e carimbada em B
+   *
+   * Uma mensagem passaria a carregar a interpretacao de OUTRA. Nao
+   * quebra nada, nao aparece em log nenhum, e a ficha do dia comeca a
+   * mentir sem nenhum sinal de que esta mentindo.
+   *
+   * Quem dispara o gatilho SABE qual mensagem foi: ela acabou de ser
+   * gravada e o id esta na mao. Sem o id, nao ha o que gravar — uma
+   * leitura no lugar errado e pior que leitura nenhuma.
+   */
+  mensagemId: string | undefined;
   decisaoIa: DecisaoIA | null;
   divergiu: boolean;
   modelo: string | null;
@@ -380,20 +404,17 @@ async function gravarLeituraNaMensagem(dados: {
 }): Promise<void> {
   if (dados.ctx.gatilho !== 'MENSAGEM_RECEBIDA') return;
   if (!dados.decisaoIa) return;
+  if (!dados.mensagemId) return;
 
   try {
-    // A ultima resposta do lead e a que provocou esta analise. O
-    // contexto nao carrega ids de mensagem de proposito — o prompt nao
-    // precisa deles — entao a busca acontece aqui.
-    const alvo = await prisma.message.findFirst({
-      where: { leadId: dados.ctx.lead.id, direcao: 'RECEBIDA' },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    });
-    if (!alvo) return;
-
-    await prisma.message.update({
-      where: { id: alvo.id },
+    // `updateMany`, e nao `update`: `update` exige uma chave unica, e a
+    // guarda de `direcao` nao e unica. Ela tambem nao e redundancia —
+    // impede que um id trocado por engano carimbe a leitura de uma
+    // resposta do lead numa mensagem que saiu daqui. Sem linha
+    // correspondente, `updateMany` simplesmente nao escreve nada, em vez
+    // de estourar.
+    await prisma.message.updateMany({
+      where: { id: dados.mensagemId, direcao: 'RECEBIDA' },
       data: {
         aiIntent: dados.decisaoIa.intent,
         aiConfidence: dados.decisaoIa.confianca,
@@ -428,6 +449,14 @@ export async function orquestrarCadencia(
     campaignId: string;
     gatilho: GatilhoCadencia;
     agora?: Date;
+    /**
+     * A mensagem EXATA que provocou o gatilho.
+     *
+     * So faz sentido em `MENSAGEM_RECEBIDA`. Ver
+     * `gravarLeituraNaMensagem` para o defeito de concorrencia que este
+     * parametro existe para fechar.
+     */
+    mensagemId?: string;
   },
   opcoes: OpcoesOrquestrador
 ): Promise<ResultadoOrquestracao | null> {
@@ -610,6 +639,7 @@ export async function orquestrarCadencia(
     // ligar a IA de verdade valeria a pena.
     await gravarLeituraNaMensagem({
       ctx,
+      mensagemId: params.mensagemId,
       decisaoIa: analise.decisao,
       divergiu,
       modelo: analise.modelo,
@@ -662,6 +692,7 @@ export async function orquestrarCadencia(
   });
   await gravarLeituraNaMensagem({
     ctx,
+    mensagemId: params.mensagemId,
     decisaoIa: analise.decisao,
     divergiu,
     modelo: analise.modelo,
