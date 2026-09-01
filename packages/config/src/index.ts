@@ -44,7 +44,21 @@ const envSchema = z.object({
    * `whatsapp-web`, o envio continua bloqueado pela guarda de fase
    * (ver packages/integrations/src/whatsapp/guarda-envio.ts).
    */
-  WHATSAPP_CANAL: z.enum(['simulado', 'whatsapp-web']).default('simulado'),
+  /**
+   * `baileys` fala o protocolo direto, sem navegador.
+   *
+   * Existe porque o `whatsapp-web` parou de conseguir LER o historico:
+   * a injecao dele na pagina do WhatsApp Web quebrou com uma versao
+   * nova, e `getChats`/`getChatById` passaram a falhar com um erro
+   * opaco, enquanto os eventos continuavam chegando. Nao havia
+   * atualizacao para instalar — a biblioteca ja estava na ultima.
+   *
+   * O `whatsapp-web` continua sendo o padrao; trocar aqui e voltar sao
+   * uma linha do .env, e as duas implementacoes convivem.
+   */
+  WHATSAPP_CANAL: z
+    .enum(['simulado', 'whatsapp-web', 'baileys'])
+    .default('simulado'),
 
   WHATSAPP_SESSION_PATH: z.string().default('./data/whatsapp'),
   CHROME_PATH: z.string().optional(),

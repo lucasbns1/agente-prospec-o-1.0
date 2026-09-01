@@ -22,7 +22,7 @@ import { FakeWhatsAppAdapter } from './fake-adapter.js';
 import { WhatsAppWebAdapter } from './whatsapp-web-adapter.js';
 import type { ProvedorWhatsApp } from './provedor.js';
 
-export type CanalWhatsApp = 'simulado' | 'whatsapp-web';
+export type CanalWhatsApp = 'simulado' | 'whatsapp-web' | 'baileys';
 
 export interface WhatsAppFactoryOptions {
   canal?: string;
@@ -44,7 +44,13 @@ export interface WhatsAppFactoryOptions {
 }
 
 export function resolverCanal(valor: string | undefined): CanalWhatsApp {
-  return valor?.trim().toLowerCase() === 'whatsapp-web' ? 'whatsapp-web' : 'simulado';
+  const v = valor?.trim().toLowerCase();
+  if (v === 'whatsapp-web') return 'whatsapp-web';
+  if (v === 'baileys') return 'baileys';
+  // Qualquer outra coisa — vazio, erro de digitacao — cai em simulado.
+  // O padrao seguro e o que NAO abre navegador nem conecta em lugar
+  // nenhum.
+  return 'simulado';
 }
 
 export async function criarWhatsAppAdapter(
@@ -61,6 +67,15 @@ export async function criarWhatsAppAdapter(
     (await (async () => {
       // Import dinamico: mantem o Puppeteer fora do processo enquanto
       // ninguem pedir uma conexao real.
+      if (canal === 'baileys') {
+        // Sem navegador: nao ha Chromium, nao ha pagina, nao ha injecao.
+        const { criarProvedorBaileys } = await import('./provedor-baileys.js');
+        return criarProvedorBaileys({
+          sessionPath: options.sessionPath ?? './data/whatsapp',
+          ...(options.logger ? { logger: options.logger } : {}),
+        });
+      }
+
       const { criarProvedorWhatsAppWeb } = await import('./provedor-whatsapp-web.js');
       return criarProvedorWhatsAppWeb({
         sessionPath: options.sessionPath ?? './data/whatsapp',

@@ -16,6 +16,7 @@
     "@google/genai": "^2.17.1",
     "@prospector/domain": "workspace:*",
     "@prospector/shared": "workspace:*",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "exceljs": "^4.4.0",
     "papaparse": "^5.5.4",
     "qrcode": "^1.5.4",
