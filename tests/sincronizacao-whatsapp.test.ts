@@ -176,16 +176,22 @@ async function criarCampanhaCom(lead: { id: string }) {
  */
 function adapterCom(
   mensagens: MensagemEntrada[] | (() => MensagemEntrada[] | Promise<never>)
-): { adapter: WhatsAppAdapter; pedidos: Date[] } {
+): {
+  adapter: WhatsAppAdapter;
+  pedidos: Date[];
+  chatIdsRecebidos: Array<string[] | undefined>;
+} {
   const pedidos: Date[] = [];
+  const chatIdsRecebidos: Array<string[] | undefined> = [];
   const naoUsar = (): never => {
     throw new Error('A varredura não deveria chamar isto');
   };
 
   const adapter = {
     modo: 'live',
-    mensagensPerdidas: async (desde: Date) => {
+    mensagensPerdidas: async (desde: Date, chatIds?: string[]) => {
       pedidos.push(desde);
+      chatIdsRecebidos.push(chatIds);
       const lista = typeof mensagens === 'function' ? await mensagens() : mensagens;
       return lista.filter((m) => m.recebidaEm >= desde);
     },
@@ -202,7 +208,7 @@ function adapterCom(
     onStatusChange: naoUsar,
   } as unknown as WhatsAppAdapter;
 
-  return { adapter, pedidos };
+  return { adapter, pedidos, chatIdsRecebidos };
 }
 
 function entrada(
@@ -1070,5 +1076,94 @@ describe('a varredura avisa a tela por SSE', () => {
     // Um aviso a cada cinco minutos dizendo "nada novo" faria a tela
     // recarregar sozinha o dia inteiro sem motivo nenhum.
     expect(recebidos.some((e) => e.tipo === 'dashboard.atualizar')).toBe(false);
+  });
+});
+
+// =============================================================================
+// 25 a 27 — O PLANO B QUANDO A LISTAGEM DO WHATSAPP QUEBRA
+// =============================================================================
+
+/**
+ * `getChats()` falhando nao pode significar varredura nenhuma.
+ *
+ * ============================================================
+ * O QUE ACONTECEU DE VERDADE
+ * ============================================================
+ * Numa maquina real, a chamada que pede a lista completa de conversas
+ * ao WhatsApp falhou SEIS vezes seguidas, ao longo de dois minutos,
+ * sempre com o mesmo erro opaco de dentro do Chromium (`message: "r"`,
+ * porque a pagina esta minificada).
+ *
+ * E nao era a sessao: no mesmo instante os eventos de mensagem chegavam
+ * normalmente, com as conversas LID sendo resolvidas. O que quebra e
+ * especificamente a consulta a lista inteira.
+ *
+ * Entao a varredura passa a levar consigo os `chatId` que o CRM ja
+ * conhece. Se a listagem falhar, o provedor busca conversa por conversa
+ * em vez de desistir.
+ */
+describe('a varredura leva as conversas que o CRM ja conhece', () => {
+  it('25. passa os chatIds das conversas E dos leads ao adapter', async () => {
+    const lead = await criarLead();
+
+    // Uma conversa com chatId proprio — o caso LID, em que o id NAO e
+    // derivavel do telefone.
+    await prisma.conversation.create({
+      data: {
+        id: `${lead.id}-sem-campanha`,
+        leadId: lead.id,
+        chatId: '204070199@lid',
+        ultimaMensagemEm: new Date(),
+      },
+    });
+
+    const { adapter, chatIdsRecebidos } = adapterCom([]);
+    await rec.recuperarMensagensPerdidas(adapter, log);
+
+    const ids = chatIdsRecebidos[0] ?? [];
+
+    // As duas fontes, porque uma sozinha deixa buraco: `conversations`
+    // tem o id de verdade, e os leads cobrem quem recebeu mensagem e
+    // nunca respondeu — que e a maioria.
+    expect(ids).toContain('204070199@lid');
+    expect(ids).toContain(`${lead.telefoneNormalizado}@c.us`);
+  });
+
+  it('26. nao repete o mesmo chatId quando as duas fontes concordam', async () => {
+    const lead = await criarLead();
+    const chatId = `${lead.telefoneNormalizado}@c.us`;
+
+    await prisma.conversation.create({
+      data: {
+        id: `${lead.id}-sem-campanha`,
+        leadId: lead.id,
+        chatId,
+        ultimaMensagemEm: new Date(),
+      },
+    });
+
+    const { adapter, chatIdsRecebidos } = adapterCom([]);
+    await rec.recuperarMensagensPerdidas(adapter, log);
+
+    const ids = chatIdsRecebidos[0] ?? [];
+
+    // Cada id repetido custaria uma ida a mais ao Chromium no plano B,
+    // que ja e o caminho lento.
+    expect(ids.filter((i) => i === chatId)).toHaveLength(1);
+  });
+
+  it('27. quem saiu por opt-out não entra na lista', async () => {
+    const fora = await criarLead({ optOut: true, status: 'OPT_OUT' });
+    const dentro = await criarLead();
+
+    const { adapter, chatIdsRecebidos } = adapterCom([]);
+    await rec.recuperarMensagensPerdidas(adapter, log);
+
+    const ids = chatIdsRecebidos[0] ?? [];
+
+    // Ir buscar a conversa de quem pediu para sair seria gastar tempo
+    // para reler algo que o sistema nao pode usar de qualquer forma.
+    expect(ids).not.toContain(`${fora.telefoneNormalizado}@c.us`);
+    expect(ids).toContain(`${dentro.telefoneNormalizado}@c.us`);
   });
 });

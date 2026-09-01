@@ -221,6 +221,50 @@ export async function inicioDaVarredura(
  * aplicar efeitos fora de ordem — e um "quero" processado depois de um
  * "pare" reabriria uma sequencia que o lead pediu para encerrar.
  */
+/**
+ * As conversas que o CRM ja conhece, em formato de `chatId`.
+ *
+ * ============================================================
+ * PARA QUE ISTO SERVE (E PARA QUE NAO SERVE)
+ * ============================================================
+ * E o PLANO B da varredura. O caminho normal pede a lista inteira de
+ * conversas ao WhatsApp de uma vez so. Em uso real essa chamada falhou
+ * seis vezes seguidas, ao longo de dois minutos, com um erro opaco de
+ * dentro do Chromium — enquanto os eventos de mensagem chegavam
+ * normalmente. Nao era a sessao: era a consulta a lista completa.
+ *
+ * Com esta lista, o provedor busca conversa por conversa e a varredura
+ * funciona mesmo assim.
+ *
+ * O que ela NAO cobre: quem o CRM nao conhece. Isso e aceitavel — a
+ * varredura de mensagens perdidas existe para reencontrar respostas de
+ * LEADS, e um numero que nunca entrou no sistema nao tem lead a
+ * reencontrar.
+ *
+ * Duas fontes, porque uma sozinha deixa buraco: `conversations` tem o
+ * `chatId` de verdade (inclusive o formato LID), e os leads cobrem quem
+ * recebeu mensagem mas nunca respondeu — que e justamente a maioria.
+ */
+async function chatIdsConhecidos(): Promise<string[]> {
+  const [conversas, leads] = await Promise.all([
+    prisma.conversation.findMany({
+      where: { chatId: { not: '' } },
+      select: { chatId: true },
+    }),
+    prisma.lead.findMany({
+      where: { telefoneNormalizado: { not: null }, optOut: false },
+      select: { telefoneNormalizado: true },
+    }),
+  ]);
+
+  const ids = new Set<string>();
+  for (const c of conversas) if (c.chatId) ids.add(c.chatId);
+  for (const l of leads) {
+    if (l.telefoneNormalizado) ids.add(`${l.telefoneNormalizado}@c.us`);
+  }
+  return [...ids];
+}
+
 export async function recuperarMensagensPerdidas(
   adapter: WhatsAppAdapter,
   log: Logger,
@@ -241,7 +285,7 @@ export async function recuperarMensagensPerdidas(
     erros: 0,
   };
 
-  const brutas = await adapter.mensagensPerdidas(desde);
+  const brutas = await adapter.mensagensPerdidas(desde, await chatIdsConhecidos());
   resultado.lidas = brutas.length;
 
   // ============================================================

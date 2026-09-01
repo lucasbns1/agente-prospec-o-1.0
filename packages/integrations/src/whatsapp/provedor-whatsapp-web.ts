@@ -331,12 +331,61 @@ export async function criarProvedorWhatsAppWeb(
      */
     async mensagensDesde(
       desde: Date,
-      maxPorConversa = 20
+      maxPorConversa = 20,
+      chatIdsConhecidos?: string[]
     ): Promise<MensagemProvedor[]> {
       const corte = Math.floor(desde.getTime() / 1000);
       const encontradas: MensagemProvedor[] = [];
 
-      const chats: any[] = await getChatsComTentativas(cliente, log);
+      // ============================================================
+      // DOIS CAMINHOS PARA CHEGAR NAS CONVERSAS
+      // ============================================================
+      // O caminho normal e `getChats()`: uma chamada, a lista inteira.
+      //
+      // Em uso real ele falhou SEIS vezes seguidas, ao longo de dois
+      // minutos, sempre com o mesmo erro opaco de dentro do Chromium
+      // (`message: "r"`, porque a pagina esta minificada). Nao era
+      // lentidao de arranque: a sessao estava viva e os eventos de
+      // mensagem chegavam normalmente no mesmo instante. O que quebra e
+      // a consulta a lista completa — provavelmente por causa do
+      // tamanho do store nessa conta.
+      //
+      // Entao ha um plano B: o sistema JA SABE com quem falou. Cada
+      // lead tem um `chatId`, e `getChatById` busca uma conversa de
+      // cada vez, sem nunca pedir a lista toda.
+      //
+      // Ele e mais lento (uma ida ao Chromium por conversa) e por isso
+      // NAO e o padrao. Mas ele funciona onde a listagem quebra, e o
+      // que ele deixa de fora e so o que o CRM nao conhece — que a
+      // varredura de mensagens perdidas nunca teve como recuperar
+      // mesmo, porque ela existe para reencontrar leads, nao para
+      // descobrir gente nova.
+      let chats: any[];
+      try {
+        chats = await getChatsComTentativas(cliente, log);
+      } catch (err) {
+        if (!chatIdsConhecidos?.length) throw err;
+
+        log('getChats falhou de vez; buscando conversa por conversa', {
+          conversas: chatIdsConhecidos.length,
+          erro: err instanceof Error ? err.message : String(err),
+        });
+
+        chats = [];
+        for (const id of chatIdsConhecidos) {
+          try {
+            const chat = await cliente.getChatById(id);
+            if (chat) chats.push(chat);
+          } catch {
+            // Conversa que nao existe mais, numero que nunca teve
+            // WhatsApp, id fora do formato. Nenhuma delas pode custar as
+            // outras — e a ausencia aqui e informacao, nao erro.
+          }
+        }
+
+        log('Conversas recuperadas uma a uma', { encontradas: chats.length });
+      }
+
       for (const chat of chats) {
         if (chat?.isGroup) continue;
 

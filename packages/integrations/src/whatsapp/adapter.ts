@@ -105,7 +105,14 @@ export interface WhatsAppAdapter extends WhatsAppAdapterEvents {
    * chegou. A idempotencia por `provider_message_id` torna o replay
    * seguro.
    */
-  mensagensPerdidas(desde: Date): Promise<MensagemEntrada[]>;
+  /**
+   * `chatIdsConhecidos`: as conversas que o CRM ja conhece. Usadas so
+   * como plano B, quando a listagem completa do WhatsApp falha.
+   */
+  mensagensPerdidas(
+    desde: Date,
+    chatIdsConhecidos?: string[]
+  ): Promise<MensagemEntrada[]>;
 
   /**
    * O envio saiu mesmo? Confere na conversa.

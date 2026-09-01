@@ -103,7 +103,16 @@ export interface ProvedorWhatsApp {
    * por `provider_message_id` torna o replay seguro: o que ja foi
    * processado colide na constraint e e descartado.
    */
-  mensagensDesde(desde: Date, maxPorConversa?: number): Promise<MensagemProvedor[]>;
+  /**
+   * `chatIdsConhecidos` e o plano B: quando `getChats()` falha (a
+   * listagem completa quebra em contas grandes), o provedor busca essas
+   * conversas uma a uma em vez de desistir. Ver `mensagensDesde`.
+   */
+  mensagensDesde(
+    desde: Date,
+    maxPorConversa?: number,
+    chatIdsConhecidos?: string[]
+  ): Promise<MensagemProvedor[]>;
 
   /**
    * Procura na conversa uma mensagem NOSSA com este texto, a partir de

@@ -408,8 +408,15 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
    * sistema passaria a depender de o worker estar no ar ou não no
    * segundo em que a mensagem chegou.
    */
-  async mensagensPerdidas(desde: Date): Promise<MensagemEntrada[]> {
-    const brutas = await this.provedor.mensagensDesde(desde);
+  async mensagensPerdidas(
+    desde: Date,
+    chatIdsConhecidos?: string[]
+  ): Promise<MensagemEntrada[]> {
+    const brutas = await this.provedor.mensagensDesde(
+      desde,
+      undefined,
+      chatIdsConhecidos
+    );
 
     return brutas
       .filter((m) => !m.fromMe && !TIPOS_DE_SISTEMA.has(m.type))
