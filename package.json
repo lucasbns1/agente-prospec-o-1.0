@@ -27,6 +27,7 @@
     "db:reset": "pnpm --filter @prospector/database reset",
     "reset:fabrica": "tsx scripts/reset-fabrica.ts",
     "diagnostico": "tsx scripts/diagnostico-lead.ts",
+    "diagnostico-envios": "tsx scripts/diagnostico-envios.ts",
     "publico": "tsx scripts/publico.ts",
     "reparar-quentes": "tsx scripts/reparar-quentes.ts",
     "reparar-ja-mandei": "tsx scripts/reparar-ja-mandei.ts",
