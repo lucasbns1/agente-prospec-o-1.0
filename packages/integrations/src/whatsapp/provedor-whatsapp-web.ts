@@ -74,17 +74,49 @@ import { acharEnviada, type ConversaVarrida } from './procurar-enviada.js';
  */
 export const ESPERA_MAXIMA_MS = 30_000;
 
+/**
+ * O store ja se mostrou inacessivel? Entao nao gaste dois minutos de novo.
+ *
+ * ============================================================
+ * PACIENCIA SERVE PARA ESPERAR, NAO PARA INSISTIR
+ * ============================================================
+ * As seis tentativas existem para uma pagina que ainda esta carregando —
+ * um problema que passa sozinho em segundos. Elas NAO servem para uma
+ * biblioteca que nao consegue ler o store desta versao do WhatsApp Web,
+ * que e um problema que nao passa.
+ *
+ * A diferenca aparece no resultado: quando `getChatById` tambem falha em
+ * TODAS as conversas, nao ha o que esperar. A partir dai a varredura
+ * tenta UMA vez por vez — o suficiente para perceber quando voltar a
+ * funcionar, sem torrar dois minutos a cada cinco.
+ *
+ * Uma varredura bem-sucedida zera isto: o dia em que a biblioteca for
+ * atualizada, a paciencia inteira volta sozinha.
+ */
+let storeInacessivel = false;
+
+export function marcarStoreInacessivel(): void {
+  storeInacessivel = true;
+}
+
+export function marcarStoreAcessivel(): void {
+  storeInacessivel = false;
+}
+
 /** Exportada para o teste: o orcamento de espera e o ponto todo dela. */
 export async function getChatsComTentativas(
   cliente: any,
   log: (m: string, d?: Record<string, unknown>) => void,
-  tentativas = 6
+  tentativas = storeInacessivel ? 1 : 6
 ): Promise<any[]> {
   let ultimoErro: unknown;
 
   for (let i = 0; i < tentativas; i += 1) {
     try {
-      return await cliente.getChats();
+      const chats = await cliente.getChats();
+      // Voltou a funcionar: a paciencia inteira volta junto.
+      marcarStoreAcessivel();
+      return chats;
     } catch (err) {
       ultimoErro = err;
       const esperar = Math.min(5000 * 2 ** i, ESPERA_MAXIMA_MS);
@@ -563,6 +595,10 @@ export async function criarProvedorWhatsAppWeb(
             }
           }
         }
+
+        // NENHUMA respondeu: nao e a pagina carregando, e o store
+        // inacessivel. A proxima varredura para de gastar dois minutos.
+        if (chats.length === 0 && falhas > 0) marcarStoreInacessivel();
 
         log('Conversas recuperadas uma a uma', {
           encontradas: chats.length,

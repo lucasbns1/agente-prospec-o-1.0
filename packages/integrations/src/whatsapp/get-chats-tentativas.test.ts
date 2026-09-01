@@ -147,3 +147,61 @@ describe('getChatsComTentativas', () => {
     expect(total).toBeGreaterThan(90_000);
   });
 });
+
+// =============================================================================
+// PARAR DE INSISTIR NO QUE NAO PASSA
+// =============================================================================
+
+/**
+ * As seis tentativas existem para uma pagina que ainda esta carregando —
+ * um problema que passa sozinho em segundos.
+ *
+ * Elas NAO servem para uma biblioteca que nao consegue ler o store
+ * daquela versao do WhatsApp Web: ali nao ha o que esperar, e insistir
+ * custa dois minutos a cada cinco, para sempre.
+ */
+describe('recuo quando o store se mostra inacessivel', () => {
+  it('marcado como inacessivel, tenta uma vez so', async () => {
+    const { marcarStoreInacessivel, marcarStoreAcessivel } = await import(
+      './provedor-whatsapp-web.js'
+    );
+
+    marcarStoreInacessivel();
+    try {
+      const cliente = clienteQueFalha(99);
+      const promessa = getChatsComTentativas(cliente, silencio);
+      const resultado = promessa.catch(() => null);
+      await vi.runAllTimersAsync();
+      await resultado;
+
+      expect(cliente.chamadas()).toBe(1);
+    } finally {
+      // Estado de modulo: sem limpar, os testes seguintes herdariam a
+      // marca e mediriam outra coisa.
+      marcarStoreAcessivel();
+    }
+  });
+
+  it('uma chamada bem-sucedida devolve a paciencia inteira', async () => {
+    const { marcarStoreInacessivel, marcarStoreAcessivel } = await import(
+      './provedor-whatsapp-web.js'
+    );
+
+    marcarStoreInacessivel();
+    try {
+      // Volta a funcionar: o sucesso zera a marca.
+      await getChatsComTentativas(clienteQueFalha(0, [{ id: 'x' }]), silencio);
+
+      // E agora as seis tentativas valem de novo — e o dia em que a
+      // biblioteca for atualizada, isso acontece sozinho.
+      const cliente = clienteQueFalha(99);
+      const resultado = getChatsComTentativas(cliente, silencio).catch(() => null);
+      await vi.runAllTimersAsync();
+      await resultado;
+
+      expect(cliente.chamadas()).toBe(6);
+    } finally {
+      marcarStoreAcessivel();
+    }
+  });
+});
