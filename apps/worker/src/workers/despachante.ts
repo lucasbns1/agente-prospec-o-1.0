@@ -191,6 +191,7 @@ async function avancarSequenciasAutomaticas(agora: Date): Promise<number> {
   });
 
   let avancadas = 0;
+  let jaEnfileiradas = 0;
   for (const c of candidatos) {
     const r = await enfileirarProximaEtapa({
       leadId: c.leadId,
@@ -199,8 +200,37 @@ async function avancarSequenciasAutomaticas(agora: Date): Promise<number> {
       agora,
     });
     if (r.enfileirou) avancadas += 1;
+    else if (r.motivo === 'JA_ENFILEIRADA') jaEnfileiradas += 1;
   }
+
+  // ============================================================
+  // UM NUMERO NO LUGAR DE CINQUENTA BLOCOS VERMELHOS
+  // ============================================================
+  // O filtro acima descarta quem tem mensagem em PENDENTE, AGENDADA ou
+  // PROCESSANDO — mas NAO quem ja tem uma em estado terminal (ENVIADA,
+  // SIMULADA, FALHOU, BLOQUEADA). Esses leads voltam a ser candidatos em
+  // TODA varredura, batem na UNIQUE e sao recusados, de quinze em
+  // quinze segundos, para sempre.
+  //
+  // Recusar esta certo: a idempotencia funcionando. O problema e outro,
+  // e e maior do que parece — cada um deles ocupa uma das
+  // MAX_POR_VARREDURA vagas. Com mais leads nessa situacao do que o
+  // teto, os leads que PODERIAM avancar ficam sem vez, em silencio.
+  //
+  // Este numero e o que torna isso visivel. Perto do teto, a fila esta
+  // entupida e a causa esta nos leads que nunca avancam.
+  ultimoTotalJaEnfileiradas = jaEnfileiradas;
   return avancadas;
+}
+
+/**
+ * Quantos candidatos da ultima varredura nao avancaram por ja terem
+ * ordem para aquela etapa. Lido pelo log da varredura.
+ */
+let ultimoTotalJaEnfileiradas = 0;
+
+export function candidatosSemAvanco(): number {
+  return ultimoTotalJaEnfileiradas;
 }
 
 export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredura> {
@@ -344,8 +374,17 @@ export function iniciarDespachante(log: Logger): () => void {
     rodando = true;
     try {
       const r = await varrer();
-      if (r.despachadas > 0 || r.bloqueadas > 0 || r.adiadas > 0) {
-        log.info(r, 'Varredura da fila de envio');
+      const parados = candidatosSemAvanco();
+      if (r.despachadas > 0 || r.bloqueadas > 0 || r.adiadas > 0 || parados > 0) {
+        log.info(
+          // `paradosNaMesmaEtapa` no lugar de cinquenta blocos vermelhos
+          // do Prisma. Perto de MAX_POR_VARREDURA, a fila esta entupida:
+          // esses leads ocupam as vagas de quem poderia avancar.
+          { ...r, paradosNaMesmaEtapa: parados },
+          parados >= MAX_POR_VARREDURA
+            ? 'Varredura da fila de envio — TETO de candidatos parados na mesma etapa; leads que poderiam avancar podem estar sem vez'
+            : 'Varredura da fila de envio'
+        );
       }
     } catch (err) {
       log.error({ err }, 'Falha na varredura da fila de envio');

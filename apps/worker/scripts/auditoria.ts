@@ -184,15 +184,27 @@ if (decisoesIa > 0) {
   }
 
   if (fallbacks > 0) {
+    // SEM `take` aqui, de proposito.
+    //
+    // Um `take` num `groupBy` faz o Prisma paginar por cursor, e para
+    // isso ele exige ordenar por um campo que esteja no `by` — `id` nao
+    // esta. O resultado era o script morrer com P2019 exatamente aqui,
+    // levando junto TUDO o que vem depois desta secao: as filas, a
+    // reconciliacao, os contatos desconhecidos. Um relatorio de
+    // diagnostico que morre no meio e pior que nenhum, porque ele deixa
+    // voce achando que leu o quadro inteiro.
+    //
+    // O corte acontece em JS, logo abaixo, onde a ordenacao ja
+    // acontecia de qualquer forma. Sao poucas linhas: uma por TIPO de
+    // erro, nao uma por decisao.
     const erros = await prisma.aiDecision.groupBy({
       by: ['erro'],
       where: { fallback: true, erro: { not: null } },
       _count: true,
-      take: 5,
     });
     console.log('');
     console.log('  POR QUE A IA FALHOU');
-    for (const e of erros.sort((x, y) => y._count - x._count)) {
+    for (const e of erros.sort((x, y) => y._count - x._count).slice(0, 5)) {
       console.log(linha(`    ${(e.erro ?? '').slice(0, 60)}`, e._count));
     }
   }
