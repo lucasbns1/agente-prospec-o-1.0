@@ -250,6 +250,40 @@ export async function criarProvedorWhatsAppWeb(
     async initialize(): Promise<void> {
       log('Inicializando o cliente do WhatsApp Web');
       await cliente.initialize();
+
+      // ============================================================
+      // QUAL VERSAO REALMENTE CARREGOU
+      // ============================================================
+      // Pedir uma versao e conseguir uma versao sao coisas diferentes.
+      // `strict: false` no cache remoto faz a biblioteca cair no padrao
+      // em silencio quando o build fixado nao baixa — que e o
+      // comportamento certo (perder a conexao seria pior), mas deixa
+      // uma pergunta sem resposta: o pin pegou, ou nao?
+      //
+      // Sem esta linha, um pin que nao funcionou e um pin errado sao
+      // indistinguiveis: os dois terminam em `getChats` falhando. E ai
+      // nao ha como saber se vale trocar de versao ou se o problema e
+      // outro.
+      try {
+        const carregada = await cliente.getWWebVersion();
+        const pedida = opcoes.webVersion ?? null;
+        log('Versao do WhatsApp Web em uso', {
+          carregada,
+          pedida,
+          // A comparacao e por prefixo: a biblioteca as vezes devolve a
+          // versao sem o sufixo "-alpha" que o acervo usa no nome do
+          // arquivo.
+          pinAplicado: pedida
+            ? String(carregada).startsWith(pedida.replace(/-alpha$/, ''))
+            : null,
+        });
+      } catch (err) {
+        // Saber a versao e diagnostico, nao requisito. Falhar aqui nao
+        // pode impedir o worker de funcionar.
+        log('Nao foi possivel ler a versao do WhatsApp Web', {
+          erro: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
 
     async destroy(): Promise<void> {
