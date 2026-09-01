@@ -33,6 +33,15 @@ export const CHAVE_ULTIMA_VARREDURA = 'canal.ultima_varredura';
 export const CHAVE_RECUPERADAS_NA_ULTIMA = 'canal.ultima_varredura_novas';
 
 /**
+ * A ultima falha de varredura, quando ha uma.
+ *
+ * "Ainda nao rodou" e "roda e falha toda vez" produzem a mesma ausencia
+ * de carimbo, e pedem acoes opostas: a primeira e esperar, a segunda e ir
+ * olhar. Esta chave e o que separa as duas na tela.
+ */
+export const CHAVE_FALHA_NA_VARREDURA = 'canal.ultima_varredura_falha';
+
+/**
  * A partir de quantos minutos sem varredura a tela deve reclamar.
  *
  * O intervalo padrao e 5 minutos. Vinte da folga para uma varredura
@@ -56,6 +65,13 @@ export interface EstadoSincronizacao {
   desatualizado: boolean;
   /** Mensagens novas que a ultima varredura trouxe. */
   recuperadasNaUltima: number | null;
+  /**
+   * Por que a ultima varredura falhou, quando falhou.
+   *
+   * `null` quando a ultima deu certo. Existir aqui e o que impede a tela
+   * de mostrar "ainda nao rodou" para algo que roda e quebra.
+   */
+  falha: string | null;
   /**
    * Quanto o Gemini discordou do dicionario, nas respostas que ele leu.
    *
@@ -90,7 +106,7 @@ export interface EstadoSincronizacao {
 // divergissem seria justamente a hora em que voce precisa confiar nelas.
 
 export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
-  const [marca, recuperadas, lidasPelaIa, divergentes] = await Promise.all([
+  const [marca, recuperadas, lidasPelaIa, divergentes, falhaBruta] = await Promise.all([
     prisma.setting.findUnique({
       where: { chave: CHAVE_ULTIMA_VARREDURA },
       select: { valor: true },
@@ -104,6 +120,10 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
     // inteira para saber o tamanho dela.
     prisma.message.count({ where: { aiDivergiu: { not: null } } }),
     prisma.message.count({ where: { aiDivergiu: true } }),
+    prisma.setting.findUnique({
+      where: { chave: CHAVE_FALHA_NA_VARREDURA },
+      select: { valor: true },
+    }),
   ]);
 
   const divergencia =
@@ -118,6 +138,8 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
   const recuperadasNaUltima =
     typeof recuperadas?.valor === 'number' ? recuperadas.valor : null;
 
+  const falha = typeof falhaBruta?.valor === 'string' ? falhaBruta.valor : null;
+
   const bruto = typeof marca?.valor === 'string' ? marca.valor : null;
   const quando = bruto ? new Date(bruto) : null;
 
@@ -131,6 +153,7 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
       desatualizado: true,
       recuperadasNaUltima,
       divergencia,
+      falha,
     };
   }
 
@@ -145,5 +168,6 @@ export async function estadoDaSincronizacao(): Promise<EstadoSincronizacao> {
     desatualizado: minutosAtras > MINUTOS_ATE_RECLAMAR,
     recuperadasNaUltima,
     divergencia,
+    falha,
   };
 }

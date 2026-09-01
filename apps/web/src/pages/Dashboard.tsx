@@ -348,6 +348,7 @@ interface EstadoSincronizacao {
   desatualizado: boolean;
   recuperadasNaUltima: number | null;
   divergencia: { lidas: number; divergentes: number; percentual: number } | null;
+  falha: string | null;
 }
 
 interface StatusCanalResumo {
@@ -411,7 +412,7 @@ function FaixaSincronizacao() {
   if (!sinc) return null;
 
   const canalFora = canal !== undefined && canal.status !== 'CONECTADO';
-  const alarme = sinc.desatualizado || canalFora;
+  const alarme = sinc.desatualizado || canalFora || sinc.falha !== null;
 
   const quando =
     sinc.minutosAtras === null
@@ -451,7 +452,18 @@ function FaixaSincronizacao() {
           </span>
         )}
 
-        {sinc.desatualizado && !canalFora && (
+        {/* A falha vem ANTES do "podem estar velhos": as duas aparecem
+            juntas, e "por que" é mais útil que "desde quando". Sem esta
+            linha, uma varredura que roda e quebra toda vez ficava
+            indistinguível de um worker que acabou de subir. */}
+        {sinc.falha && (
+          <span className="font-medium" title={sinc.falha}>
+            · a última busca no WhatsApp FALHOU — mensagens novas continuam
+            entrando, mas o que passou não está sendo recuperado
+          </span>
+        )}
+
+        {sinc.desatualizado && !canalFora && !sinc.falha && (
           <span className="font-medium">
             · ATENÇÃO: estes números podem estar velhos
           </span>

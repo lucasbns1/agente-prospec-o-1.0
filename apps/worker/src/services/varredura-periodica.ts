@@ -33,6 +33,7 @@
  */
 import type { WhatsAppAdapter } from '@prospector/integrations';
 import type { Logger } from 'pino';
+import { prisma } from '@prospector/database';
 import {
   recuperarMensagensPerdidas,
   type ResultadoRecuperacao,
@@ -51,6 +52,15 @@ import {
  * comecar.
  */
 let emAndamento = false;
+
+/**
+ * Onde fica registrada a ultima falha de varredura.
+ *
+ * A tela le esta chave para diferenciar "ainda nao rodou" (worker acabou
+ * de subir) de "roda e falha toda vez" (algo quebrou). As duas coisas
+ * produzem a mesma ausencia de carimbo, e pedem acoes opostas.
+ */
+export const CHAVE_FALHA_NA_VARREDURA = 'canal.ultima_varredura_falha';
 
 /** O resultado da ultima varredura, para quem quiser olhar sem esperar. */
 let ultimo: ResultadoRecuperacao | null = null;
@@ -87,6 +97,14 @@ export async function varrerAgora(p: {
     );
     ultimo = r;
 
+    // Deu certo: a marca de falha sai. Sem isto, um problema resolvido
+    // continuaria alarmando a tela para sempre.
+    try {
+      await prisma.setting.deleteMany({ where: { chave: CHAVE_FALHA_NA_VARREDURA } });
+    } catch {
+      // Idem: limpar a marca nao pode virar uma falha nova.
+    }
+
     // Silencio quando nao ha nada: a varredura periodica roda o dia
     // inteiro, e uma linha de log a cada cinco minutos dizendo "nada
     // novo" afogaria as linhas que importam.
@@ -101,8 +119,36 @@ export async function varrerAgora(p: {
 
     return r;
   } catch (err) {
+    const motivo = err instanceof Error ? err.message : String(err);
     p.log.error({ err, origem: p.origem }, 'Falha na varredura de mensagens perdidas');
-    return { pulada: true, motivo: err instanceof Error ? err.message : String(err) };
+
+    // ============================================================
+    // A FALHA VAI PARA A TELA, E NAO SO PARA O LOG
+    // ============================================================
+    // Uma varredura que falha nao carimba "sincronizado" — isso ja
+    // estava certo. Mas o efeito colateral era outro silencio: a faixa
+    // do dashboard dizia "ainda nao rodou", que e o mesmo que ela diz
+    // quando o worker acabou de subir.
+    //
+    // "Nao rodou ainda" e "roda e falha toda vez" pedem acoes
+    // diferentes: a primeira e esperar, a segunda e ir olhar. Gravar o
+    // motivo e o que permite a tela distinguir as duas.
+    try {
+      await prisma.setting.upsert({
+        where: { chave: CHAVE_FALHA_NA_VARREDURA },
+        update: { valor: `${new Date().toISOString()} — ${motivo}` },
+        create: {
+          chave: CHAVE_FALHA_NA_VARREDURA,
+          valor: `${new Date().toISOString()} — ${motivo}`,
+          descricao: 'Quando e por que a ultima varredura do WhatsApp falhou',
+        },
+      });
+    } catch {
+      // Nao conseguir registrar a falha nao pode virar uma segunda
+      // falha. O log ja tem o essencial.
+    }
+
+    return { pulada: true, motivo };
   } finally {
     emAndamento = false;
   }
