@@ -129,5 +129,19 @@ export interface ProvedorWhatsApp {
 export interface OpcoesProvedor {
   sessionPath: string;
   chromePath?: string;
+  /**
+   * Fixa a versao do WhatsApp Web a carregar.
+   *
+   * Ausente = a biblioteca pega o que o WhatsApp servir. Presente =
+   * carrega ESTA versao, de um arquivo publicado.
+   *
+   * Existe porque uma versao nova do WhatsApp Web quebra a injecao do
+   * `whatsapp-web.js` de um jeito silencioso: os eventos continuam
+   * chegando, mas toda consulta ao store falha. Ver
+   * `WHATSAPP_WEB_VERSION` em packages/config.
+   */
+  webVersion?: string;
+  /** De onde baixar o build fixado. `{version}` e substituido. */
+  webVersionUrl?: string;
   logger?: (mensagem: string, dados?: Record<string, unknown>) => void;
 }

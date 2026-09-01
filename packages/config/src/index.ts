@@ -49,6 +49,51 @@ const envSchema = z.object({
   WHATSAPP_SESSION_PATH: z.string().default('./data/whatsapp'),
   CHROME_PATH: z.string().optional(),
 
+  /**
+   * Qual build do WhatsApp Web carregar.
+   *
+   * ============================================================
+   * POR QUE ISTO PRECISOU EXISTIR
+   * ============================================================
+   * O `whatsapp-web.js` injeta codigo que depende da estrutura interna
+   * da pagina do WhatsApp Web. Quando o WhatsApp publica uma versao
+   * nova, essa estrutura muda e a injecao para de encontrar o que
+   * procura.
+   *
+   * O sintoma nao e obvio: os EVENTOS continuam funcionando (mensagem
+   * recebida chega normalmente), mas toda CONSULTA ao store falha com um
+   * erro opaco de dentro do Chromium — literalmente `message: "r"`,
+   * porque o codigo da pagina esta minificado.
+   *
+   * Foi exatamente o que aconteceu em uso real: `getChats()` falhou seis
+   * vezes seguidas ao longo de dois minutos, `getChatById()` falhou nas
+   * 84 conversas, e a varredura de mensagens perdidas nao recuperou
+   * nada. A biblioteca ja estava na ultima versao publicada (1.34.7);
+   * nao havia atualizacao para instalar.
+   *
+   * Vazio = comportamento padrao da biblioteca (pega a versao que o
+   * WhatsApp servir). Preenchido = carrega ESTA versao, de um arquivo
+   * publicado, em que a injecao sabidamente funciona.
+   *
+   * Formato: "2.3000.1027344200" — o numero da versao, sem mais nada.
+   */
+  WHATSAPP_WEB_VERSION: z.string().optional(),
+
+  /**
+   * De onde baixar o build fixado por `WHATSAPP_WEB_VERSION`.
+   *
+   * O `{version}` no meio da URL e substituido pela versao. O padrao
+   * aponta para o acervo do projeto wa-version, que mantem os builds
+   * antigos justamente para este caso.
+   *
+   * So e usado quando `WHATSAPP_WEB_VERSION` esta preenchida.
+   */
+  WHATSAPP_WEB_VERSION_URL: z
+    .string()
+    .default(
+      'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html'
+    ),
+
   LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'])
     .default('info'),

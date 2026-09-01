@@ -28,6 +28,10 @@ export interface WhatsAppFactoryOptions {
   canal?: string;
   sessionPath?: string;
   chromePath?: string;
+  /** Fixa a versao do WhatsApp Web. Ver `OpcoesProvedor.webVersion`. */
+  webVersion?: string;
+  /** De onde baixar o build fixado. `{version}` e substituido. */
+  webVersionUrl?: string;
   logger?: (mensagem: string, dados?: Record<string, unknown>) => void;
   /**
    * Provedor pronto, para teste. Quando presente, a biblioteca real nao
@@ -59,6 +63,8 @@ export async function criarWhatsAppAdapter(
       return criarProvedorWhatsAppWeb({
         sessionPath: options.sessionPath ?? './data/whatsapp',
         ...(options.chromePath ? { chromePath: options.chromePath } : {}),
+        ...(options.webVersion ? { webVersion: options.webVersion } : {}),
+        ...(options.webVersionUrl ? { webVersionUrl: options.webVersionUrl } : {}),
         ...(options.logger ? { logger: options.logger } : {}),
       });
     })());

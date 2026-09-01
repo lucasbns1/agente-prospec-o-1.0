@@ -121,6 +121,11 @@ async function main(): Promise<void> {
     canal: env.WHATSAPP_CANAL,
     sessionPath: env.WHATSAPP_SESSION_PATH,
     chromePath: env.CHROME_PATH,
+    // Vazio = a biblioteca pega a versao que o WhatsApp servir. Ver
+    // `WHATSAPP_WEB_VERSION` em packages/config para o defeito que esta
+    // fixacao existe para contornar.
+    webVersion: env.WHATSAPP_WEB_VERSION,
+    webVersionUrl: env.WHATSAPP_WEB_VERSION_URL,
     logger: (m, d) => log.info(d ?? {}, m),
   });
 

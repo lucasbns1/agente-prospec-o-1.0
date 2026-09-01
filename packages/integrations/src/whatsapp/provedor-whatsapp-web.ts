@@ -127,8 +127,43 @@ export async function criarProvedorWhatsAppWeb(
   const mod: any = await import('whatsapp-web.js');
   const { Client, LocalAuth } = mod.default ?? mod;
 
+  // ============================================================
+  // QUAL BUILD DO WHATSAPP WEB CARREGAR
+  // ============================================================
+  // Sem isto, a pagina carrega o que o WhatsApp servir naquele dia — e
+  // quando ele publica uma versao nova, a injecao do whatsapp-web.js
+  // para de encontrar o que procura.
+  //
+  // O sintoma nao denuncia a causa: os EVENTOS continuam funcionando
+  // (mensagem recebida chega normalmente), mas toda CONSULTA ao store
+  // falha com um erro opaco de dentro do Chromium. Em uso real isso
+  // levou `getChats()` a falhar seis vezes seguidas e `getChatById()` a
+  // falhar nas 84 conversas, com a biblioteca ja na ultima versao
+  // publicada — nao havia atualizacao para instalar.
+  //
+  // `strict: false` de proposito: se o build fixado nao existir mais no
+  // acervo, a biblioteca cai no comportamento padrao em vez de recusar
+  // conectar. Perder a versao fixada e um problema; perder a conexao do
+  // WhatsApp e outro, bem maior.
+  const fixarVersao =
+    opcoes.webVersion && opcoes.webVersionUrl
+      ? {
+          webVersion: opcoes.webVersion,
+          webVersionCache: {
+            type: 'remote' as const,
+            remotePath: opcoes.webVersionUrl,
+            strict: false,
+          },
+        }
+      : {};
+
+  if (opcoes.webVersion) {
+    log('Fixando a versao do WhatsApp Web', { versao: opcoes.webVersion });
+  }
+
   const cliente = new Client({
     authStrategy: new LocalAuth({ dataPath: opcoes.sessionPath }),
+    ...fixarVersao,
     puppeteer: {
       headless: true,
       // Sem `executablePath` o Puppeteer procura um Chromium que este
