@@ -102,7 +102,10 @@ export function Canal() {
     // `imagem` e um data: URL PNG. A API desenha o codigo; a tela so exibe.
     queryFn: () => get<{ imagem: string; expiraEmSegundos: number }>('/api/canal/qr'),
     enabled: mostrarQr,
-    refetchInterval: mostrarQr ? 10_000 : false,
+    // 5s, e nao 10s: cada QR vive 60s, e uma janela de dez segundos
+    // significa olhar um codigo com ate 1/6 da vida ja gasta antes
+    // mesmo de voce apontar a camera.
+    refetchInterval: mostrarQr ? 5_000 : false,
     retry: false,
   });
 

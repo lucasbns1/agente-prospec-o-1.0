@@ -72,6 +72,16 @@ const MAX_POR_CONVERSA = 60;
  */
 const NAO_ADIANTA_RECONECTAR = new Set([401, 403]);
 
+/**
+ * Quanto tempo cada QR vive.
+ *
+ * O MESMO valor que o CRM usa para guarda-lo (`TTL_QR_SEGUNDOS`). Os
+ * dois tem que bater: se o QR morrer antes, a tela mostra um codigo
+ * invalido; se morrer depois, a tela some com um codigo que ainda
+ * funcionava.
+ */
+const TTL_QR_MS = 60_000;
+
 export async function criarProvedorBaileys(
   opcoes: OpcoesProvedor
 ): Promise<ProvedorWhatsApp> {
@@ -132,6 +142,18 @@ export async function criarProvedorBaileys(
       // usuario — dado dele, nao nosso.
       markOnlineOnConnect: false,
       syncFullHistory: true,
+      // ============================================================
+      // O QR PRECISA VIVER O MESMO TANTO QUE A TELA ACHA QUE ELE VIVE
+      // ============================================================
+      // O padrao do Baileys da 60s para o PRIMEIRO QR e apenas 20s para
+      // cada seguinte. O CRM guarda o QR por 60s e a tela reconsulta a
+      // cada poucos segundos — entao, a partir do segundo, a pessoa
+      // ficava olhando um codigo que o Baileys ja tinha invalidado ha
+      // ate 40 segundos. O celular recusa, e nada no log explica.
+      //
+      // Igualar os dois lados resolve: todo QR vive 60s, que e o mesmo
+      // tempo que ele fica guardado.
+      qrTimeout: TTL_QR_MS,
     });
 
     sock.ev.on('creds.update', saveCreds);
