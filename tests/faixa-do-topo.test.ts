@@ -93,8 +93,14 @@ describe('a regra do teste nao se descola da rota', () => {
 
     // Nao compara texto: confere que a rota testa a fase ANTES do canal,
     // que e a unica parte da regra em que a ordem muda o resultado.
+    //
+    // A rota procura por `resolverCanal(...)` e nao mais por uma
+    // comparacao literal com 'whatsapp-web'. A troca foi deliberada: a
+    // comparacao direta declarava SIMULADO um WhatsApp real assim que um
+    // segundo canal (baileys) apareceu — e, como `dryRun` sai dela,
+    // bloqueava o envio sem nenhum aviso apontando a causa.
     const posFase = fonte.indexOf('envioRealPermitidoNaFase');
-    const posCanal = fonte.indexOf("canal !== 'whatsapp-web'");
+    const posCanal = fonte.indexOf('resolverCanal(canal)');
 
     expect(posFase).toBeGreaterThan(-1);
     expect(posCanal).toBeGreaterThan(-1);
