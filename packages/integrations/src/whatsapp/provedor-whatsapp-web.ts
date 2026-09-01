@@ -372,18 +372,45 @@ export async function criarProvedorWhatsAppWeb(
         });
 
         chats = [];
+        let falhas = 0;
+        // O PRIMEIRO erro vai para o log, e nao nenhum.
+        //
+        // A versao anterior engolia todos em silencio. Em uso real isso
+        // produziu "84 conversas pedidas, 0 encontradas" sem UMA pista
+        // do motivo — que e o pior resultado possivel para um plano B:
+        // ele falha e ainda esconde por que.
+        //
+        // Um so, e nao todos, porque 84 blocos identicos afogariam o log
+        // do mesmo jeito que os do Prisma afogavam.
+        let primeiroErro: string | null = null;
+
         for (const id of chatIdsConhecidos) {
           try {
             const chat = await cliente.getChatById(id);
             if (chat) chats.push(chat);
-          } catch {
+          } catch (e) {
             // Conversa que nao existe mais, numero que nunca teve
             // WhatsApp, id fora do formato. Nenhuma delas pode custar as
-            // outras — e a ausencia aqui e informacao, nao erro.
+            // outras — a ausencia de UMA e informacao, nao erro.
+            falhas += 1;
+            if (!primeiroErro) {
+              primeiroErro = e instanceof Error ? e.message : String(e);
+            }
           }
         }
 
-        log('Conversas recuperadas uma a uma', { encontradas: chats.length });
+        log('Conversas recuperadas uma a uma', {
+          encontradas: chats.length,
+          falharam: falhas,
+          // A ausencia de TODAS, porem, e outra coisa: significa que nem
+          // a consulta por id funciona, e ai o problema nao esta na
+          // lista de conversas — esta no acesso ao store da pagina.
+          primeiroErro,
+          diagnostico:
+            chats.length === 0 && falhas > 0
+              ? 'NENHUMA conversa respondeu. getChats e getChatById falham os dois, enquanto os eventos de mensagem funcionam: o whatsapp-web.js provavelmente nao consegue ler o store desta versao do WhatsApp Web.'
+              : undefined,
+        });
       }
 
       for (const chat of chats) {
