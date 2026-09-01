@@ -51,13 +51,34 @@ import { acharEnviada, type ConversaVarrida } from './procurar-enviada.js';
  * existe para evitar.
  *
  * Tentar de novo resolve porque a causa e transitoria: a pagina termina
- * de carregar em poucos segundos. As esperas crescem (2s, 4s, 8s) para
- * nao martelar uma pagina que ainda esta subindo.
+ * de carregar. A questao e QUANTO esperar.
+ *
+ * ============================================================
+ * POR QUE O ORCAMENTO CRESCEU
+ * ============================================================
+ * A primeira versao tentava 3 vezes com 2s, 4s e 8s — catorze segundos
+ * de paciencia. Numa maquina real, com uma conta de WhatsApp cheia de
+ * conversas, isso nao bastou: a varredura da conexao falhou DUAS vezes
+ * seguidas, sempre no mesmo ponto, sempre com o mesmo "r".
+ *
+ * O custo de esperar demais e nenhum: esta funcao roda num caminho
+ * assincrono que nao segura mais nada. O custo de esperar de menos e a
+ * varredura da conexao morrer e o sistema so se acertar cinco minutos
+ * depois, na periodica — ou, no caminho de `confirmarEnvio`, marcar
+ * FALHOU um envio que deu certo.
+ *
+ * Entao a escala e outra: SEIS tentativas, com o passo limitado a 30s
+ * (5s, 10s, 20s, 30s, 30s = ate ~1min35). O teto existe porque dobrar
+ * indefinidamente chegaria a esperas de minutos entre tentativas sem
+ * ganhar nada — a pagina do WhatsApp carrega em segundos ou nao carrega.
  */
-async function getChatsComTentativas(
+export const ESPERA_MAXIMA_MS = 30_000;
+
+/** Exportada para o teste: o orcamento de espera e o ponto todo dela. */
+export async function getChatsComTentativas(
   cliente: any,
   log: (m: string, d?: Record<string, unknown>) => void,
-  tentativas = 3
+  tentativas = 6
 ): Promise<any[]> {
   let ultimoErro: unknown;
 
@@ -66,11 +87,12 @@ async function getChatsComTentativas(
       return await cliente.getChats();
     } catch (err) {
       ultimoErro = err;
-      const esperar = 2000 * 2 ** i;
+      const esperar = Math.min(5000 * 2 ** i, ESPERA_MAXIMA_MS);
       log('getChats falhou; a pagina do WhatsApp pode ainda estar carregando', {
         tentativa: i + 1,
         de: tentativas,
-        proximaEmMs: esperar,
+        // Zero na ultima: ela nao espera por nada, so desiste.
+        proximaEmMs: i < tentativas - 1 ? esperar : 0,
       });
       if (i < tentativas - 1) {
         await new Promise((r) => setTimeout(r, esperar));

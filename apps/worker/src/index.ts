@@ -270,7 +270,14 @@ async function main(): Promise<void> {
         // evita gastar as tentativas com uma pagina que ainda esta
         // subindo. Nada depende de a varredura ser imediata: ela busca
         // o que ficou para tras, nao o que esta chegando agora.
-        await new Promise((r) => setTimeout(r, 10_000));
+        //
+        // Eram 10s. Numa maquina real, com uma conta cheia de conversas,
+        // a varredura da conexao falhou DUAS vezes seguidas mesmo com as
+        // tentativas do provedor — a pagina simplesmente demora mais do
+        // que isso para ficar utilizavel. Vinte segundos nao custam nada
+        // aqui (ninguem espera por esta linha) e poupam metade das
+        // tentativas, que so produziriam log de erro.
+        await new Promise((r) => setTimeout(r, 20_000));
 
         await varrerAgora({
           adapter,
