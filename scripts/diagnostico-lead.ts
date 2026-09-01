@@ -25,7 +25,20 @@ import { config } from 'dotenv';
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 config({ path: path.join(raiz, '.env') });
 
-const alvo = process.argv.slice(2).find((a) => /^\d{8,15}$/.test(a)) ?? null;
+/**
+ * Telefone OU id do lead.
+ *
+ * O id entrou porque a auditoria identifica os leads por UUID — ela
+ * varre a base inteira e nao tem telefone a mao. Sem aceitar o id, o
+ * relatorio apontava um problema e nao havia como abrir o lead que ele
+ * apontava.
+ */
+const argumentos = process.argv.slice(2);
+const telefoneAlvo = argumentos.find((a) => /^\d{8,15}$/.test(a)) ?? null;
+const idAlvo =
+  argumentos.find((a) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a)
+  ) ?? null;
 
 function titulo(t: string): void {
   console.log(`\n${'='.repeat(60)}\n${t}\n${'='.repeat(60)}`);
@@ -39,9 +52,11 @@ async function main(): Promise<void> {
   const { prisma } = await import('../packages/database/src/index.js');
 
   // --- Lead ---
-  const lead = alvo
-    ? await prisma.lead.findFirst({ where: { telefoneNormalizado: alvo } })
-    : await prisma.lead.findFirst({ orderBy: { createdAt: 'desc' } });
+  const lead = idAlvo
+    ? await prisma.lead.findFirst({ where: { id: idAlvo } })
+    : telefoneAlvo
+      ? await prisma.lead.findFirst({ where: { telefoneNormalizado: telefoneAlvo } })
+      : await prisma.lead.findFirst({ orderBy: { createdAt: 'desc' } });
 
   if (!lead) {
     console.log('\nNenhum lead no banco. Importe a planilha primeiro.\n');
