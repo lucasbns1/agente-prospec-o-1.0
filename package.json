@@ -38,7 +38,8 @@
     "setup": "pnpm install && pnpm db:generate",
     "health": "pnpm --filter @prospector/worker health",
     "auditoria": "pnpm --filter @prospector/worker auditoria",
-    "simular": "pnpm --filter @prospector/worker simular"
+    "simular": "pnpm --filter @prospector/worker simular",
+    "diagnostico-campanha": "tsx scripts/diagnostico-campanha.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

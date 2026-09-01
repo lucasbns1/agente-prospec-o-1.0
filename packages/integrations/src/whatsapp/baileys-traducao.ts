@@ -287,6 +287,21 @@ export class ArquivoDeMensagens {
     this.porConversa.set(m.from, lista);
   }
 
+  /**
+   * Tudo o que esta guardado, sem filtro.
+   *
+   * Existe para o arquivo poder ir para o disco. O pacote de historico
+   * chega UMA vez, no pareamento — numa reconexao o WhatsApp nao manda
+   * de novo ("skipping history sync wait"). Sem uma copia em disco, um
+   * `git pull` seguido de reinicio joga fora meses de conversa que so
+   * voltam se a pessoa parear o aparelho outra vez.
+   */
+  todas(): MensagemProvedor[] {
+    const saida: MensagemProvedor[] = [];
+    for (const lista of this.porConversa.values()) saida.push(...lista);
+    return saida;
+  }
+
   /** Guarda varias de uma vez. Devolve quantas eram novas. */
   guardarVarias(ms: MensagemProvedor[]): number {
     const antes = this.total;

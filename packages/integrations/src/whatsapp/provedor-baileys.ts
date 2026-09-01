@@ -33,8 +33,13 @@
  * mensagens perdidas.
  *
  * Em troca, ele nao guarda nada — quem arquiva somos nos, em
- * `ArquivoDeMensagens`. Isso e memoria e some no reinicio, e tudo bem: o
- * que importa ja foi para o Postgres pelo mesmo caminho de sempre.
+ * `ArquivoDeMensagens`, com uma copia em disco ao lado da sessao.
+ *
+ * A copia em disco NAO e otimizacao. O pacote chega uma vez so: numa
+ * reconexao o Baileys anuncia "skipping history sync wait" e nao manda
+ * nada. Sem disco, um reinicio joga fora meses de conversa — foi o que
+ * aconteceu: 2532 mensagens chegaram, o worker reiniciou, e a varredura
+ * seguinte leu `conversasNoArquivo: 0`.
  *
  * ============================================================
  * A GUARDA DE ENVIO VALE AQUI TAMBEM
@@ -51,6 +56,7 @@ import type {
 } from './provedor.js';
 import { exigirPermissaoDeEnvioReal } from './guarda-envio.js';
 import { ArquivoDeMensagens, traduzir } from './baileys-traducao.js';
+import { caminhoDoArquivo, carregarArquivo, salvarArquivo } from './arquivo-em-disco.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -82,6 +88,19 @@ const NAO_ADIANTA_RECONECTAR = new Set([401, 403]);
  */
 const TTL_QR_MS = 60_000;
 
+/**
+ * Quanto esperar, depois de uma mudanca, antes de gravar o arquivo.
+ *
+ * O pacote de historico chega em dezenas de pedacos seguidos. Gravar a
+ * cada pedaco escreveria o arquivo inteiro dezenas de vezes em poucos
+ * segundos, sem nenhum ganho: o que importa e o estado FINAL.
+ *
+ * Dois segundos e curto o bastante para uma queda de energia logo depois
+ * do pareamento nao custar o historico, e longo o bastante para os
+ * pedacos virarem uma gravacao so.
+ */
+const ESPERA_PARA_GRAVAR_MS = 2_000;
+
 export async function criarProvedorBaileys(
   opcoes: OpcoesProvedor
 ): Promise<ProvedorWhatsApp> {
@@ -95,6 +114,44 @@ export async function criarProvedorBaileys(
     baileys;
 
   const arquivo = new ArquivoDeMensagens(MAX_POR_CONVERSA);
+
+  // ============================================================
+  // O ARQUIVO VOLTA DO DISCO ANTES DE QUALQUER CONEXAO
+  // ============================================================
+  // Tem que ser aqui, e nao depois de conectar: numa reconexao o
+  // WhatsApp nao remanda o historico, entao se a varredura rodar antes
+  // desta linha ela le um arquivo vazio e conclui "nao ha nada".
+  const caminhoArquivo = caminhoDoArquivo(opcoes.sessionPath);
+  {
+    const lido = carregarArquivo(caminhoArquivo);
+    arquivo.guardarVarias(lido.mensagens);
+    log('Arquivo de mensagens lido do disco', {
+      mensagens: lido.mensagens.length,
+      descartadas: lido.descartadas,
+      conversas: arquivo.conversas,
+      ...(lido.motivo ? { motivo: lido.motivo } : {}),
+    });
+  }
+
+  // Gravacao adiada: o historico chega em dezenas de pedacos, e o que
+  // interessa e o estado final.
+  let gravacaoAgendada: NodeJS.Timeout | null = null;
+  const agendarGravacao = (): void => {
+    if (gravacaoAgendada) return;
+    gravacaoAgendada = setTimeout(() => {
+      gravacaoAgendada = null;
+      const ok = salvarArquivo(caminhoArquivo, arquivo.todas());
+      if (!ok) {
+        // Nao e motivo para derrubar nada: o arquivo em memoria continua
+        // valendo para esta execucao. Mas tem que aparecer, senao o
+        // historico se perde de novo no proximo reinicio em silencio.
+        log('Nao consegui gravar o arquivo de mensagens em disco', {
+          caminho: caminhoArquivo,
+        });
+      }
+    }, ESPERA_PARA_GRAVAR_MS);
+    gravacaoAgendada.unref?.();
+  };
 
   // Os handlers que o adapter registrou, por evento. Guardados aqui
   // porque o socket e RECRIADO a cada reconexao — e sem isto os
@@ -233,6 +290,7 @@ export async function criarProvedorBaileys(
         if (t) traduzidas.push(t);
       }
       const novas = arquivo.guardarVarias(traduzidas);
+      if (novas > 0) agendarGravacao();
 
       log('Historico recebido do WhatsApp', {
         mensagensNoPacote: h?.messages?.length ?? 0,
@@ -258,6 +316,7 @@ export async function criarProvedorBaileys(
         if (!m) continue;
 
         arquivo.guardar(m);
+        agendarGravacao();
         if (!aoVivo) continue;
 
         // O adapter separa "minha" de "do lead" pelo `fromMe`, como no
@@ -291,6 +350,16 @@ export async function criarProvedorBaileys(
 
     async destroy(): Promise<void> {
       encerrando = true;
+
+      // Grava AGORA, sem esperar o adiamento. Um Ctrl+C dois segundos
+      // depois de o historico chegar perderia o pacote inteiro — e o
+      // pacote so vem outra vez se a pessoa parear o aparelho de novo.
+      if (gravacaoAgendada) {
+        clearTimeout(gravacaoAgendada);
+        gravacaoAgendada = null;
+      }
+      salvarArquivo(caminhoArquivo, arquivo.todas());
+
       try {
         // `end` e nao `logout`: logout APAGA a sessao e obrigaria a ler
         // o QR de novo no proximo start. Encerrar o worker nao pode
