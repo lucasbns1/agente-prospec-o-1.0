@@ -351,7 +351,11 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
     tentativasReconexao: number;
   } {
     return {
-      provider: 'whatsapp-web',
+      // Quem esta conectado, e nao um nome fixo. Com dois provedores
+      // reais, um rotulo cravado faz a tela de diagnostico dizer
+      // "whatsapp-web" enquanto quem responde e o Baileys — e a tela de
+      // diagnostico e justamente onde a mentira custa mais caro.
+      provider: this.provedor.getInfo()?.plataforma ?? 'whatsapp-web',
       status: this.status,
       autenticado: this.telefoneConta !== null,
       conectado: this.status === 'CONECTADO',

@@ -92,9 +92,20 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
     //
     // A faixa do topo precisa dizer QUAL das duas — mandar a pessoa
     // procurar no lugar errado e pior do que nao avisar nada.
+    // `resolverCanal` em vez de comparar a string na mao.
+    //
+    // A comparacao direta com 'whatsapp-web' era uma bomba-relogio: no
+    // dia em que um segundo canal REAL apareceu (`baileys`), ela passou a
+    // declarar simulado um WhatsApp de verdade conectado — e, como
+    // `dryRun` sai dela, isso bloquearia o envio real sem nenhum aviso
+    // que apontasse para a causa. A tela dizia "Conectado" e "CANAL
+    // SIMULADO" ao mesmo tempo.
+    //
+    // Quem sabe quais canais existem e a factory. Perguntar a ela faz o
+    // proximo canal novo funcionar sem ninguem lembrar de vir aqui.
     const motivo = !estado.envioRealPermitidoNaFase
       ? ('FASE_TRAVADA' as const)
-      : canal !== 'whatsapp-web'
+      : resolverCanal(canal) === 'simulado'
         ? ('CANAL_SIMULADO' as const)
         : null;
 

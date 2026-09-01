@@ -342,3 +342,63 @@ describe('resolverCanal', () => {
     expect(resolverCanal(undefined)).toBe('simulado');
   });
 });
+
+// =============================================================================
+// O QUE NÃO É MENSAGEM
+// =============================================================================
+
+/**
+ * O WhatsApp entrega, pelo MESMO canal das mensagens, avisos internos do
+ * protocolo: os pedaços do histórico, revogações, sincronização de
+ * dispositivos, chaves.
+ *
+ * Em uso real eles passaram e viraram "contatos desconhecidos" — o log
+ * mostrava `Mensagem recebida processada / leadId: null` com ids que
+ * eram exatamente os das notificações de histórico do Baileys.
+ */
+describe('avisos do protocolo não são mensagens', () => {
+  it('descarta a notificação de histórico', () => {
+    expect(
+      traduzir(
+        msg({
+          message: {
+            protocolMessage: { historySyncNotification: { fileLength: '553037' } },
+          },
+        })
+      )
+    ).toBeNull();
+  });
+
+  it('descarta distribuição de chave e sincronização de dispositivo', () => {
+    expect(
+      traduzir(msg({ message: { senderKeyDistributionMessage: {} } }))
+    ).toBeNull();
+    expect(traduzir(msg({ message: { deviceSentMessage: {} } }))).toBeNull();
+  });
+
+  it('descarta reação — ela não é uma resposta que se classifique', () => {
+    expect(traduzir(msg({ message: { reactionMessage: { text: '👍' } } }))).toBeNull();
+  });
+
+  it('NÃO descarta uma resposta de verdade que venha com messageContextInfo', () => {
+    // `messageContextInfo` acompanha mensagens legítimas. Condená-la por
+    // isso jogaria fora justamente as respostas a outra mensagem — que
+    // são a maioria numa conversa de prospecção.
+    const r = traduzir(
+      msg({
+        message: {
+          messageContextInfo: { deviceListMetadataVersion: 2 },
+          extendedTextMessage: { text: 'quanto custa?' },
+        },
+      })
+    );
+
+    expect(r?.body).toBe('quanto custa?');
+  });
+
+  it('descarta messageContextInfo quando ele vem sozinho', () => {
+    expect(
+      traduzir(msg({ message: { messageContextInfo: { deviceListMetadataVersion: 2 } } }))
+    ).toBeNull();
+  });
+});

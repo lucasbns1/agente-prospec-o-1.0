@@ -123,6 +123,35 @@ export function tipoDaMensagem(m: unknown): string {
   return 'chat';
 }
 
+/**
+ * Chaves que identificam um aviso do protocolo, e nao uma mensagem.
+ *
+ * `protocolMessage` cobre a maioria (historico, revogacao, chaves);
+ * os outros aparecem sozinhos em situacoes especificas.
+ */
+const AVISOS_DE_PROTOCOLO = [
+  'protocolMessage',
+  'senderKeyDistributionMessage',
+  'deviceSentMessage',
+  'messageContextInfo',
+  'reactionMessage',
+  'pollUpdateMessage',
+];
+
+export function temAvisoDeProtocolo(m: unknown): boolean {
+  const msg = (m as { message?: Record<string, unknown> } | null)?.message;
+  if (!msg) return false;
+
+  const chaves = Object.keys(msg);
+  // `messageContextInfo` VEM JUNTO de mensagens de verdade, entao ele so
+  // condena a mensagem quando esta sozinho — do contrario descartariamos
+  // respostas legitimas.
+  const uteis = chaves.filter((k) => !AVISOS_DE_PROTOCOLO.includes(k));
+  if (uteis.length > 0) return false;
+
+  return chaves.some((k) => AVISOS_DE_PROTOCOLO.includes(k));
+}
+
 interface MensagemBaileys {
   key?: {
     id?: string | null;
@@ -159,10 +188,27 @@ export function traduzir(m: MensagemBaileys): MensagemProvedor | null {
   if (!id || !jid) return null;
   if (ehGrupo(jid)) return null;
 
+  // ============================================================
+  // O QUE NAO E MENSAGEM
+  // ============================================================
+  // O WhatsApp entrega, pelo MESMO canal das mensagens, uma serie de
+  // avisos internos do protocolo: os pedacos do historico, revogacoes,
+  // sincronizacao de dispositivos, chaves.
+  //
+  // Em uso real eles passaram e viraram "contatos desconhecidos": o log
+  // mostrava `Mensagem recebida processada / leadId: null` com ids que
+  // eram exatamente os das notificacoes de historico do Baileys. Lixo no
+  // cadastro, e uma tela de contatos desconhecidos cheia de coisa que
+  // nunca foi conversa com ninguem.
+  //
+  // A checagem e explicita, e nao so "sem texto": um `protocolMessage`
+  // as vezes carrega conteudo, e mesmo assim nao e uma mensagem.
+  if (temAvisoDeProtocolo(m)) return null;
+
   const texto = textoDaMensagem(m);
   const midia = temMidia(m);
   // Sem texto E sem midia nao ha mensagem: e um evento de sistema
-  // (protocolo, revogacao, reacao) que o WhatsApp entrega junto.
+  // (revogacao, reacao) que o WhatsApp entrega junto.
   if (!texto && !midia) return null;
 
   const fromMe = m.key?.fromMe === true;
