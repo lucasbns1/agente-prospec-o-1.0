@@ -80,6 +80,11 @@ export async function varrerAgora(p: {
   adapter: WhatsAppAdapter;
   log: Logger;
   janelaHoras: number;
+  /**
+   * A janela da estreia — vale so enquanto o banco nao tem nenhuma
+   * mensagem recebida. Ausente = o padrao de `recuperar-perdidas`.
+   */
+  janelaPrimeiraVezHoras?: number;
   /** De onde veio o pedido, para o log dizer quem mandou. */
   origem: 'conexao' | 'periodica' | 'manual';
 }): Promise<ResultadoRecuperacao | { pulada: true; motivo: string }> {
@@ -93,7 +98,8 @@ export async function varrerAgora(p: {
       p.adapter,
       p.log,
       new Date(),
-      p.janelaHoras
+      p.janelaHoras,
+      p.janelaPrimeiraVezHoras
     );
     ultimo = r;
 
@@ -165,6 +171,7 @@ export function iniciarVarreduraPeriodica(p: {
   log: Logger;
   intervaloMinutos: number;
   janelaHoras: number;
+  janelaPrimeiraVezHoras?: number;
 }): () => void {
   // Zero desliga. Nao e o mesmo que um intervalo enorme: quem depura
   // quer a varredura de conexao sem o ruido da periodica.
@@ -184,6 +191,7 @@ export function iniciarVarreduraPeriodica(p: {
       adapter: p.adapter,
       log: p.log,
       janelaHoras: p.janelaHoras,
+      janelaPrimeiraVezHoras: p.janelaPrimeiraVezHoras,
       origem: 'periodica',
     });
   }, ms);

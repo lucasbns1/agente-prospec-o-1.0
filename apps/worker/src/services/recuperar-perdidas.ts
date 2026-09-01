@@ -63,6 +63,35 @@ import { publicarEvento } from '../events.js';
 const JANELA_PADRAO_HORAS = 24;
 
 /**
+ * A janela da PRIMEIRA varredura, quando o sistema nunca viu uma
+ * mensagem recebida.
+ *
+ * ============================================================
+ * O CASO REAL QUE ISTO RESOLVE
+ * ============================================================
+ * O provedor novo trouxe o historico inteiro do WhatsApp — milhares de
+ * mensagens, meses para tras — e a varredura devolveu `encontradas: 0`.
+ * Nao era o historico: era a janela. Ela olhava 72h, e as mensagens que
+ * a pessoa queria reencontrar tinham sido mandadas na quinta e na sexta
+ * anteriores, cinco e seis dias antes.
+ *
+ * 72h continua sendo o numero certo para o regime normal, em que a
+ * varredura roda a cada poucos minutos e so precisa cobrir um fim de
+ * semana de worker desligado. O que estava faltando era o caso de
+ * ESTREIA: banco sem nenhuma mensagem recebida, historico inteiro na
+ * mao, uma unica chance de aproveita-lo.
+ *
+ * Dez dias, e nao "tudo": o historico vai a meses, e mensagem de antes
+ * de a campanha existir nao e resposta a campanha nenhuma. Dez dias
+ * cobrem com folga a semana de trabalho que antecede a estreia, que e o
+ * que tem chance de ser resposta de verdade.
+ *
+ * A marca do reset de fabrica continua vencendo este valor — quem
+ * apagou o banco de proposito nao quer o passado de volta.
+ */
+const JANELA_PRIMEIRA_VEZ_HORAS = 240;
+
+/**
  * Folga aplicada para tras a partir da ultima mensagem conhecida.
  *
  * Sem ela, uma mensagem que chegou no MESMO segundo da ultima
@@ -184,7 +213,8 @@ export const CHAVE_RECUPERADAS_NA_ULTIMA = 'canal.ultima_varredura_novas';
  */
 export async function inicioDaVarredura(
   agora: Date = new Date(),
-  janelaHoras: number = JANELA_PADRAO_HORAS
+  janelaHoras: number = JANELA_PADRAO_HORAS,
+  janelaPrimeiraVezHoras: number = JANELA_PRIMEIRA_VEZ_HORAS
 ): Promise<Date> {
   const ultima = await prisma.message.findFirst({
     where: { direcao: 'RECEBIDA' },
@@ -192,15 +222,20 @@ export async function inicioDaVarredura(
     select: { recebidaEm: true },
   });
 
+  // Sem nenhuma mensagem recebida no banco, esta e a estreia: vale a
+  // janela larga, uma vez so. Na varredura seguinte ja existe uma
+  // ultima mensagem conhecida, e a janela normal volta a valer.
+  const efetiva = ultima ? janelaHoras : Math.max(janelaHoras, janelaPrimeiraVezHoras);
+
   const base =
-    ultima?.recebidaEm ?? new Date(agora.getTime() - janelaHoras * 3600_000);
+    ultima?.recebidaEm ?? new Date(agora.getTime() - efetiva * 3600_000);
 
   const comFolga = new Date(base.getTime() - FOLGA_MINUTOS * 60_000);
 
   // Nunca antes da janela inicial: um banco com uma mensagem antiga e
   // nada depois faria a varredura reler meses de conversa a cada
   // reconexao.
-  const piso = new Date(agora.getTime() - janelaHoras * 3600_000);
+  const piso = new Date(agora.getTime() - efetiva * 3600_000);
   const resultado = comFolga < piso ? piso : comFolga;
 
   // A marca do reset vence os dois. Ela e uma afirmacao explicita —
@@ -269,9 +304,10 @@ export async function recuperarMensagensPerdidas(
   adapter: WhatsAppAdapter,
   log: Logger,
   agora: Date = new Date(),
-  janelaHoras: number = JANELA_PADRAO_HORAS
+  janelaHoras: number = JANELA_PADRAO_HORAS,
+  janelaPrimeiraVezHoras: number = JANELA_PRIMEIRA_VEZ_HORAS
 ): Promise<ResultadoRecuperacao> {
-  const desde = await inicioDaVarredura(agora, janelaHoras);
+  const desde = await inicioDaVarredura(agora, janelaHoras, janelaPrimeiraVezHoras);
   const resultado: ResultadoRecuperacao = {
     lidas: 0,
     novas: 0,

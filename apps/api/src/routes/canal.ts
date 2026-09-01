@@ -25,7 +25,7 @@ import {
   estadoEstaVelho,
   type EstadoCanal,
 } from '@prospector/shared';
-import { renderizarQrComoImagem } from '@prospector/integrations';
+import { renderizarQrComoImagem, resolverCanal } from '@prospector/integrations';
 import { exigirAutenticacao } from '../plugins/auth.js';
 import { AppError } from '../lib/errors.js';
 

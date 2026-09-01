@@ -159,6 +159,26 @@ const envSchema = z.object({
     .max(720)
     .default(72),
 
+  /**
+   * A janela da PRIMEIRA varredura — a que roda com o banco ainda sem
+   * nenhuma mensagem recebida.
+   *
+   * Existe por um caso real: o historico inteiro do WhatsApp chegou
+   * (milhares de mensagens, meses para tras) e a varredura devolveu
+   * zero, porque olhava so as ultimas 72h e as mensagens procuradas
+   * eram de cinco e seis dias antes.
+   *
+   * Vale UMA vez. Assim que existir uma mensagem recebida no banco a
+   * janela normal volta a mandar — e a marca do reset de fabrica vence
+   * este valor, como vence o outro.
+   */
+  WHATSAPP_RECONCILIATION_FIRST_RUN_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(720)
+    .default(240),
+
   // ---------------------------------------------------------------------------
   // GEMINI (Fase 9)
   // ---------------------------------------------------------------------------

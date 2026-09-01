@@ -64,6 +64,12 @@ export function criarWorkerReconciliacaoWhatsApp(
         adapter,
         log,
         janelaHoras: horas,
+        // Um dia escolhido na tela manda: passar o mesmo valor desliga
+        // o alargamento da estreia, que so faria sentido se a pessoa
+        // nao tivesse dito de onde comecar. Sem `desde`, o alargamento
+        // vale — e e justamente o botao que a pessoa aperta depois de
+        // conectar o WhatsApp pela primeira vez.
+        ...(desde ? { janelaPrimeiraVezHoras: horas } : {}),
         origem: 'manual',
       });
 

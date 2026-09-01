@@ -151,10 +151,73 @@ function entrada(
 // ---------------------------------------------------------------------------
 
 describe('inicioDaVarredura — de quando olhar para trás', () => {
-  it('sem nenhuma mensagem, olha 24h para trás', async () => {
+  it('sem nenhuma mensagem, olha a janela de estreia para trás', async () => {
     const agora = new Date('2026-08-15T12:00:00Z');
     const desde = await rec.inicioDaVarredura(agora);
-    expect(desde.getTime()).toBe(agora.getTime() - 24 * 3600_000);
+    // Banco sem nenhuma mensagem recebida = estreia. O padrão daqui são
+    // 240h (dez dias), e não as 24h do regime normal — o caso real está
+    // no teste logo abaixo.
+    expect(desde.getTime()).toBe(agora.getTime() - 240 * 3600_000);
+  });
+
+  // ==========================================================
+  // O CASO REAL: "MAS EU MANDEI MENSAGEM QUINTA PASSADA"
+  // ==========================================================
+  // O provedor novo entregou o histórico inteiro do WhatsApp —
+  // milhares de mensagens, meses para trás — e a varredura devolveu
+  // `encontradas: 0`. Não era o histórico: era a janela. Ela olhava
+  // 72h, e as mensagens procuradas eram de cinco e seis dias antes.
+  it('na estreia, a quinta e a sexta da semana passada estão dentro da janela', async () => {
+    const agora = new Date('2026-09-01T20:00:00Z'); // segunda
+    const quinta = new Date('2026-08-27T14:00:00Z');
+    const sexta = new Date('2026-08-28T14:00:00Z');
+
+    const desde = await rec.inicioDaVarredura(agora, 72);
+
+    expect(desde.getTime()).toBeLessThan(quinta.getTime());
+    expect(desde.getTime()).toBeLessThan(sexta.getTime());
+    // E com a janela normal de 72h nem a sexta seria alcançada — é
+    // exatamente essa a diferença que este teste tranca.
+    expect(agora.getTime() - 72 * 3600_000).toBeGreaterThan(sexta.getTime());
+  });
+
+  it('a janela de estreia vale UMA vez: com mensagem conhecida, manda a normal', async () => {
+    const lead = await criarLead();
+    const agora = new Date('2026-09-01T20:00:00Z');
+    const ultima = new Date('2026-09-01T19:00:00Z');
+
+    const conversa = await prisma.conversation.create({
+      data: {
+        id: `${lead.id}-sem-campanha`,
+        leadId: lead.id,
+        chatId: `${lead.telefoneNormalizado}@c.us`,
+        ultimaMensagemEm: ultima,
+      },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        direcao: 'RECEBIDA',
+        status: 'ENTREGUE',
+        texto: 'oi',
+        whatsappMessageId: `wa-estreia-${Date.now()}`,
+        recebidaEm: ultima,
+      },
+    });
+
+    // Sem isto a varredura releria dez dias de conversa a cada cinco
+    // minutos, para sempre.
+    const desde = await rec.inicioDaVarredura(agora, 72, 240);
+    expect(desde.getTime()).toBe(ultima.getTime() - 10 * 60_000);
+  });
+
+  it('quem pede uma janela explícita não leva o alargamento por cima', async () => {
+    const agora = new Date('2026-09-01T20:00:00Z');
+    // É o que o botão "reconciliar o dia X" faz: passa o mesmo valor
+    // nos dois, e a escolha da pessoa manda.
+    const desde = await rec.inicioDaVarredura(agora, 6, 6);
+    expect(desde.getTime()).toBe(agora.getTime() - 6 * 3600_000);
   });
 
   it('com mensagem conhecida, parte dela com folga para trás', async () => {
@@ -280,7 +343,9 @@ describe('recuperarMensagensPerdidas', () => {
     const { adapter, pedidos } = adapterCom([]);
     const agora = new Date('2026-08-15T12:00:00Z');
 
-    await rec.recuperarMensagensPerdidas(adapter, log, agora);
+    // Janelas explícitas nos dois: o assunto aqui é o adapter receber a
+    // data calculada, não qual janela vale.
+    await rec.recuperarMensagensPerdidas(adapter, log, agora, 24, 24);
 
     expect(pedidos).toHaveLength(1);
     expect(pedidos[0]!.getTime()).toBe(agora.getTime() - 24 * 3600_000);
@@ -508,6 +573,6 @@ describe('a marca deixada pelo reset de fábrica', () => {
     // passaria a ler tudo de novo sem nenhum sinal.
     const desde = await rec.inicioDaVarredura(agora);
     expect(Number.isNaN(desde.getTime())).toBe(false);
-    expect(desde.getTime()).toBe(agora.getTime() - 24 * 3600_000);
+    expect(desde.getTime()).toBe(agora.getTime() - 240 * 3600_000);
   });
 });

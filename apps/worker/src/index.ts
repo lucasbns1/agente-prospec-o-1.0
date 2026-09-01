@@ -288,6 +288,7 @@ async function main(): Promise<void> {
           adapter,
           log,
           janelaHoras: env.WHATSAPP_RECONCILIATION_WINDOW_HOURS,
+          janelaPrimeiraVezHoras: env.WHATSAPP_RECONCILIATION_FIRST_RUN_HOURS,
           origem: 'conexao',
         });
 
@@ -303,6 +304,7 @@ async function main(): Promise<void> {
           log,
           intervaloMinutos: env.WHATSAPP_RECONCILIATION_INTERVAL_MINUTES,
           janelaHoras: env.WHATSAPP_RECONCILIATION_WINDOW_HOURS,
+          janelaPrimeiraVezHoras: env.WHATSAPP_RECONCILIATION_FIRST_RUN_HOURS,
         });
       } catch (err) {
         // Recuperacao nao e caminho critico: falhar aqui nao pode

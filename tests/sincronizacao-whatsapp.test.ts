@@ -691,13 +691,16 @@ describe('a janela de quanto tempo olhar para trás', () => {
     const m = entrada(lead.telefoneNormalizado!, 'antiga demais', cemHoras);
     const { adapter } = adapterCom([m]);
 
-    // 72h não alcança...
-    const curta = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 72);
+    // 72h não alcança. O terceiro argumento fixa também a janela de
+    // estreia: sem ele, o banco sem nenhuma mensagem recebida acionaria
+    // o alargamento de dez dias e o assunto medido aqui — a janela
+    // normal — não seria o que decide.
+    const curta = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 72, 72);
     expect(curta.novas).toBe(0);
 
     // ...e é por isso que a janela é uma configuração, e não um número
     // cravado no código.
-    const longa = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 200);
+    const longa = await rec.recuperarMensagensPerdidas(adapter, log, new Date(), 200, 200);
     expect(longa.novas).toBe(1);
   });
 });
