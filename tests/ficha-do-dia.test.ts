@@ -33,8 +33,9 @@ const envio = (
   leadId: string,
   ordem: number,
   quando: Date,
-  nicho: string | null = 'Estética automotiva'
-): EnvioDaFicha => ({ leadId, nicho, ordem, etapaNome: null, quando });
+  nicho: string | null = 'Estética automotiva',
+  pais: string | null = 'Brasil'
+): EnvioDaFicha => ({ leadId, nicho, pais, ordem, etapaNome: null, quando });
 
 const resposta = (
   leadId: string,
@@ -316,5 +317,117 @@ describe('borda', () => {
 
     expect(r.total.responderam).toBe(1);
     expect(r.total.responderamPorEtapa[0]!.ordem).toBe(1);
+  });
+});
+
+// =============================================================================
+// PASSARAM DA MSG N
+// =============================================================================
+
+/**
+ * "Passou da etapa N" e "respondeu a etapa N" sao coisas diferentes.
+ *
+ * Responder e um ato do lead. Passar e um fato da sequencia: aquela
+ * pessoa recebeu a etapa seguinte, entao a N nao foi o fim da linha.
+ *
+ * Os dois divergem NOS DOIS SENTIDOS, e e por isso que ambos existem —
+ * um so contaria uma meia verdade sobre o funil.
+ */
+describe('Passaram da MSG N', () => {
+  it('quem recebeu a etapa 3 passou da 1 e da 2', () => {
+    const r = montar({
+      envios: [envio('a', 1, as(9)), envio('a', 2, as(10)), envio('a', 3, as(11))],
+    });
+
+    const passou = r.total.passaramDaEtapa;
+    expect(passou.find((e) => e.ordem === 1)?.leads).toBe(1);
+    expect(passou.find((e) => e.ordem === 2)?.leads).toBe(1);
+    // Da 3 ele NAO passou: e a ultima que ele recebeu.
+    expect(passou.find((e) => e.ordem === 3)).toBeUndefined();
+  });
+
+  it('quem parou na etapa 1 não passou de nada', () => {
+    const r = montar({ envios: [envio('a', 1, as(9))] });
+    expect(r.total.passaramDaEtapa).toHaveLength(0);
+  });
+
+  it('conta PESSOAS, e não mensagens', () => {
+    const r = montar({
+      envios: [
+        envio('a', 1, as(9)),
+        envio('a', 2, as(10)),
+        envio('b', 1, as(9)),
+        envio('b', 2, as(10)),
+      ],
+    });
+
+    expect(r.total.passaramDaEtapa.find((e) => e.ordem === 1)?.leads).toBe(2);
+  });
+
+  it('passar sem responder acontece — e é o caso da etapa que anda pelo relógio', () => {
+    const r = montar({
+      envios: [envio('a', 1, as(9)), envio('a', 2, as(10))],
+      // Nenhuma resposta.
+    });
+
+    expect(r.total.responderam).toBe(0);
+    // Mesmo sem responder, ele passou da 1: a 2 chegou nele.
+    expect(r.total.passaramDaEtapa.find((e) => e.ordem === 1)?.leads).toBe(1);
+  });
+
+  it('responder sem passar acontece — e é o caso de você assumir a conversa', () => {
+    const r = montar({
+      envios: [envio('a', 1, as(9))],
+      respostas: [resposta('a', as(10))],
+    });
+
+    expect(r.total.responderam).toBe(1);
+    // A etapa 2 nunca saiu: a sequência parou ali.
+    expect(r.total.passaramDaEtapa).toHaveLength(0);
+  });
+
+  it('usa o histórico inteiro, e não só o dia', () => {
+    const r = montar({
+      envios: [envio('a', 1, as(9))],
+      // A etapa 2 saiu DOIS DIAS depois. O recorte da ficha é a turma
+      // que recebeu algo naquele dia; o que aconteceu com ela depois é
+      // justamente o que se quer saber.
+      historico: [envio('a', 1, as(9)), envio('a', 2, depoisAs(2, 9))],
+    });
+
+    expect(r.total.passaramDaEtapa.find((e) => e.ordem === 1)?.leads).toBe(1);
+  });
+});
+
+// =============================================================================
+// O PAÍS
+// =============================================================================
+
+describe('País', () => {
+  it('mostra o país quando todos os leads concordam', () => {
+    const r = montar({
+      envios: [envio('a', 1, as(9)), envio('b', 1, as(9))],
+    });
+    expect(r.total.pais).toBe('Brasil');
+  });
+
+  it('some quando o cartão mistura países', () => {
+    const r = montar({
+      envios: [
+        envio('a', 1, as(9), 'Estética automotiva', 'Brasil'),
+        envio('b', 1, as(9), 'Estética automotiva', 'Portugal'),
+      ],
+    });
+
+    // Dizer "Brasil" para um grupo que tem um português dentro faria a
+    // linha descrever um recorte que não é o dos números ao lado.
+    expect(r.total.pais).toBeNull();
+  });
+
+  it('some quando ninguém informou', () => {
+    const r = montar({
+      envios: [envio('a', 1, as(9), 'Estética automotiva', null)],
+    });
+    expect(r.total.pais).toBeNull();
   });
 });

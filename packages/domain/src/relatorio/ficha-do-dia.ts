@@ -48,10 +48,11 @@
 import type {
   FichaDoDia,
   FichaDoNicho,
+  PassouDaEtapa,
   RespostaPorEtapa,
 } from '@prospector/shared';
 
-export type { FichaDoDia, FichaDoNicho, RespostaPorEtapa };
+export type { FichaDoDia, FichaDoNicho, PassouDaEtapa, RespostaPorEtapa };
 
 /** Piso de confianca. O mesmo do resto do sistema. */
 const CONFIANCA_MINIMA = 50;
@@ -80,6 +81,8 @@ const PEDIU_PREVIA = new Set(['PREVIA']);
 export interface EnvioDaFicha {
   leadId: string;
   nicho: string | null;
+  /** `null` quando a planilha nao informou. Nunca deduzir. */
+  pais: string | null;
   ordem: number;
   etapaNome: string | null;
   quando: Date;
@@ -108,6 +111,22 @@ export interface EstadoDaFicha {
   status: string;
 }
 
+/**
+ * O pais do cartao, ou `null` quando ha mais de um.
+ *
+ * Afirmar "Brasil" num grupo que tem um portugues dentro e pior do que
+ * nao afirmar nada: o numero da ficha passaria a descrever um recorte
+ * que nao e o que a linha diz.
+ */
+function paisUnico(envios: EnvioDaFicha[]): string | null {
+  const vistos = new Set<string>();
+  for (const e of envios) {
+    const p = e.pais?.trim();
+    if (p) vistos.add(p);
+  }
+  return vistos.size === 1 ? [...vistos][0]! : null;
+}
+
 function rotuloDaEtapa(ordem: number, nome: string | null): string {
   const proprio = nome?.trim();
   if (proprio) return proprio;
@@ -119,10 +138,12 @@ function rotuloDaEtapa(ordem: number, nome: string | null): string {
 function fichaVazia(nicho: string): FichaDoNicho {
   return {
     nicho,
+    pais: null,
     mandei: 0,
     pessoas: 0,
     responderam: 0,
     responderamPorEtapa: [],
+    passaramDaEtapa: [],
     pediramPrevia: 0,
     perguntaramPreco: 0,
     fecharam: 0,
@@ -143,6 +164,7 @@ function montarUmaFicha(p: {
 }): FichaDoNicho {
   const f = fichaVazia(p.nicho);
   f.mandei = p.envios.length;
+  f.pais = paisUnico(p.envios);
 
   const leads = new Set(p.envios.map((e) => e.leadId));
   f.pessoas = leads.size;
@@ -205,6 +227,41 @@ function montarUmaFicha(p: {
 
   f.responderam = respondeuAlguma.size;
   f.responderamPorEtapa = [...respondeuEtapa.entries()]
+    .map(([ordem, v]) => ({ ordem, rotulo: v.rotulo, leads: v.leads.size }))
+    .sort((a, b) => a.ordem - b.ordem);
+
+  // --- Quem PASSOU de cada etapa ---
+  //
+  // "Passou da 2" quer dizer "recebeu alguma etapa depois da 2". Nao e o
+  // mesmo que ter respondido a 2: uma etapa que anda pelo relogio faz
+  // gente passar sem responder, e uma que espera resposta faz gente
+  // responder e nao passar, porque voce assumiu a conversa antes.
+  //
+  // A conta olha o historico INTEIRO daquele lead, e nao so o dia: o
+  // recorte da ficha e a turma que recebeu algo naquele dia, e o que
+  // aconteceu com ela depois e justamente o que se quer saber.
+  const passou = new Map<number, { rotulo: string; leads: Set<string> }>();
+  const rotulos = new Map<number, string>();
+  for (const e of p.historicoDeEnvios) {
+    if (!leads.has(e.leadId)) continue;
+    if (!rotulos.has(e.ordem)) rotulos.set(e.ordem, rotuloDaEtapa(e.ordem, e.etapaNome));
+  }
+
+  for (const [leadId, historico] of porLead) {
+    const maior = historico.reduce((m, e) => Math.max(m, e.ordem), 0);
+    // Toda etapa ABAIXO da maior que ele recebeu foi ultrapassada.
+    for (const ordem of rotulos.keys()) {
+      if (ordem >= maior) continue;
+      const atual = passou.get(ordem) ?? {
+        rotulo: rotulos.get(ordem)!,
+        leads: new Set<string>(),
+      };
+      atual.leads.add(leadId);
+      passou.set(ordem, atual);
+    }
+  }
+
+  f.passaramDaEtapa = [...passou.entries()]
     .map(([ordem, v]) => ({ ordem, rotulo: v.rotulo, leads: v.leads.size }))
     .sort((a, b) => a.ordem - b.ordem);
 

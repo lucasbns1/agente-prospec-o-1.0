@@ -621,6 +621,10 @@ model Lead {
   bairro     String?
   cidade     String?
   estado     String?
+  /// Pais do lead. Padrao "Brasil" — a base inteira e brasileira hoje, e
+  /// o campo existe para o dia em que deixar de ser. E ele que a ficha
+  /// do dia usa para separar "Brasil" de "Portugal" num relatorio so.
+  pais       String?  @default("Brasil")
   cep        String?
 
   // ---- Presenca digital ----

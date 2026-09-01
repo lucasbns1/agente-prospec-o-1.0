@@ -368,7 +368,9 @@ export async function fichaDoDia(quando: Date): Promise<FichaDoDia> {
       processedAt: true,
       createdAt: true,
       campaignStep: { select: { ordem: true, nome: true } },
-      lead: { select: { captureSession: { select: { nicho: true } } } },
+      lead: {
+        select: { pais: true, captureSession: { select: { nicho: true } } },
+      },
     },
   });
 
@@ -377,6 +379,7 @@ export async function fichaDoDia(quando: Date): Promise<FichaDoDia> {
     .map((l) => ({
       leadId: l.leadId,
       nicho: l.lead?.captureSession?.nicho ?? null,
+      pais: l.lead?.pais ?? null,
       ordem: l.campaignStep!.ordem,
       etapaNome: l.campaignStep!.nome,
       quando: l.processedAt ?? l.createdAt,
@@ -432,7 +435,10 @@ export async function fichaDoDia(quando: Date): Promise<FichaDoDia> {
       .filter((l) => l.campaignStep !== null)
       .map((l) => ({
         leadId: l.leadId,
+        // O historico so serve para ordenar etapas no tempo: nicho e
+        // pais vem do recorte do dia, la em cima.
         nicho: null,
+        pais: null,
         ordem: l.campaignStep!.ordem,
         etapaNome: l.campaignStep!.nome,
         quando: l.processedAt ?? l.createdAt,

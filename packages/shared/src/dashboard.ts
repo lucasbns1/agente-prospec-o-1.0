@@ -372,8 +372,38 @@ export interface RespostaPorEtapa {
   leads: number;
 }
 
+/**
+ * Quantas pessoas ANDARAM alem de uma etapa.
+ *
+ * ============================================================
+ * NAO E A MESMA COISA QUE "RESPONDERAM"
+ * ============================================================
+ * Responder a MSG 2 e um ato do lead. Passar da MSG 2 e um fato da
+ * sequencia: aquela pessoa recebeu a MSG 3, entao a 2 nao foi o fim da
+ * linha para ela.
+ *
+ * Os dois numeros divergem nos dois sentidos, e e por isso que ambos
+ * existem. Uma etapa que anda pelo relogio faz gente PASSAR sem ter
+ * RESPONDIDO; uma etapa que espera resposta faz gente RESPONDER e ainda
+ * assim nao passar, porque voce assumiu a conversa antes.
+ */
+export interface PassouDaEtapa {
+  ordem: number;
+  /** "MSG 1", "MSG 2"… ou o nome que a etapa tiver. */
+  rotulo: string;
+  /** PESSOAS que receberam alguma etapa POSTERIOR a esta. */
+  leads: number;
+}
+
 export interface FichaDoNicho {
   nicho: string;
+  /**
+   * Pais dos leads deste cartao, quando todos concordam.
+   *
+   * `null` quando o cartao mistura paises — dizer "Brasil" para um
+   * grupo que tem portugueses dentro seria pior do que nao dizer nada.
+   */
+  pais: string | null;
   /** Mensagens que sairam naquele dia. */
   mandei: number;
   /** Pessoas distintas que receberam alguma coisa. */
@@ -382,7 +412,18 @@ export interface FichaDoNicho {
   responderam: number;
   /** A qual etapa cada uma respondeu. */
   responderamPorEtapa: RespostaPorEtapa[];
-  /** So a IA produz este sinal — fica em zero com o Gemini desligado. */
+  /** Quantas andaram alem de cada etapa. Ver `PassouDaEtapa`. */
+  passaramDaEtapa: PassouDaEtapa[];
+  /**
+   * Quantas PEDIRAM a previa.
+   *
+   * ATENCAO ao rotulo na tela: isto e quem pediu, e NAO quem abriu. O
+   * sistema nao tem como saber se o site foi visto — para isso a
+   * mensagem precisaria levar um link rastreado, que ainda nao existe.
+   * Chamar isto de "viram o site" seria inventar um numero.
+   *
+   * So a IA produz este sinal — fica em zero com o Gemini desligado.
+   */
   pediramPrevia: number;
   perguntaramPreco: number;
   fecharam: number;

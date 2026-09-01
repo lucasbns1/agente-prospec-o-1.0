@@ -426,7 +426,18 @@ function FichaDoDiaCard({ chave }: { chave: string }) {
               key={f.nicho}
               className="rounded-lg border border-[var(--color-borda)] p-4"
             >
-              <p className="mb-3 text-sm font-semibold">{f.nicho}</p>
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold">{f.nicho}</p>
+                {/* O país só aparece quando TODOS os leads do cartão
+                    concordam. Escrever "Brasil" num grupo que tem um
+                    português dentro seria descrever um recorte que não
+                    é o do número ao lado. */}
+                {f.pais && (
+                  <span className="text-xs text-[var(--color-texto-fraco)]">
+                    {f.pais}
+                  </span>
+                )}
+              </div>
 
               <dl className="space-y-1.5 text-sm">
                 <Linha rotulo="Mandei" valor={f.mandei} nota={`${f.pessoas} pessoas`} />
@@ -446,47 +457,72 @@ function FichaDoDiaCard({ chave }: { chave: string }) {
                   ))
                 )}
 
-                <Linha rotulo="Pediram prévia/site" valor={f.pediramPrevia} />
+                {/* ============================================
+                    PASSARAM DA MSG N
+                    ============================================
+                    Responder a uma etapa é um ato do lead; passar dela é
+                    um fato da sequência — aquela pessoa recebeu a etapa
+                    seguinte. Os dois divergem nos dois sentidos, e é por
+                    isso que ambos aparecem: uma etapa que anda pelo
+                    relógio faz gente passar sem responder, e uma que
+                    espera resposta faz gente responder sem passar,
+                    porque você assumiu a conversa antes. */}
+                {f.passaramDaEtapa.map((e) => (
+                  <Linha
+                    key={`passou-${e.ordem}`}
+                    rotulo={`Passaram da ${e.rotulo.toLowerCase()}`}
+                    valor={e.leads}
+                  />
+                ))}
+
+                {/* "Aceitaram ver prévia", e NÃO "viram o site".
+                    O sistema conta quem PEDIU; saber quem ABRIU exigiria
+                    um link rastreado na mensagem, que não existe. O
+                    rótulo diz o que o número é. */}
+                <Linha rotulo="Aceitaram ver prévia" valor={f.pediramPrevia} />
                 <Linha rotulo="Perguntaram preço" valor={f.perguntaramPreco} />
                 <Linha rotulo="Fecharam" valor={f.fecharam} />
 
-                <div className="flex items-baseline justify-between gap-3 pt-1">
-                  <dt className="text-[var(--color-texto-suave)]">
-                    Objeção mais comum
-                  </dt>
-                  <dd className="text-right">
-                    {f.objecaoMaisComum ? (
-                      <>
-                        <span className="font-medium">
-                          “{f.objecaoMaisComum.texto}”
-                        </span>{' '}
-                        <span className="num text-xs text-[var(--color-texto-fraco)]">
-                          ({f.objecaoMaisComum.vezes}×)
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-[var(--color-texto-fraco)]">—</span>
-                    )}
-                  </dd>
-                </div>
               </dl>
 
-              {f.objecoes.length > 1 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {f.objecoes.slice(1, 6).map((o) => (
-                    <Badge key={o.texto} variant="neutro">
-                      {o.texto} ({o.vezes})
-                    </Badge>
-                  ))}
-                </div>
-              )}
+              {/* ============================================
+                  AS OBJEÇÕES, TODAS, COM O NÚMERO DE CADA
+                  ============================================
+                  Antes só a mais comum ganhava linha e o resto virava
+                  etiqueta pequena. Mas a segunda objeção é o que decide
+                  se vale mudar o texto da abordagem — e ela estava
+                  escondida. Agora as duas aparecem do mesmo jeito. */}
+              <div className="mt-3 border-t border-[var(--color-borda)] pt-2">
+                <p className="mb-1.5 text-[var(--color-texto-suave)] text-sm">
+                  Objeções
+                </p>
+                {f.objecoes.length === 0 ? (
+                  <p className="text-sm text-[var(--color-texto-fraco)]">—</p>
+                ) : (
+                  <dl className="space-y-1 text-sm">
+                    {f.objecoes.map((o) => (
+                      <div
+                        key={o.texto}
+                        className="flex items-baseline justify-between gap-3"
+                      >
+                        <dt className="min-w-0 text-[var(--color-texto-suave)]">
+                          “{o.texto}”
+                        </dt>
+                        <dd className="num shrink-0 font-medium tabular-nums">
+                          {formatarNumero(o.vezes)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </div>
             </div>
           ))}
         </div>
 
         {semLeitura && (
           <p className="mt-3 text-[11px] text-[var(--color-texto-fraco)]">
-            “Pediram prévia” e “objeção” só aparecem depois que o Gemini lê as
+            “Aceitaram ver prévia” e “objeções” só aparecem depois que o Gemini lê as
             respostas — o dicionário não tem como extrair essas duas. Use o
             botão acima; ele lê inclusive as conversas que você tocou na mão.
           </p>
