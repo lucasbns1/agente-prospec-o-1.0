@@ -128,6 +128,84 @@ export async function criarProvedorWhatsAppWeb(
   const { Client, LocalAuth } = mod.default ?? mod;
 
   // ============================================================
+  // O BUILD FIXADO VAI PARA O DISCO, E NAO E BAIXADO NA HORA
+  // ============================================================
+  // A primeira versao usava o cache REMOTO da biblioteca: ela baixava o
+  // build sozinha, no meio da inicializacao. Em uso real isso falhou em
+  // silencio — `strict: false` faz um download que nao deu certo cair no
+  // padrao sem dizer nada, e o log mostrava a versao pedida ao lado da
+  // versao errada carregada, sem explicar a diferenca.
+  //
+  // Agora o download e NOSSO: acontece aqui, antes de o Chromium subir,
+  // com erro visivel. E acontece UMA vez — da segunda em diante o
+  // arquivo esta no disco e a conexao nao depende mais de rede.
+  //
+  // Falhar aqui nao impede o worker de conectar: perder a versao fixada
+  // e um problema, ficar sem WhatsApp e outro bem maior.
+  async function garantirBuildNoDisco(
+    versao: string,
+    url: string,
+    pasta: string
+  ): Promise<boolean> {
+    const { mkdir, writeFile, stat } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const arquivo = join(pasta, `${versao}.html`);
+
+    try {
+      const info = await stat(arquivo);
+      // Um arquivo minusculo e um download interrompido, nao um build.
+      // Aceita-lo faria a pagina do WhatsApp carregar vazia.
+      if (info.size > 100_000) {
+        log('Build do WhatsApp Web ja esta no disco', { versao, bytes: info.size });
+        return true;
+      }
+      log('Build no disco esta truncado; baixando de novo', {
+        versao,
+        bytes: info.size,
+      });
+    } catch {
+      // Nao existe ainda. Segue para o download.
+    }
+
+    const alvo = url.replace('{version}', versao);
+    try {
+      const r = await fetch(alvo);
+      if (!r.ok) {
+        log('NAO foi possivel baixar o build fixado do WhatsApp Web', {
+          versao,
+          http: r.status,
+          url: alvo,
+          efeito: 'seguindo com a versao que o WhatsApp servir',
+        });
+        return false;
+      }
+
+      const html = await r.text();
+      if (html.length < 100_000) {
+        log('O build baixado veio pequeno demais para ser valido', {
+          versao,
+          bytes: html.length,
+          efeito: 'seguindo com a versao que o WhatsApp servir',
+        });
+        return false;
+      }
+
+      await mkdir(pasta, { recursive: true });
+      await writeFile(arquivo, html, 'utf-8');
+      log('Build do WhatsApp Web baixado', { versao, bytes: html.length, pasta });
+      return true;
+    } catch (err) {
+      log('Falha de rede ao baixar o build fixado do WhatsApp Web', {
+        versao,
+        url: alvo,
+        erro: err instanceof Error ? err.message : String(err),
+        efeito: 'seguindo com a versao que o WhatsApp servir',
+      });
+      return false;
+    }
+  }
+
+  // ============================================================
   // QUAL BUILD DO WHATSAPP WEB CARREGAR
   // ============================================================
   // Sem isto, a pagina carrega o que o WhatsApp servir naquele dia — e
@@ -145,20 +223,38 @@ export async function criarProvedorWhatsAppWeb(
   // acervo, a biblioteca cai no comportamento padrao em vez de recusar
   // conectar. Perder a versao fixada e um problema; perder a conexao do
   // WhatsApp e outro, bem maior.
-  const fixarVersao =
+  const pastaBuilds = opcoes.webVersionCachePath ?? './data/whatsapp-web-versions';
+
+  const temBuild =
     opcoes.webVersion && opcoes.webVersionUrl
+      ? await garantirBuildNoDisco(
+          opcoes.webVersion,
+          opcoes.webVersionUrl,
+          pastaBuilds
+        )
+      : false;
+
+  // O cache LOCAL, e nao o remoto: o arquivo ja esta no disco, posto la
+  // por nos. So e ligado quando o build existe de fato — configurar a
+  // fixacao sem ter o arquivo produziria o mesmo silencio de antes.
+  const fixarVersao =
+    temBuild && opcoes.webVersion
       ? {
           webVersion: opcoes.webVersion,
           webVersionCache: {
-            type: 'remote' as const,
-            remotePath: opcoes.webVersionUrl,
+            type: 'local' as const,
+            path: pastaBuilds,
             strict: false,
           },
         }
       : {};
 
   if (opcoes.webVersion) {
-    log('Fixando a versao do WhatsApp Web', { versao: opcoes.webVersion });
+    log('Fixando a versao do WhatsApp Web', {
+      versao: opcoes.webVersion,
+      // Sem isto, "pedi" e "consegui" ficariam indistinguiveis de novo.
+      buildDisponivel: temBuild,
+    });
   }
 
   const cliente = new Client({

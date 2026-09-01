@@ -143,5 +143,12 @@ export interface OpcoesProvedor {
   webVersion?: string;
   /** De onde baixar o build fixado. `{version}` e substituido. */
   webVersionUrl?: string;
+  /**
+   * Onde guardar os builds baixados.
+   *
+   * O download acontece UMA vez; da segunda em diante a conexao nao
+   * depende mais de rede para carregar a versao fixada.
+   */
+  webVersionCachePath?: string;
   logger?: (mensagem: string, dados?: Record<string, unknown>) => void;
 }

@@ -32,6 +32,8 @@ export interface WhatsAppFactoryOptions {
   webVersion?: string;
   /** De onde baixar o build fixado. `{version}` e substituido. */
   webVersionUrl?: string;
+  /** Onde guardar os builds baixados. Baixa uma vez, reusa sempre. */
+  webVersionCachePath?: string;
   logger?: (mensagem: string, dados?: Record<string, unknown>) => void;
   /**
    * Provedor pronto, para teste. Quando presente, a biblioteca real nao
@@ -65,6 +67,9 @@ export async function criarWhatsAppAdapter(
         ...(options.chromePath ? { chromePath: options.chromePath } : {}),
         ...(options.webVersion ? { webVersion: options.webVersion } : {}),
         ...(options.webVersionUrl ? { webVersionUrl: options.webVersionUrl } : {}),
+        ...(options.webVersionCachePath
+          ? { webVersionCachePath: options.webVersionCachePath }
+          : {}),
         ...(options.logger ? { logger: options.logger } : {}),
       });
     })());
