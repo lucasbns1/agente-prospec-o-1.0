@@ -25,6 +25,7 @@ import {
   requalificarLeads,
   montarWhere,
   explicarContagem,
+  restringeAPlanilha,
   type FiltrosCampanha,
 } from '../services/campaign-service.js';
 
@@ -346,9 +347,14 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
     { preHandler: exigirAutenticacao },
     async (request) => {
       const { id } = idSchema.parse(request.params);
-      const { status } = z
+      const { status, permitirTodosOsLeads } = z
         .object({
           status: z.enum(['RASCUNHO', 'ATIVA', 'PAUSADA', 'CONCLUIDA', 'ARQUIVADA']),
+          // A confirmacao explicita de "sim, quero mandar para o CRM
+          // inteiro". O padrao e `false` de proposito: quem nao passa
+          // nada esta no caso comum, e o caso comum nao pode ser o
+          // perigoso.
+          permitirTodosOsLeads: z.boolean().default(false),
         })
         .parse(request.body);
 
@@ -365,6 +371,39 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
           'A campanha precisa de pelo menos uma etapa ativa antes de ser ativada',
           422,
           'CAMPANHA_SEM_ETAPA'
+        );
+      }
+
+      // ============================================================
+      // NAO DEIXA ATIVAR CAMPANHA SEM PLANILHA ESCOLHIDA
+      // ============================================================
+      // Uma campanha nao guarda copia da planilha: guarda um FILTRO. Sem
+      // `importIds` nem `captureSessionIds`, o filtro nao restringe nada
+      // e o publico vira o CRM INTEIRO — toda lead ja importada, de
+      // qualquer lista, nicho ou cidade.
+      //
+      // Isso aconteceu de verdade: uma campanha de Muzambinho, Guaxupe e
+      // Alfenas saiu mandando mensagem para leads de Osasco e Sao Paulo,
+      // de uma importacao completamente diferente. O unico aviso era uma
+      // frase cinza na tela de filtros ("Nenhuma escolhida — a campanha
+      // considera todos os leads"), que ninguem le antes de clicar em
+      // Ativar.
+      //
+      // O custo de errar aqui e mandar mensagem para a pessoa errada, e
+      // isso nao tem desfazer. Entao mandar para todo mundo deixa de ser
+      // o que acontece por descuido e passa a exigir uma escolha
+      // explicita: `permitirTodosOsLeads: true` no corpo do pedido.
+      const semPlanilha = !restringeAPlanilha(
+        (campanha.filtros ?? {}) as FiltrosCampanha
+      );
+
+      if (status === 'ATIVA' && semPlanilha && !permitirTodosOsLeads) {
+        throw new AppError(
+          'Esta campanha nao tem planilha escolhida — do jeito que esta, ela ' +
+            'manda para TODOS os leads do CRM, de todas as listas. Escolha as ' +
+            'planilhas em Publico, ou confirme que e isso mesmo que voce quer.',
+          422,
+          'CAMPANHA_SEM_PLANILHA'
         );
       }
 

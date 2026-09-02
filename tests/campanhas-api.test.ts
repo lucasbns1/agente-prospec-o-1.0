@@ -496,3 +496,57 @@ describe('pausar campanha cancela o que ainda nao saiu', () => {
     expect(canceladas).toBe(2);
   });
 });
+
+// =============================================================================
+// UMA CAMPANHA SEM PLANILHA PEGA O CRM INTEIRO
+// =============================================================================
+
+/**
+ * O caso real: uma campanha chamada "MUZAMBINHO GUAXUPE ALFENAS" saiu
+ * mandando mensagem para leads de Osasco e Sao Paulo, de uma importacao
+ * completamente diferente.
+ *
+ * A causa nao foi um bug de SQL: foi o publico. Uma campanha guarda um
+ * FILTRO, e nao uma copia da planilha. Sem lote escolhido, o filtro nao
+ * restringe nada.
+ *
+ * O unico aviso era uma frase cinza na tela de filtros — "Nenhuma
+ * escolhida, a campanha considera todos os leads" — que ninguem le antes
+ * de clicar em Ativar. Agora a rota de ativacao recusa, e quem quiser
+ * mesmo mandar para todo mundo precisa dizer isso explicitamente.
+ */
+describe('restringeAPlanilha — o publico esta preso a uma lista?', () => {
+  it('sem lote nenhum, a campanha pega o CRM inteiro', () => {
+    expect(servico.restringeAPlanilha({})).toBe(false);
+  });
+
+  it('lote por arquivo restringe', () => {
+    expect(servico.restringeAPlanilha({ importIds: ['abc'] })).toBe(true);
+  });
+
+  it('lote por sessao de captura restringe', () => {
+    expect(servico.restringeAPlanilha({ captureSessionIds: ['abc'] })).toBe(true);
+  });
+
+  it('lista vazia nao restringe — e o caso que passava despercebido', () => {
+    // `importIds: []` chega da tela quando a pessoa marca e desmarca uma
+    // planilha. Ler isso como "tem lote" faria a guarda deixar passar
+    // exatamente o estado que ela existe para pegar.
+    expect(servico.restringeAPlanilha({ importIds: [], captureSessionIds: [] })).toBe(
+      false
+    );
+  });
+
+  it('cidade e categoria NAO contam como restricao de planilha', () => {
+    // Elas refinam DENTRO do publico; nao dizem de qual planilha ele
+    // sai. Uma campanha filtrada por "Alfenas" ainda pega leads de
+    // Alfenas de qualquer importacao ja feita — que e como leads de
+    // Osasco NAO entrariam, mas leads de Alfenas de outra lista sim.
+    expect(
+      servico.restringeAPlanilha({
+        cidades: ['Alfenas'],
+        categorias: ['Estetica automotiva'],
+      } as never)
+    ).toBe(false);
+  });
+});

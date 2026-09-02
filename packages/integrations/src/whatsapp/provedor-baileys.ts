@@ -55,7 +55,7 @@ import type {
   MensagemProvedor,
 } from './provedor.js';
 import { exigirPermissaoDeEnvioReal } from './guarda-envio.js';
-import { ArquivoDeMensagens, traduzir } from './baileys-traducao.js';
+import { ArquivoDeMensagens, escolherJid, traduzir } from './baileys-traducao.js';
 import { caminhoDoArquivo, carregarArquivo, salvarArquivo } from './arquivo-em-disco.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -100,6 +100,11 @@ const TTL_QR_MS = 60_000;
  * pedacos virarem uma gravacao so.
  */
 const ESPERA_PARA_GRAVAR_MS = 2_000;
+
+/** Só os digitos de `5535998598710@c.us` — e o que `onWhatsApp` espera. */
+function numeroDoChatId(chatId: string): string {
+  return chatId.split('@')[0]?.replace(/\D/g, '') ?? '';
+}
 
 export async function criarProvedorBaileys(
   opcoes: OpcoesProvedor
@@ -381,7 +386,41 @@ export async function criarProvedorBaileys(
 
       if (!sock) throw new Error('WhatsApp nao conectado');
 
-      const r = await sock.sendMessage(chatId, { text: texto });
+      // ============================================================
+      // PERGUNTAR O ENDERECO ANTES DE MANDAR
+      // ============================================================
+      // Mandar para o endereco que NOS montamos foi o defeito que fez 50
+      // mensagens saírem para lugar nenhum: para contas registradas antes
+      // do nono digito, `5535998598710@c.us` nao e a conta de ninguem, e
+      // o envio para um endereco assim NAO da erro.
+      //
+      // Quem sabe o endereco e o WhatsApp. Perguntamos, e usamos a
+      // resposta dele — nunca a nossa suposicao.
+      const escolha = escolherJid(chatId, await sock.onWhatsApp(numeroDoChatId(chatId)));
+
+      if (!escolha.ok) {
+        // As duas causas pedem acoes OPOSTAS, entao elas nao podem virar
+        // o mesmo erro: "nao tem WhatsApp" e definitivo e o lead sai da
+        // fila; "nao consegui perguntar" e temporario e vale tentar de
+        // novo. O que nao pode acontecer, em nenhum dos dois, e o envio
+        // ser dado como feito.
+        throw new Error(
+          escolha.motivo === 'nao-tem-whatsapp'
+            ? `Este numero nao tem conta de WhatsApp: ${chatId}`
+            : `Nao consegui confirmar o endereco no WhatsApp: ${chatId}`
+        );
+      }
+
+      if (escolha.mudou) {
+        // Vale uma linha de log: e o nono digito aparecendo, e ver isso
+        // acontecer e o que prova que a correcao esta trabalhando.
+        log('O endereco real no WhatsApp e diferente do numero do lead', {
+          pedido: chatId,
+          real: escolha.jid,
+        });
+      }
+
+      const r = await sock.sendMessage(escolha.jid, { text: texto });
       const id = r?.key?.id;
       if (!id) throw new Error('O WhatsApp nao devolveu o id da mensagem enviada');
 

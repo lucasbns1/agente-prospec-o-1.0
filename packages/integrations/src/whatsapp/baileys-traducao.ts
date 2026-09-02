@@ -244,6 +244,81 @@ export function traduzir(m: MensagemBaileys): MensagemProvedor | null {
  * respondeu uma vez, que e justamente quem interessa, seria o primeiro a
  * sumir.
  */
+/**
+ * Qual endereco usar para enviar, dado o que o WhatsApp respondeu.
+ *
+ * ============================================================
+ * O DEFEITO QUE ISTO CONSERTA — O NONO DIGITO
+ * ============================================================
+ * Montavamos o endereco colando `@c.us` nos digitos do lead e mandavamos
+ * para ali, sem perguntar nada a ninguem. Para Sao Paulo isso funciona.
+ * Para o resto do Brasil, muitas vezes nao.
+ *
+ * O caso real, com o print do CRM ao lado do print do WhatsApp:
+ *
+ *   CRM:      5535998598710  "Boa tarde!"  ENVIADA
+ *   WhatsApp: +55 35 9859-8710 — conversa VAZIA
+ *
+ * Repare no numero que o WhatsApp mostra: ele tem um digito a MENOS. A
+ * conta daquela pessoa foi registrada antes de o nono digito existir, e
+ * o endereco de verdade dela e `553598598710@s.whatsapp.net`. Mandamos
+ * para `5535998598710@c.us`, que nao e a conta de ninguem.
+ *
+ * O envio nao deu erro. Nao ha para quem dar erro: o endereco e
+ * sintaticamente valido, so nao pertence a nenhuma conta. A mensagem
+ * saiu do CRM, foi marcada ENVIADA, e nao chegou em lugar nenhum.
+ *
+ * Isso explica o padrao inteiro do relato: as unicas mensagens que
+ * apareceram no celular foram as de DDD 11, e as de DDD 35 — a campanha
+ * de Minas — sumiram todas.
+ *
+ * ============================================================
+ * A REGRA
+ * ============================================================
+ * Quem sabe o endereco de uma conta e o WhatsApp, e ele responde isso em
+ * `onWhatsApp`. Entao a regra e simples: perguntar, e usar a resposta.
+ *
+ * Nao tentamos adivinhar quando tirar ou por o nono digito. Regra
+ * inventada erra nos dois sentidos, e o custo de errar e mandar mensagem
+ * para a pessoa errada.
+ */
+export interface RespostaOnWhatsApp {
+  jid?: string;
+  exists?: boolean;
+}
+
+export type EscolhaDeJid =
+  | { ok: true; jid: string; mudou: boolean }
+  | { ok: false; motivo: 'nao-tem-whatsapp' | 'sem-resposta' };
+
+export function escolherJid(
+  chatIdPedido: string,
+  resposta: RespostaOnWhatsApp[] | null | undefined
+): EscolhaDeJid {
+  // Sem resposta NAO e "nao tem WhatsApp": e "nao consegui perguntar".
+  // Tratar os dois como a mesma coisa faria uma falha de rede descartar
+  // a lista inteira de leads como invalida.
+  if (!Array.isArray(resposta) || resposta.length === 0) {
+    return { ok: false, motivo: 'sem-resposta' };
+  }
+
+  const primeira = resposta[0];
+  if (primeira?.exists !== true || typeof primeira.jid !== 'string' || !primeira.jid) {
+    return { ok: false, motivo: 'nao-tem-whatsapp' };
+  }
+
+  // Comparacao pelos DIGITOS, e nao pela string inteira: o pedido vem
+  // como `...@c.us` e a resposta vem como `...@s.whatsapp.net`. Comparar
+  // as strings acusaria mudanca em todo envio e o log perderia o valor.
+  const digitos = (s: string): string => s.split('@')[0]?.replace(/\D/g, '') ?? '';
+
+  return {
+    ok: true,
+    jid: primeira.jid,
+    mudou: digitos(primeira.jid) !== digitos(chatIdPedido),
+  };
+}
+
 export class ArquivoDeMensagens {
   private readonly porConversa = new Map<string, MensagemProvedor[]>();
 

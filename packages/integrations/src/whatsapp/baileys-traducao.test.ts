@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ArquivoDeMensagens,
   ehGrupo,
+  escolherJid,
   telefoneDoJid,
   textoDaMensagem,
   tipoDaMensagem,
@@ -400,5 +401,87 @@ describe('avisos do protocolo não são mensagens', () => {
     expect(
       traduzir(msg({ message: { messageContextInfo: { deviceListMetadataVersion: 2 } } }))
     ).toBeNull();
+  });
+});
+
+// =============================================================================
+// O NONO DIGITO — POR QUE 50 MENSAGENS SAIRAM PARA LUGAR NENHUM
+// =============================================================================
+
+/**
+ * O caso real, com o print do CRM ao lado do print do WhatsApp:
+ *
+ *   CRM:      5535998598710  "Boa tarde!"  ENVIADA
+ *   WhatsApp: +55 35 9859-8710 — conversa VAZIA
+ *
+ * O numero do cliente EXISTE. O endereco que montamos e que nao existia:
+ * um digito a mais. E mandar para um endereco assim nao da erro nenhum —
+ * ele e valido, so nao e a conta de ninguem.
+ *
+ * As unicas mensagens que chegaram foram as de DDD 11, onde o nono
+ * digito e obrigatorio. As de DDD 35 sumiram todas.
+ */
+describe('escolherJid — qual endereco usar de verdade', () => {
+  it('usa o endereco que o WhatsApp devolveu, e nao o que montamos', () => {
+    const r = escolherJid('5535998598710@c.us', [
+      { jid: '553598598710@s.whatsapp.net', exists: true },
+    ]);
+
+    expect(r).toEqual({
+      ok: true,
+      jid: '553598598710@s.whatsapp.net',
+      mudou: true,
+    });
+  });
+
+  it('quando bate, nao acusa mudanca — mesmo com sufixo diferente', () => {
+    const r = escolherJid('5511965776158@c.us', [
+      { jid: '5511965776158@s.whatsapp.net', exists: true },
+    ]);
+
+    // A comparacao e pelos DIGITOS. Comparar as strings inteiras
+    // acusaria mudanca em todo envio (`@c.us` nunca e `@s.whatsapp.net`)
+    // e a linha de log perderia todo o valor.
+    expect(r).toEqual({
+      ok: true,
+      jid: '5511965776158@s.whatsapp.net',
+      mudou: false,
+    });
+  });
+
+  it('numero sem conta no WhatsApp NAO vira envio', () => {
+    const r = escolherJid('5511900000000@c.us', [
+      { jid: '5511900000000@s.whatsapp.net', exists: false },
+    ]);
+
+    expect(r).toEqual({ ok: false, motivo: 'nao-tem-whatsapp' });
+  });
+
+  it('lista vazia e "nao consegui perguntar", e nao "nao tem WhatsApp"', () => {
+    // As duas causas pedem acoes OPOSTAS: uma tira o lead da fila para
+    // sempre, a outra pede tentar de novo. Confundi-las faria uma queda
+    // de rede descartar a lista inteira como invalida.
+    expect(escolherJid('5535998598710@c.us', [])).toEqual({
+      ok: false,
+      motivo: 'sem-resposta',
+    });
+    expect(escolherJid('5535998598710@c.us', undefined)).toEqual({
+      ok: false,
+      motivo: 'sem-resposta',
+    });
+    expect(escolherJid('5535998598710@c.us', null)).toEqual({
+      ok: false,
+      motivo: 'sem-resposta',
+    });
+  });
+
+  it('exists true sem jid nao serve para enviar', () => {
+    // Sem endereco nao ha para onde mandar. Deixar passar aqui faria o
+    // `sendMessage` receber `undefined` e o envio falhar la na frente,
+    // longe da causa.
+    expect(escolherJid('5535998598710@c.us', [{ exists: true }])).toEqual({
+      ok: false,
+      motivo: 'nao-tem-whatsapp',
+    });
   });
 });

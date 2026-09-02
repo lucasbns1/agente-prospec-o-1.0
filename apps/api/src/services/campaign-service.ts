@@ -46,6 +46,36 @@ export interface FiltrosCampanha extends CriteriosQualificacao {
 }
 
 /**
+ * Esta campanha esta presa a uma planilha, ou pega o CRM inteiro?
+ *
+ * ============================================================
+ * POR QUE ISTO E UMA PERGUNTA QUE PRECISA DE RESPOSTA
+ * ============================================================
+ * Uma campanha nao guarda copia da planilha: guarda um FILTRO. Sem lote
+ * escolhido, o filtro nao restringe nada e o publico e toda lead ja
+ * importada — de qualquer lista, nicho ou cidade.
+ *
+ * Aconteceu de verdade: uma campanha de Muzambinho, Guaxupe e Alfenas
+ * saiu mandando mensagem para leads de Osasco e Sao Paulo, de uma
+ * importacao completamente diferente. O unico aviso era uma frase cinza
+ * na tela de filtros, que ninguem le antes de clicar em Ativar.
+ *
+ * Cidade e categoria NAO contam como restricao aqui, de proposito. Elas
+ * refinam DENTRO do publico; nao dizem de qual planilha ele sai. Uma
+ * campanha filtrada por "Alfenas" ainda pega leads de Alfenas de
+ * qualquer importacao que voce ja tenha feito.
+ */
+export function restringeAPlanilha(filtros: {
+  captureSessionIds?: string[];
+  importIds?: string[];
+}): boolean {
+  return (
+    (filtros.captureSessionIds?.length ?? 0) > 0 ||
+    (filtros.importIds?.length ?? 0) > 0
+  );
+}
+
+/**
  * Monta o WHERE do Prisma a partir dos filtros.
  *
  * O que da para filtrar em SQL fica em SQL — carregar 10 mil leads na

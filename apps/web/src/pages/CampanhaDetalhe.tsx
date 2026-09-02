@@ -752,7 +752,42 @@ export function CampanhaDetalhe() {
   });
 
   const mudarStatus = useMutation({
-    mutationFn: (status: string) => post(`/api/campaigns/${id}/status`, { status }),
+    // ============================================================
+    // ATIVAR SEM PLANILHA PRECISA DE CONFIRMACAO
+    // ============================================================
+    // A API recusa com `CAMPANHA_SEM_PLANILHA` quando a campanha nao tem
+    // planilha escolhida — porque nesse estado ela manda para o CRM
+    // INTEIRO, de todas as listas. Aqui a recusa vira uma pergunta, e a
+    // resposta "sim" e reenviada explicitamente.
+    //
+    // A guarda de verdade mora na API: a confirmacao da tela sozinha nao
+    // protegeria quem chamasse a rota direto.
+    mutationFn: async (status: string) => {
+      try {
+        return await post(`/api/campaigns/${id}/status`, { status });
+      } catch (err) {
+        // `codigo` e o campo que o cliente de API preenche a partir de
+        // `erro.codigo` da resposta.
+        if ((err as { codigo?: string })?.codigo !== 'CAMPANHA_SEM_PLANILHA') {
+          throw err;
+        }
+
+        const segue = window.confirm(
+          'Esta campanha não tem planilha escolhida.\n\n' +
+            'Do jeito que está, ela vai mandar mensagem para TODOS os leads ' +
+            'do CRM — de todas as listas, nichos e cidades, não só da lista ' +
+            'que você importou para ela.\n\n' +
+            'Para restringir, cancele e escolha as planilhas na aba Público.\n\n' +
+            'Ativar mesmo assim?'
+        );
+        if (!segue) throw err;
+
+        return await post(`/api/campaigns/${id}/status`, {
+          status,
+          permitirTodosOsLeads: true,
+        });
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['campanha', id] });
       void queryClient.invalidateQueries({ queryKey: ['campanhas'] });
