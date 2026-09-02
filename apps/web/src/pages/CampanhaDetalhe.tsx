@@ -797,7 +797,34 @@ export function CampanhaDetalhe() {
   const excluir = useMutation({
     // `confirmar: true` e exigido pela API tambem — a confirmacao da tela
     // sozinha nao protegeria quem chamasse a rota direto.
-    mutationFn: () => del(`/api/campaigns/${id}`, { confirmar: true }),
+    mutationFn: async () => {
+      try {
+        return await del(`/api/campaigns/${id}`, { confirmar: true });
+      } catch (err) {
+        if ((err as { codigo?: string })?.codigo !== 'CAMPANHA_COM_ENVIO_REAL') {
+          throw err;
+        }
+
+        // A segunda pergunta, e nao a mesma de novo: aqui o assunto e
+        // outro — ja houve conversa com pessoas por esta campanha.
+        const segue = window.confirm(
+          'Esta campanha já registrou envio real.\n\n' +
+            'As conversas NÃO se perdem: elas continuam em Conversas e no ' +
+            'lead. O que some é o registro de que vieram desta campanha, e ' +
+            'a fila que ainda estava agendada.\n\n' +
+            'Se algum desses contatos recebeu mensagem de verdade, o CRM ' +
+            'deixa de saber disso — e uma campanha futura pode abordar a ' +
+            'mesma pessoa de novo.\n\n' +
+            'Apagar assim mesmo?'
+        );
+        if (!segue) throw err;
+
+        return await del(`/api/campaigns/${id}`, {
+          confirmar: true,
+          apagarMesmoComEnvioReal: true,
+        });
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['campanhas'] });
       navegar('/campanhas');

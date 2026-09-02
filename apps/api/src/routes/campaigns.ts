@@ -295,8 +295,16 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
     { preHandler: exigirAutenticacao },
     async (request) => {
       const { id } = idSchema.parse(request.params);
-      const { confirmar } = z
-        .object({ confirmar: z.boolean().optional() })
+      const { confirmar, apagarMesmoComEnvioReal } = z
+        .object({
+          confirmar: z.boolean().optional(),
+          // A segunda confirmacao, so para o caso de ja ter havido envio
+          // real. Separada da primeira de proposito: "quero apagar esta
+          // campanha" e "sei que ja falei com pessoas por ela" sao duas
+          // afirmacoes diferentes, e um clique so nao pode valer pelas
+          // duas.
+          apagarMesmoComEnvioReal: z.boolean().default(false),
+        })
         .parse(request.body ?? {});
 
       if (confirmar !== true) {
@@ -321,9 +329,30 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
       const enviadasReais = await prisma.outboundMessage.count({
         where: { campaignId: id, status: 'ENVIADA', dryRun: false },
       });
-      if (enviadasReais > 0) {
+      // ============================================================
+      // A TRAVA VIROU UM BECO SEM SAIDA — AGORA ELA TEM PORTA
+      // ============================================================
+      // Ela recusava e ponto final: nao havia como apagar uma campanha
+      // com envio real, nem quando o envio real era MENTIRA.
+      //
+      // E foi exatamente o caso: 50 linhas marcadas ENVIADA, das quais a
+      // maioria nunca chegou em lugar nenhum — o endereco de destino
+      // tinha um digito a mais e nao era conta de ninguem (ver
+      // `escolherJid`). A campanha ficou impossivel de apagar por causa
+      // de envios que nao aconteceram.
+      //
+      // O que a trava protege tambem e menor do que o texto dela dizia:
+      // `Message.campaign` e `onDelete: SetNull`, entao apagar a
+      // campanha NAO apaga conversa nenhuma. O que se perde e o "de onde
+      // veio" daquele contato.
+      //
+      // Entao ela deixa de ser um muro e vira uma pergunta.
+      if (enviadasReais > 0 && !apagarMesmoComEnvioReal) {
         throw new AppError(
-          `Esta campanha ja enviou ${enviadasReais} mensagem(ns) real(is). Arquive em vez de apagar, para nao perder o historico.`,
+          `Esta campanha ja enviou ${enviadasReais} mensagem(ns) real(is). ` +
+            'As conversas em si nao se perdem — o que some e o registro de ' +
+            'que elas vieram desta campanha. Arquive em vez de apagar, ou ' +
+            'confirme que quer apagar assim mesmo.',
           422,
           'CAMPANHA_COM_ENVIO_REAL'
         );
