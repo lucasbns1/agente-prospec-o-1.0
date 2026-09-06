@@ -34,18 +34,45 @@ async function main(): Promise<void> {
   const { prisma } = await import('../packages/database/src/index.js');
   const { normalizarTelefone } = await import('../packages/domain/src/index.js');
 
-  const desconhecidos = await prisma.unknownContact.findMany({
-    where: { resolvido: false },
-    orderBy: { createdAt: 'asc' },
-  });
+  // ============================================================
+  // ZERO PRECISA DIZER *QUAL* ZERO
+  // ============================================================
+  // A primeira versao imprimia "Nada aqui. Nenhuma resposta se perdeu."
+  // sempre que a contagem dava zero — inclusive num banco VAZIO, onde o
+  // certo seria dizer "nao ha dado nenhum para olhar".
+  //
+  // Aconteceu na pratica: o script rodou num computador diferente, com
+  // outro banco, e anunciou que nada tinha se perdido. Um diagnostico
+  // que da a resposta tranquilizadora quando nao sabe de nada e pior do
+  // que nenhum diagnostico.
+  const [totalLeads, totalMensagens, desconhecidos] = await Promise.all([
+    prisma.lead.count(),
+    prisma.message.count(),
+    prisma.unknownContact.findMany({
+      where: { resolvido: false },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
 
   console.log('');
   console.log('='.repeat(70));
+  console.log(`BANCO: ${totalLeads} leads, ${totalMensagens} mensagens no historico`);
   console.log(`CONTATOS DESCONHECIDOS NAO RESOLVIDOS: ${desconhecidos.length}`);
   console.log('='.repeat(70));
 
+  if (totalLeads === 0) {
+    console.log('');
+    console.log('ESTE BANCO ESTA VAZIO — nao ha lead nenhum cadastrado.');
+    console.log('');
+    console.log('Entao o zero acima nao significa "nada se perdeu": significa');
+    console.log('que nao ha nada aqui para se perder. Se voce esperava ver');
+    console.log('seus leads, este e outro banco (outro computador, ou o');
+    console.log('DATABASE_URL do .env apontando para outro lugar).');
+    return;
+  }
+
   if (desconhecidos.length === 0) {
-    console.log('Nada aqui. Nenhuma resposta se perdeu.');
+    console.log('Nada aqui. Nenhuma resposta ficou sem lead.');
     return;
   }
 
