@@ -39,7 +39,8 @@
     "health": "pnpm --filter @prospector/worker health",
     "auditoria": "pnpm --filter @prospector/worker auditoria",
     "simular": "pnpm --filter @prospector/worker simular",
-    "diagnostico-campanha": "tsx scripts/diagnostico-campanha.ts"
+    "diagnostico-campanha": "tsx scripts/diagnostico-campanha.ts",
+    "diagnostico-desconhecidos": "tsx scripts/diagnostico-desconhecidos.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

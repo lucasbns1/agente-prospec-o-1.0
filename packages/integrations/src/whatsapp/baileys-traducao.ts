@@ -158,6 +158,12 @@ interface MensagemBaileys {
     remoteJid?: string | null;
     fromMe?: boolean | null;
     participant?: string | null;
+    /**
+     * O endereco alternado. Quando `remoteJid` e um `@lid`, e aqui que o
+     * telefone de verdade aparece — e vice-versa.
+     */
+    remoteJidAlt?: string | null;
+    participantAlt?: string | null;
   } | null;
   messageTimestamp?: number | Long | null;
   pushName?: string | null;
@@ -212,8 +218,35 @@ export function traduzir(m: MensagemBaileys): MensagemProvedor | null {
   if (!texto && !midia) return null;
 
   const fromMe = m.key?.fromMe === true;
-  // Numa conversa `@lid`, `participant` as vezes traz o numero real.
-  const telefone = telefoneDoJid(jid) ?? telefoneDoJid(m.key?.participant);
+
+  // ============================================================
+  // O TELEFONE DE UMA CONVERSA `@lid`
+  // ============================================================
+  // O WhatsApp vem migrando as conversas para endereco de privacidade
+  // (`@lid`), que NAO e telefone e nao casa com lead nenhum. Quando o
+  // endereco principal e um LID, o Baileys traz o endereco de telefone
+  // ao lado, em `remoteJidAlt` — e sem ler esse campo a resposta da
+  // pessoa chega, e vira contato desconhecido.
+  //
+  // A ordem importa: o `jid` primeiro (o caso comum), depois o alternado
+  // (a conversa migrada), e por ultimo o `participant`. Cada um so entra
+  // se o anterior nao deu telefone, entao um LID nunca ganha de um numero
+  // de verdade.
+  const doJid = telefoneDoJid(jid);
+  const doAlt = telefoneDoJid(m.key?.remoteJidAlt);
+  const doParticipante = telefoneDoJid(m.key?.participant);
+  const doParticipanteAlt = telefoneDoJid(m.key?.participantAlt);
+  const telefone = doJid ?? doAlt ?? doParticipante ?? doParticipanteAlt;
+
+  const fonteTelefone = doJid
+    ? 'jid'
+    : doAlt
+      ? 'remoteJidAlt'
+      : doParticipante
+        ? 'participant'
+        : doParticipanteAlt
+          ? 'participantAlt'
+          : 'nenhuma';
 
   return {
     id,
@@ -226,7 +259,7 @@ export function traduzir(m: MensagemBaileys): MensagemProvedor | null {
     hasMedia: midia,
     notifyName: m.pushName ?? null,
     telefone,
-    fonteTelefone: telefoneDoJid(jid) ? 'jid' : telefone ? 'participant' : 'nenhuma',
+    fonteTelefone,
   };
 }
 
@@ -319,6 +352,53 @@ export function escolherJid(
   };
 }
 
+/**
+ * As formas em que o MESMO telefone pode aparecer num endereco.
+ *
+ * ============================================================
+ * O DEFEITO QUE ISTO CONSERTA
+ * ============================================================
+ * A varredura filtrava as conversas comparando a string inteira do
+ * endereco. So que os dois lados falam formatos diferentes:
+ *
+ *   no arquivo (Baileys):  5511965776158@s.whatsapp.net
+ *   na lista de conhecidos: 5511965776158@c.us
+ *
+ * Nunca casavam. O resultado era `encontradas: 0` com o arquivo cheio —
+ * e a conclusao errada de que nao havia mensagem nenhuma para recuperar.
+ *
+ * E ha o nono digito por cima disso: o lead esta gravado como
+ * `5535998598710` e a conversa chega como `553598598710`. Sao o mesmo
+ * telefone e precisam casar, senao a resposta nunca acha o lead.
+ *
+ * Entao a comparacao passa a ser por DIGITOS, com as duas formas
+ * brasileiras do numero. Um endereco que nao e telefone (`@lid`, grupo)
+ * devolve so ele mesmo — nao ha telefone ali para variar.
+ */
+export function chavesDoEndereco(endereco: string): string[] {
+  const digitos = endereco.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') ?? '';
+  if (!digitos) return [endereco];
+
+  const chaves = new Set<string>([digitos]);
+
+  // 55 + DDD + 9 digitos -> a forma antiga, sem o nono.
+  if (digitos.length === 13 && digitos.startsWith('55')) {
+    const ddd = digitos.slice(2, 4);
+    const numero = digitos.slice(4);
+    if (numero.startsWith('9')) chaves.add(`55${ddd}${numero.slice(1)}`);
+  }
+
+  // 55 + DDD + 8 digitos -> a forma nova, com o nono. So para celular:
+  // um fixo (2-5) nao ganha digito nenhum.
+  if (digitos.length === 12 && digitos.startsWith('55')) {
+    const ddd = digitos.slice(2, 4);
+    const numero = digitos.slice(4);
+    if (/^[6-9]/.test(numero)) chaves.add(`55${ddd}9${numero}`);
+  }
+
+  return [...chaves];
+}
+
 export class ArquivoDeMensagens {
   private readonly porConversa = new Map<string, MensagemProvedor[]>();
 
@@ -392,11 +472,19 @@ export class ArquivoDeMensagens {
    */
   desde(quando: Date, chatIds?: string[]): MensagemProvedor[] {
     const corte = Math.floor(quando.getTime() / 1000);
-    const filtro = chatIds?.length ? new Set(chatIds) : null;
+
+    // O filtro guarda TODAS as formas de cada endereco pedido, e cada
+    // conversa e testada por TODAS as formas dela. Comparar a string
+    // inteira era o defeito: `@c.us` de um lado, `@s.whatsapp.net` do
+    // outro, e nada casava.
+    const filtro = chatIds?.length
+      ? new Set(chatIds.flatMap(chavesDoEndereco))
+      : null;
+
     const saida: MensagemProvedor[] = [];
 
     for (const [jid, lista] of this.porConversa) {
-      if (filtro && !filtro.has(jid)) continue;
+      if (filtro && !chavesDoEndereco(jid).some((k) => filtro.has(k))) continue;
       for (const m of lista) {
         if (m.timestamp >= corte) saida.push(m);
       }

@@ -165,10 +165,43 @@ export function normalizarTelefone(
   }
 
   const ddd = digitos.slice(0, 2);
-  const numero = digitos.slice(2);
 
   if (!DDDS_VALIDOS.has(Number.parseInt(ddd, 10))) {
     return INVALIDO(`DDD ${ddd} nao existe`);
+  }
+
+  // ============================================================
+  // O CELULAR NO FORMATO ANTIGO, DE OITO DIGITOS
+  // ============================================================
+  // Isto NAO e excecao a regra de "nunca inventar digito". E o oposto:
+  // sem isto, o numero era JOGADO FORA.
+  //
+  // Um numero de oito digitos que comeca com 6, 7, 8 ou 9 nao pode ser
+  // fixo — fixo brasileiro comeca com 2, 3, 4 ou 5, em todo DDD, e a
+  // propria validacao abaixo ja dizia isso. Ele so pode ser um celular no
+  // formato anterior a 2016, quando o nono digito passou a ser
+  // obrigatorio. A conversao e a que a propria migracao definiu: poe-se
+  // um 9 na frente, seja qual for o primeiro digito. Nao ha escolha a
+  // fazer, e nao ha outro numero que ele possa ser.
+  //
+  // A faixa e 6-9, e nao so o 9: celular antigo comecava com qualquer um
+  // dos quatro, conforme a regiao. Cobrir so o 9 deixaria de fora
+  // justamente os numeros mais antigos.
+  //
+  // O que acontecia sem isto, em uso real: a pessoa respondia do WhatsApp
+  // dela, o endereco chegava como `553598598710` (doze digitos, sem o
+  // nono), a normalizacao devolvia "telefone fixo com prefixo invalido",
+  // e a resposta virava um contato desconhecido. Sem telefone nao ha
+  // lead; sem lead nao ha cadencia, nem dashboard, nem IA. Oito ou nove
+  // pessoas pediram a previa e o sistema nao soube de nenhuma.
+  //
+  // Continua valendo para ENVIAR que quem decide o endereco e o WhatsApp
+  // (`escolherJid`), e nao esta conta aqui. Aqui o assunto e outro: ter
+  // UMA forma canonica para o mesmo telefone, para que a resposta ache o
+  // lead que recebeu a mensagem.
+  let numero = digitos.slice(2);
+  if (numero.length === 8 && /^[6-9]/.test(numero)) {
+    numero = `9${numero}`;
   }
 
   // Celular: 9 digitos comecando com 9. Fixo: 8 digitos comecando 2-5.

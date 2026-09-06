@@ -342,3 +342,70 @@ describe('normalizarTelefone — listas de outro pais', () => {
     expect(normalizarTelefone('019999998888').e164).toBe('5519999998888');
   });
 });
+
+// =============================================================================
+// O CELULAR DE OITO DIGITOS — POR QUE AS RESPOSTAS SUMIAM
+// =============================================================================
+
+/**
+ * O caso real: a pessoa respondia, o endereço chegava do WhatsApp como
+ * `553598598710` — doze dígitos, sem o nono — e a normalização devolvia
+ * "telefone fixo com prefixo invalido", porque oito dígitos era lido
+ * como fixo e fixo não começa com 9.
+ *
+ * Sem telefone não há lead. Sem lead não há cadência, nem dashboard, nem
+ * IA: oito ou nove pessoas pediram a prévia e o sistema não soube de
+ * nenhuma delas.
+ *
+ * Isto não é "inventar dígito" — é o contrário: sem a conversão o número
+ * era JOGADO FORA. Um número de oito dígitos começando com 9 não pode
+ * ser fixo (fixo brasileiro começa com 2-5, em todo DDD), então ele só
+ * pode ser um celular anterior a 2016, e a migração definiu a conversão:
+ * põe-se um 9 na frente.
+ */
+describe('celular no formato antigo, de oito dígitos', () => {
+  it('a resposta que chegava sem o nono dígito agora vira número válido', () => {
+    const r = normalizarTelefone('553598598710');
+
+    expect(r.motivoInvalido).toBeNull();
+    expect(r.e164).toBe('5535998598710');
+    expect(r.celular).toBe(true);
+  });
+
+  it('e o resultado bate com o número que o lead tem no banco', () => {
+    // É ESTE o ponto. As duas formas do mesmo telefone precisam terminar
+    // na mesma string, senão a resposta nunca acha o lead que recebeu a
+    // mensagem — que é exatamente o que estava acontecendo.
+    expect(normalizarTelefone('553598598710').e164).toBe(
+      normalizarTelefone('5535998598710').e164
+    );
+  });
+
+  it('vale para qualquer DDD, e não só para os de Minas', () => {
+    expect(normalizarTelefone('551198598710').e164).toBe('5511998598710');
+    expect(normalizarTelefone('559198598710').e164).toBe('5591998598710');
+  });
+
+  it('celular antigo começando com 6, 7 ou 8 também entra', () => {
+    // Antes de 2016 o celular começava com qualquer um dos quatro,
+    // conforme a região. Cobrir só o 9 deixaria de fora justamente os
+    // números mais antigos — que são os que mais aparecem sem o nono
+    // dígito. Este teste nasceu de um caso meu que estava errado: eu
+    // tinha escrito a regra só para o 9.
+    expect(normalizarTelefone('551188889999').e164).toBe('5511988889999');
+    expect(normalizarTelefone('551178889999').e164).toBe('5511978889999');
+    expect(normalizarTelefone('551168889999').e164).toBe('5511968889999');
+  });
+
+  it('fixo continua fixo — nada de nono dígito onde não cabe', () => {
+    const r = normalizarTelefone('553532922842');
+    expect(r.e164).toBe('553532922842');
+    expect(r.celular).toBe(false);
+  });
+
+  it('não mexe em quem já veio com nove dígitos', () => {
+    const r = normalizarTelefone('5535998598710');
+    expect(r.e164).toBe('5535998598710');
+    expect(r.celular).toBe(true);
+  });
+});

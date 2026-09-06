@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ArquivoDeMensagens,
   ehGrupo,
+  chavesDoEndereco,
   escolherJid,
   telefoneDoJid,
   textoDaMensagem,
@@ -483,5 +484,173 @@ describe('escolherJid — qual endereco usar de verdade', () => {
       ok: false,
       motivo: 'nao-tem-whatsapp',
     });
+  });
+});
+
+// =============================================================================
+// A CONVERSA `@lid` — O OUTRO JEITO DE A RESPOSTA SUMIR
+// =============================================================================
+
+/**
+ * O WhatsApp vem migrando conversas para endereco de privacidade
+ * (`@lid`), que NAO e telefone e nao casa com lead nenhum.
+ *
+ * Quando o endereco principal e um LID, o Baileys traz o endereco de
+ * telefone ao lado, em `remoteJidAlt`. Sem ler esse campo, a resposta da
+ * pessoa chega e vira contato desconhecido — cadencia parada, dashboard
+ * sem novidade, IA sem entrada.
+ */
+describe('telefone de uma conversa @lid', () => {
+  const base = {
+    messageTimestamp: AGORA,
+    message: { conversation: 'quero ver a previa' },
+  };
+
+  it('le o telefone de remoteJidAlt quando o jid e um LID', () => {
+    const r = traduzir({
+      ...base,
+      key: {
+        id: 'm1',
+        remoteJid: '203049645658309@lid',
+        remoteJidAlt: '5535998598710@s.whatsapp.net',
+        fromMe: false,
+      },
+    });
+
+    expect(r?.telefone).toBe('5535998598710');
+    expect(r?.fonteTelefone).toBe('remoteJidAlt');
+  });
+
+  it('o jid de verdade ganha do alternado', () => {
+    // O alternado so entra quando o principal nao deu telefone. Inverter
+    // a ordem faria um endereco secundario mandar no cadastro.
+    const r = traduzir({
+      ...base,
+      key: {
+        id: 'm2',
+        remoteJid: '5511965776158@s.whatsapp.net',
+        remoteJidAlt: '203049645658309@lid',
+        fromMe: false,
+      },
+    });
+
+    expect(r?.telefone).toBe('5511965776158');
+    expect(r?.fonteTelefone).toBe('jid');
+  });
+
+  it('LID em todos os campos continua sem telefone — e nao um LID fingindo de numero', () => {
+    // Melhor ficar sem numero do que gravar um LID como se fosse
+    // telefone: ele nao casa com lead nenhum e ainda suja o cadastro.
+    const r = traduzir({
+      ...base,
+      key: {
+        id: 'm3',
+        remoteJid: '203049645658309@lid',
+        remoteJidAlt: '111111111111@lid',
+        fromMe: false,
+      },
+    });
+
+    expect(r?.telefone).toBeNull();
+    expect(r?.fonteTelefone).toBe('nenhuma');
+  });
+
+  it('ainda le participant, como antes', () => {
+    const r = traduzir({
+      ...base,
+      key: {
+        id: 'm4',
+        remoteJid: '203049645658309@lid',
+        participant: '5535998598710@s.whatsapp.net',
+        fromMe: false,
+      },
+    });
+
+    expect(r?.telefone).toBe('5535998598710');
+    expect(r?.fonteTelefone).toBe('participant');
+  });
+});
+
+// =============================================================================
+// `@c.us` DE UM LADO, `@s.whatsapp.net` DO OUTRO
+// =============================================================================
+
+/**
+ * A varredura comparava a string inteira do endereco. So que o arquivo
+ * guarda o formato do Baileys (`@s.whatsapp.net`) e a lista de conversas
+ * conhecidas monta o do whatsapp-web.js (`@c.us`). Nunca casavam — e o
+ * resultado era `encontradas: 0` com o arquivo cheio de mensagens.
+ *
+ * Por cima disso vem o nono digito: o lead esta gravado com 13 digitos e
+ * a conversa chega com 12. Mesmo telefone, formas diferentes.
+ */
+describe('chavesDoEndereco', () => {
+  it('o sufixo nao importa — o que vale sao os digitos', () => {
+    expect(chavesDoEndereco('5511965776158@c.us')).toContain('5511965776158');
+    expect(chavesDoEndereco('5511965776158@s.whatsapp.net')).toContain(
+      '5511965776158'
+    );
+  });
+
+  it('um numero de 13 digitos tambem responde pela forma antiga', () => {
+    expect(chavesDoEndereco('5535998598710@c.us')).toEqual(
+      expect.arrayContaining(['5535998598710', '553598598710'])
+    );
+  });
+
+  it('um numero de 12 digitos tambem responde pela forma nova', () => {
+    expect(chavesDoEndereco('553598598710@s.whatsapp.net')).toEqual(
+      expect.arrayContaining(['553598598710', '5535998598710'])
+    );
+  });
+
+  it('fixo nao ganha nono digito', () => {
+    // `553532922842` e fixo (comeca com 3). Inventar `5535932922842`
+    // criaria uma chave que nao e telefone de ninguem.
+    expect(chavesDoEndereco('553532922842@c.us')).toEqual(['553532922842']);
+  });
+
+  it('ignora o sufixo de dispositivo', () => {
+    expect(chavesDoEndereco('5511965776158:12@s.whatsapp.net')).toContain(
+      '5511965776158'
+    );
+  });
+
+  it('um LID responde por ele mesmo, sem virar telefone', () => {
+    const r = chavesDoEndereco('203049645658309@lid');
+    expect(r).toContain('203049645658309');
+  });
+});
+
+describe('a varredura acha a conversa apesar do formato do endereco', () => {
+  it('pedindo @c.us, acha a conversa guardada como @s.whatsapp.net', () => {
+    const a = new ArquivoDeMensagens();
+    a.guardar(entrada('r1', '5511965776158@s.whatsapp.net', AGORA));
+
+    // Era este o caso real: `chatIdsConhecidos()` monta `@c.us` a partir
+    // do telefone do lead, e o arquivo do Baileys guarda
+    // `@s.whatsapp.net`.
+    const achadas = a.desde(new Date(0), ['5511965776158@c.us']);
+    expect(achadas.map((m) => m.id)).toEqual(['r1']);
+  });
+
+  it('pedindo com o nono digito, acha a conversa que chegou sem ele', () => {
+    const a = new ArquivoDeMensagens();
+    a.guardar(entrada('r2', '553598598710@s.whatsapp.net', AGORA));
+
+    // O lead esta gravado com 13 digitos; a conversa chegou com 12.
+    const achadas = a.desde(new Date(0), ['5535998598710@c.us']);
+    expect(achadas.map((m) => m.id)).toEqual(['r2']);
+  });
+
+  it('continua deixando de fora quem nao foi pedido', () => {
+    // O filtro tem que continuar filtrando: se ele passar a deixar tudo
+    // entrar, a varredura leria conversas que nao sao de lead nenhum.
+    const a = new ArquivoDeMensagens();
+    a.guardar(entrada('meu', '5511965776158@s.whatsapp.net', AGORA));
+    a.guardar(entrada('outro', '5522888887777@s.whatsapp.net', AGORA));
+
+    const achadas = a.desde(new Date(0), ['5511965776158@c.us']);
+    expect(achadas.map((m) => m.id)).toEqual(['meu']);
   });
 });
