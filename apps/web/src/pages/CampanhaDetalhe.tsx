@@ -645,11 +645,27 @@ function Previa({ campanha }: { campanha: Campanha }) {
 
 // ----------------------------------------------------------------- fila
 function Fila({ campanhaId }: { campanhaId: string }) {
+  // ============================================================
+  // "AGENDADA: 47" E DUAS NA LISTA
+  // ============================================================
+  // Os contadores contam a fila INTEIRA; a lista vem cortada em 100
+  // linhas, da mais antiga para a mais nova. Numa campanha com 147
+  // mensagens, as 100 primeiras sao quase todas as ja enviadas — e as
+  // agendadas, que ficam no fim da ordem, caem fora do corte.
+  //
+  // Quem olha ve o contador dizer 47 e a lista mostrar 2, e conclui que
+  // o sistema perdeu 45 mensagens. Nao perdeu: elas estao na fila e vao
+  // sair. Faltava a tela deixar isso ver.
+  //
+  // Duas coisas resolvem: o filtro por status (clicar no contador) e o
+  // aviso de quantas ficaram de fora.
+  const [filtro, setFiltro] = useState<string | null>(null);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['campanha-fila', campanhaId],
+    queryKey: ['campanha-fila', campanhaId, filtro],
     queryFn: () =>
       get<{ mensagens: MensagemFila[]; contagem: Record<string, number> }>(
-        `/api/campaigns/${campanhaId}/fila`
+        `/api/campaigns/${campanhaId}/fila${filtro ? `?status=${filtro}` : ''}`
       ),
   });
 
@@ -665,8 +681,16 @@ function Fila({ campanhaId }: { campanhaId: string }) {
   }
 
   const mensagens = data?.mensagens ?? [];
+  const contagem = data?.contagem ?? {};
 
-  if (mensagens.length === 0) {
+  // O total do recorte que a lista esta mostrando: a fila inteira, ou so
+  // o status filtrado.
+  const totalDoRecorte = filtro
+    ? (contagem[filtro] ?? 0)
+    : Object.values(contagem).reduce((a, b) => a + b, 0);
+  const escondidas = Math.max(0, totalDoRecorte - mensagens.length);
+
+  if (mensagens.length === 0 && !filtro) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-2 py-14 text-center">
@@ -685,13 +709,53 @@ function Fila({ campanhaId }: { campanhaId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(data?.contagem ?? {}).map(([status, total]) => (
-          <Badge key={status} variant={varianteFila(status)}>
-            {humanizar(status)}: {total}
-          </Badge>
+      <div className="flex flex-wrap items-center gap-2">
+        {Object.entries(contagem).map(([status, total]) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() => setFiltro(filtro === status ? null : status)}
+            className={
+              'rounded-full transition ' +
+              (filtro === status
+                ? 'ring-2 ring-offset-1 ring-[var(--color-primaria)]'
+                : 'opacity-80 hover:opacity-100')
+            }
+            aria-pressed={filtro === status}
+            title={`Ver só as ${humanizar(status).toLowerCase()}`}
+          >
+            <Badge variant={varianteFila(status)}>
+              {humanizar(status)}: {total}
+            </Badge>
+          </button>
         ))}
+
+        {filtro && (
+          <button
+            type="button"
+            onClick={() => setFiltro(null)}
+            className="text-xs text-[var(--color-texto-suave)] underline"
+          >
+            limpar filtro
+          </button>
+        )}
       </div>
+
+      {escondidas > 0 && (
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          Mostrando as {mensagens.length} mais antigas
+          {filtro ? ` de ${humanizar(filtro).toLowerCase()}` : ''} — faltam{' '}
+          <strong>{escondidas}</strong>. Elas continuam na fila; a lista é que
+          para em 100.
+          {!filtro && ' Clique num contador acima para ver só aquele estado.'}
+        </p>
+      )}
+
+      {mensagens.length === 0 && filtro && (
+        <p className="text-sm text-[var(--color-texto-suave)]">
+          Nenhuma mensagem {humanizar(filtro).toLowerCase()} nesta campanha.
+        </p>
+      )}
 
       <Card>
         <CardContent className="p-0">
