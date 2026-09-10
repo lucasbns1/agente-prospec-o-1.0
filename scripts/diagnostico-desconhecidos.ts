@@ -78,13 +78,38 @@ async function main(): Promise<void> {
 
   let casam = 0;
   let continuamSemLead = 0;
-  const semTelefone: string[] = [];
+
+  // ============================================================
+  // A LISTA QUE IMPORTA ERA A QUE ESTE SCRIPT ESCONDIA
+  // ============================================================
+  // A primeira versao so imprimia o que JA casa com um lead, e resumia o
+  // resto num contador. No banco real isso deu "casam: 0" e
+  // "telefone invalido: 137" — ou seja, ele calou justamente as 137
+  // conversas que a pessoa queria ler, entre elas as que pediram a
+  // previa do site.
+  //
+  // Um diagnostico existe para mostrar o que aconteceu, e nao para
+  // resumi-lo a um numero. Agora as sem telefone saem com chatId, texto
+  // e data: e o suficiente para achar a conversa no WhatsApp na mao.
+  const semTelefone: Array<{
+    chatId: string | null;
+    nome: string | null;
+    texto: string;
+    quando: Date;
+    motivo: string;
+  }> = [];
 
   for (const d of desconhecidos) {
     const tel = normalizarTelefone(d.telefone);
 
     if (!tel.e164) {
-      semTelefone.push(`${d.telefone} — ${tel.motivoInvalido}`);
+      semTelefone.push({
+        chatId: d.chatId,
+        nome: d.nomeContato,
+        texto: d.texto,
+        quando: d.createdAt,
+        motivo: tel.motivoInvalido ?? 'sem motivo',
+      });
       continue;
     }
 
@@ -108,12 +133,59 @@ async function main(): Promise<void> {
     console.log(`  em ${d.createdAt.toISOString()}`);
   }
 
+  // ------------------------------------------------------------------
+  // AS QUE CHEGARAM SEM TELEFONE — o grosso do estrago
+  // ------------------------------------------------------------------
+  if (semTelefone.length > 0) {
+    console.log('');
+    console.log('='.repeat(70));
+    console.log(`SEM TELEFONE: ${semTelefone.length}`);
+    console.log('='.repeat(70));
+    console.log('');
+    console.log('A mensagem chegou; o telefone nao veio junto. Quase sempre');
+    console.log('e uma conversa `@lid` (endereco de privacidade do WhatsApp),');
+    console.log('cujo numero real vinha num campo que o sistema nao lia.');
+    console.log('');
+    console.log('Elas NAO sao recuperaveis a partir daqui: o numero nunca foi');
+    console.log('gravado. O que da para fazer e ler o que a pessoa escreveu e');
+    console.log('achar a conversa no WhatsApp pelo texto.');
+
+    // Mais recentes primeiro: e o que a pessoa esta procurando agora.
+    const ordenadas = [...semTelefone].sort(
+      (a, b) => b.quando.getTime() - a.quando.getTime()
+    );
+
+    for (const s of ordenadas) {
+      console.log('');
+      console.log(`  [${s.quando.toISOString().slice(0, 16).replace('T', ' ')}]`);
+      if (s.nome) console.log(`  NOME NO WHATSAPP: ${s.nome}`);
+      if (s.chatId) console.log(`  CONVERSA: ${s.chatId}`);
+      console.log(`  DISSE: ${s.texto}`);
+    }
+
+    // Uma palavra de interesse vale mais que o total: e por ela que se
+    // acha "quem pediu a previa" no meio de cento e trinta e sete.
+    const interesse = ordenadas.filter((s) =>
+      /pr[ée]via|previa|site|quero|manda|envia|interesse|pre[cç]o|valor|quanto/i.test(
+        s.texto
+      )
+    );
+    if (interesse.length > 0) {
+      console.log('');
+      console.log('-'.repeat(70));
+      console.log(`  DESSAS, ${interesse.length} falam em previa, site, preco ou querer:`);
+      for (const s of interesse) {
+        const t = s.texto.length > 70 ? `${s.texto.slice(0, 70)}…` : s.texto;
+        console.log(`     ${s.quando.toISOString().slice(0, 10)}  ${s.nome ?? s.chatId ?? '?'}  —  ${t}`);
+      }
+    }
+  }
+
   console.log('');
   console.log('-'.repeat(70));
   console.log(`  casam com um lead agora:      ${casam}`);
   console.log(`  continuam sem lead nenhum:    ${continuamSemLead}`);
-  console.log(`  telefone ainda invalido:      ${semTelefone.length}`);
-  for (const s of semTelefone.slice(0, 10)) console.log(`      ${s}`);
+  console.log(`  chegaram sem telefone:        ${semTelefone.length}`);
 
   if (casam > 0) {
     console.log('');
