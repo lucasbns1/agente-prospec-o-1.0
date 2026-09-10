@@ -273,7 +273,12 @@ async function main(): Promise<void> {
   }
 
   // --- Contatos desconhecidos ---
-  const desconhecidos = await prisma.unknownContact.count();
+  // So os NAO resolvidos. Contar os resolvidos junto fazia o alarme
+  // continuar gritando "148" depois de o reparo ja ter devolvido o dono
+  // de 124 deles — e um alarme que nao apaga ensina a ignorar alarme.
+  const desconhecidos = await prisma.unknownContact.count({
+    where: { resolvido: false },
+  });
   if (desconhecidos > 0) {
     console.log(
       `\n  ATENÇÃO: ${desconhecidos} mensagem(ns) caíram como "contato desconhecido".`

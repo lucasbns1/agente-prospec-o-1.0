@@ -141,6 +141,37 @@ async function main(): Promise<void> {
     }
   }
 
+  // ============================================================
+  // O CONTADOR DO VINCULO TAMBEM FICOU PARA TRAS
+  // ============================================================
+  // `LeadCampaign.totalRecebidas` e um atalho de leitura: quem escreve
+  // e o pipeline de recebimento, e o resgate gravou as mensagens sem
+  // passar por ele. Resultado: o diagnostico mostrava "recebidas 0"
+  // logo abaixo de tres respostas listadas.
+  //
+  // A verdade sao as MENSAGENS; o contador e copia. Entao ele e
+  // recontado a partir delas, e nao incrementado — recontar e
+  // idempotente, e rodar isto duas vezes nao infla nada.
+  let contadores = 0;
+  if (aplicar) {
+    const vinculos = await prisma.leadCampaign.findMany({
+      select: { id: true, leadId: true, totalRecebidas: true },
+    });
+
+    for (const v of vinculos) {
+      const quantas = await prisma.message.count({
+        where: { leadId: v.leadId, direcao: 'RECEBIDA' },
+      });
+      if (quantas === v.totalRecebidas) continue;
+
+      await prisma.leadCampaign.update({
+        where: { id: v.id },
+        data: { totalRecebidas: quantas },
+      });
+      contadores += 1;
+    }
+  }
+
   console.log('');
   console.log('-'.repeat(70));
   console.log(`  eram SUAS (gravadas como resposta):  ${minhas}`);
@@ -154,6 +185,9 @@ async function main(): Promise<void> {
   } else if (aplicar && minhas > 0) {
     console.log(`  ${minhas} mensagens viraram ENVIADA.`);
     console.log('  O painel para de contar as suas como resposta do lead.');
+    if (contadores > 0) {
+      console.log(`  ${contadores} contadores de "recebidas" recontados.`);
+    }
   }
 
   if (semInformacao > 0) {
