@@ -189,6 +189,14 @@ async function main(): Promise<void> {
       // proxima reconciliacao — aí sim acionando a cadencia, e mandando
       // a etapa 3 para gente que so tinha uma resposta automatica de
       // WhatsApp Business.
+      //
+      // ATENCAO — DEFEITO CONHECIDO DESTA GRAVACAO
+      // O `UnknownContact` NAO guarda de quem foi a mensagem, e os
+      // contatos desconhecidos incluem mensagens dos DOIS lados. Gravar
+      // tudo como RECEBIDA marca as SUAS mensagens como resposta do
+      // lead. Rode `pnpm reparar-direcao` depois desta: ele cruza com o
+      // arquivo do Baileys (que tem `fromMe`) e vira o lado do que saiu
+      // de voce.
       const conversa = await prisma.conversation.findFirst({
         where: { leadId },
         select: { id: true },
