@@ -59,7 +59,49 @@ async function main(): Promise<void> {
       : await prisma.lead.findFirst({ orderBy: { createdAt: 'desc' } });
 
   if (!lead) {
-    console.log('\nNenhum lead no banco. Importe a planilha primeiro.\n');
+    // ============================================================
+    // "NAO ACHEI ESTE" NAO E "NAO HA NENHUM"
+    // ============================================================
+    // A mensagem era sempre "Nenhum lead no banco. Importe a planilha
+    // primeiro." — inclusive num banco com 201 leads, quando o telefone
+    // digitado tinha um digito a menos. Alguem seguiria o conselho e
+    // reimportaria a planilha para resolver um erro de digitacao.
+    const total = await prisma.lead.count();
+
+    if (total === 0) {
+      console.log('\nNenhum lead no banco. Importe a planilha primeiro.\n');
+      await prisma.$disconnect();
+      return;
+    }
+
+    console.log(`\nNao achei este lead. O banco tem ${total} leads.\n`);
+
+    if (telefoneAlvo) {
+      // Um telefone parecido vale mais que um "nao encontrado": o erro
+      // tipico e justamente o nono digito, que e o assunto da metade
+      // dos problemas deste projeto.
+      const fim = telefoneAlvo.slice(-8);
+      const parecidos = await prisma.lead.findMany({
+        where: { telefoneNormalizado: { endsWith: fim } },
+        select: { telefoneNormalizado: true, empresa: true, nomeCompleto: true },
+        take: 5,
+      });
+
+      if (parecidos.length > 0) {
+        console.log('  Parecidos (mesmos 8 digitos finais):');
+        for (const p of parecidos) {
+          const quem = p.empresa ?? p.nomeCompleto ?? '—';
+          console.log(`     ${p.telefoneNormalizado}   ${quem}`);
+        }
+        console.log('');
+        console.log('  Provavelmente e um destes — confira os digitos.');
+      } else {
+        console.log(`  Nenhum lead termina em ${fim}.`);
+        console.log('  Ou o numero e de outro lead, ou ele nao foi importado.');
+      }
+      console.log('');
+    }
+
     await prisma.$disconnect();
     return;
   }
