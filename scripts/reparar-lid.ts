@@ -30,10 +30,15 @@
  * ============================================================
  * ELE NAO ENVIA NADA
  * ============================================================
- * Sem `--aplicar`, so relata. Com `--aplicar`, grava a ligacao entre o
- * contato desconhecido e o lead — e mais nada: nao avanca etapa, nao
- * enfileira, nao dispara cadencia. Religar uma conversa nao pode virar
- * mensagem saindo para gente que voce ja atendeu na mao.
+ * Sem `--aplicar`, so relata. Com `--aplicar`, grava duas coisas: a
+ * ligacao do contato com o lead, e a mensagem no historico — sem a
+ * segunda, o painel continua dizendo "Responderam: 0", porque ele conta
+ * MENSAGENS, e nao contatos resolvidos.
+ *
+ * O que ele NAO faz: avancar etapa, enfileirar, disparar cadencia.
+ * Gravar direto no banco nao passa por `processarMensagemRecebida`, que
+ * e quem aciona tudo isso. Religar uma conversa nao pode virar mensagem
+ * saindo para gente que voce ja atendeu na mao.
  */
 import path from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -83,7 +88,7 @@ function lerMapaLid(pastaSessao: string): Map<string, string> {
 }
 
 async function main(): Promise<void> {
-  const { prisma } = await import('../packages/database/src/index.js');
+  const { prisma, Prisma } = await import('../packages/database/src/index.js');
   const { normalizarTelefone } = await import('../packages/domain/src/index.js');
   const { carregarEnv } = await import('../packages/config/src/index.js');
 
@@ -116,6 +121,7 @@ async function main(): Promise<void> {
   let semMapa = 0;
   let semLead = 0;
   let jaTinhaTelefone = 0;
+  let gravadas = 0;
 
   for (const d of desconhecidos) {
     // So interessam os que chegaram SEM telefone. Quem ja tinha numero
@@ -164,15 +170,73 @@ async function main(): Promise<void> {
     console.log(`  DISSE: ${texto}`);
 
     if (aplicar) {
-      // So o telefone e o dono. Nada de status, etapa ou fila: religar
-      // uma conversa NAO pode virar mensagem saindo para quem voce ja
-      // atendeu na mao.
+      const leadId = leads[0]!.id;
+
+      // ============================================================
+      // A MENSAGEM ENTRA NO HISTORICO, MAS NAO NA CADENCIA
+      // ============================================================
+      // Sem a linha em `messages`, o painel continua dizendo
+      // "Responderam: 0" — ele conta mensagens, e nao contatos
+      // desconhecidos resolvidos.
+      //
+      // Gravar aqui, direto, NAO aciona cadencia: quem aciona e
+      // `processarMensagemRecebida`, e nada disto passa por ele. Nenhuma
+      // etapa anda, nenhum envio e enfileirado.
+      //
+      // E ha um efeito colateral bom: com a linha gravada, o
+      // `whatsapp_message_id` (UNIQUE) faz a varredura RECONHECER esta
+      // mensagem como ja processada. Sem isso, ela seria reprocessada na
+      // proxima reconciliacao — aí sim acionando a cadencia, e mandando
+      // a etapa 3 para gente que so tinha uma resposta automatica de
+      // WhatsApp Business.
+      const conversa = await prisma.conversation.findFirst({
+        where: { leadId },
+        select: { id: true },
+      });
+
+      const conversaId =
+        conversa?.id ??
+        (
+          await prisma.conversation.create({
+            data: {
+              leadId,
+              chatId: d.chatId ?? `${tel.e164}@c.us`,
+              ultimaMensagemEm: d.recebidaEm ?? d.createdAt,
+              ultimaMensagemTexto: d.texto.slice(0, 200),
+            },
+            select: { id: true },
+          })
+        ).id;
+
+      try {
+        await prisma.message.create({
+          data: {
+            conversationId: conversaId,
+            leadId,
+            direcao: 'RECEBIDA',
+            status: 'ENTREGUE',
+            texto: d.texto,
+            whatsappMessageId: d.providerMessageId,
+            recebidaEm: d.recebidaEm ?? d.createdAt,
+          },
+        });
+        gravadas += 1;
+      } catch (err) {
+        // Ja existir e o caso bom: a mensagem entrou por outro caminho.
+        if (
+          !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+          err.code !== 'P2002'
+        ) {
+          throw err;
+        }
+      }
+
       await prisma.unknownContact.update({
         where: { id: d.id },
         data: {
           telefone: tel.e164,
           resolvido: true,
-          resolvidoLeadId: leads[0]!.id,
+          resolvidoLeadId: leadId,
           resolvidoEm: new Date(),
         },
       });
@@ -192,7 +256,12 @@ async function main(): Promise<void> {
     console.log('     pnpm reparar-lid --aplicar');
   } else if (aplicar && resolvidos > 0) {
     console.log(`  ${resolvidos} contatos religados ao lead.`);
+    console.log(`  ${gravadas} mensagens gravadas no historico.`);
+    console.log('');
     console.log('  Nenhuma mensagem foi enviada e nenhuma cadencia andou.');
+    console.log('  ATENCAO: boa parte destas "respostas" e resposta');
+    console.log('  automatica de WhatsApp Business, e nao gente. O painel');
+    console.log('  vai conta-las em "Responderam" — o numero fica inflado.');
   }
   console.log('');
 }
