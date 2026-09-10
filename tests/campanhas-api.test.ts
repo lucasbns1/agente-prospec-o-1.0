@@ -550,3 +550,125 @@ describe('restringeAPlanilha — o publico esta preso a uma lista?', () => {
     ).toBe(false);
   });
 });
+
+// =============================================================================
+// "SÓ QUEM NUNCA FOI CONTATADO" OLHAVA A TABELA ERRADA
+// =============================================================================
+
+/**
+ * O relato: "está mandando mensagem pra lead que já foi mandado".
+ *
+ * A checagem era só `messages` — e `messages` é escrita DEPOIS do envio,
+ * no pós-processamento. Quando esse passo falhava (envio para endereço
+ * inexistente, colisão de UNIQUE no `whatsapp_message_id`), a linha
+ * nunca nascia: o lead recebia a mensagem, `messages` ficava vazia para
+ * ele, e o filtro o reenfileirava como se fosse novo.
+ *
+ * `outbound` é a fonte confiável — a ordem nasce antes de tudo e vira
+ * ENVIADA assim que o transporte devolve sucesso, antes de qualquer
+ * gravação de histórico.
+ */
+describe('montarWhere — quem já foi contatado', () => {
+  async function ordemDeEnvio(
+    leadId: string,
+    campaignId: string,
+    dados: Record<string, unknown> = {}
+  ) {
+    const etapa = await prisma.campaignStep.findFirstOrThrow({
+      where: { campaignId },
+    });
+    return prisma.outboundMessage.create({
+      data: {
+        leadId,
+        campaignId,
+        campaignStepId: etapa.id,
+        status: 'ENVIADA',
+        dryRun: false,
+        textoRenderizado: 'oi',
+        idempotencyKey: `k-${leadId}-${Math.random()}`,
+        ...dados,
+      } as Parameters<typeof prisma.outboundMessage.create>[0]['data'],
+    });
+  }
+
+  it('exclui quem tem ordem ENVIADA, mesmo sem histórico gravado', async () => {
+    const campanha = await criarCampanha();
+    const contatado = await criarLead();
+    await criarLead(); // este nunca recebeu nada
+
+    // A ordem existe; a linha em `messages` NÃO. É exatamente o estado
+    // que o pós-processamento quebrado deixava — e o filtro antigo lia
+    // como "nunca contatado".
+    await ordemDeEnvio(contatado.id, campanha.id);
+    expect(
+      await prisma.message.count({ where: { leadId: contatado.id } })
+    ).toBe(0);
+
+    const restantes = await prisma.lead.findMany({
+      where: servico.montarWhere({ apenasNuncaContatados: true }),
+      select: { id: true },
+    });
+
+    expect(restantes.map((l) => l.id)).not.toContain(contatado.id);
+    expect(restantes).toHaveLength(1);
+  });
+
+  it('simulação NÃO conta como contato', async () => {
+    const campanha = await criarCampanha();
+    const simulado = await criarLead();
+
+    // Um dry-run não falou com ninguém. Tratá-lo como contato esconderia
+    // o lead de uma campanha real para sempre.
+    await ordemDeEnvio(simulado.id, campanha.id, {
+      status: 'SIMULADA',
+      dryRun: true,
+    });
+
+    const restantes = await prisma.lead.findMany({
+      where: servico.montarWhere({ apenasNuncaContatados: true }),
+      select: { id: true },
+    });
+
+    expect(restantes.map((l) => l.id)).toContain(simulado.id);
+  });
+
+  it('o histórico continua valendo — ele cobre o que não veio da fila', async () => {
+    // Mensagem sua digitada no celular e recuperada pela varredura não
+    // tem ordem de envio nenhuma. Trocar uma checagem pela outra, em vez
+    // de somar as duas, abriria este buraco.
+    const lead = await criarLead();
+    const conversa = await prisma.conversation.create({
+      data: { id: `${lead.id}-c`, leadId: lead.id, chatId: `${lead.telefoneNormalizado}@c.us` },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: conversa.id,
+        leadId: lead.id,
+        direcao: 'ENVIADA',
+        status: 'ENVIADA',
+        texto: 'falei com ele na mão',
+        whatsappMessageId: `wa-mao-${Date.now()}`,
+      },
+    });
+
+    const restantes = await prisma.lead.findMany({
+      where: servico.montarWhere({ apenasNuncaContatados: true }),
+      select: { id: true },
+    });
+
+    expect(restantes.map((l) => l.id)).not.toContain(lead.id);
+  });
+
+  it('sem o filtro, ninguém é excluído por já ter sido contatado', async () => {
+    const campanha = await criarCampanha();
+    const contatado = await criarLead();
+    await ordemDeEnvio(contatado.id, campanha.id);
+
+    const restantes = await prisma.lead.findMany({
+      where: servico.montarWhere({}),
+      select: { id: true },
+    });
+
+    expect(restantes.map((l) => l.id)).toContain(contatado.id);
+  });
+});

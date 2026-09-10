@@ -143,8 +143,36 @@ export function montarWhere(filtros: FiltrosCampanha): Prisma.LeadWhereInput {
   }
   if (lotes.length > 0) condicoes.push({ OR: lotes });
 
+  // ============================================================
+  // "SO QUEM NUNCA FOI CONTATADO" OLHAVA A TABELA ERRADA
+  // ============================================================
+  // A checagem era so `messages`, e `messages` e escrita DEPOIS do
+  // envio, no pos-processamento. Quando esse passo falhava — e ele
+  // falhou muito: envio para endereco inexistente, colisao de UNIQUE no
+  // `whatsapp_message_id` — a linha nunca nascia.
+  //
+  // Efeito: o lead recebeu a mensagem, mas `messages` estava vazia para
+  // ele, o filtro concluia "nunca contatado" e o enfileirava de novo. E
+  // exatamente o relato de "esta mandando mensagem para lead que ja foi
+  // mandado".
+  //
+  // `outbound` e a fonte confiavel: a ordem de envio nasce ANTES de
+  // tudo, e o status vai para ENVIADA assim que o transporte devolve
+  // sucesso — antes de qualquer gravacao de historico. Se ha uma ordem
+  // ENVIADA de verdade, houve contato, tenha o historico sido gravado ou
+  // nao.
+  //
+  // `dryRun: false` importa: uma simulacao nao falou com ninguem, e
+  // trata-la como contato esconderia o lead de uma campanha real.
+  //
+  // As duas condicoes ficam, e nao so a nova: o historico cobre o que
+  // veio de fora da fila (mensagem sua, digitada no celular, recuperada
+  // pela varredura), que a `outbound` nao conhece.
   if (filtros.excluirJaContatados || filtros.apenasNuncaContatados) {
     condicoes.push({ messages: { none: { direcao: 'ENVIADA' } } });
+    condicoes.push({
+      outbound: { none: { status: 'ENVIADA', dryRun: false } },
+    });
   }
 
   return { AND: condicoes };
