@@ -57,6 +57,7 @@ import type {
 import { exigirPermissaoDeEnvioReal } from './guarda-envio.js';
 import { ArquivoDeMensagens, escolherJid, traduzir } from './baileys-traducao.js';
 import { caminhoDoArquivo, carregarArquivo, salvarArquivo } from './arquivo-em-disco.js';
+import { apagarCredenciais } from './apagar-credenciais.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -178,7 +179,22 @@ export async function criarProvedorBaileys(
   let info: InfoConta | null = null;
   let encerrando = false;
 
-  const { state, saveCreds } = await useMultiFileAuthState(opcoes.sessionPath);
+  // ============================================================
+  // A CREDENCIAL PRECISA PODER SER RELIDA
+  // ============================================================
+  // `useMultiFileAuthState` le os arquivos UMA vez e devolve o estado em
+  // memoria. Apagar os arquivos depois nao limpa o que ja foi carregado:
+  // a reconexao usaria a mesma credencial morta e levaria 401 de novo.
+  //
+  // Por isso `let`, e uma funcao para recarregar do zero depois de
+  // apagar.
+  let { state, saveCreds } = await useMultiFileAuthState(opcoes.sessionPath);
+
+  async function recarregarCredencial(): Promise<void> {
+    const novo = await useMultiFileAuthState(opcoes.sessionPath);
+    state = novo.state;
+    saveCreds = novo.saveCreds;
+  }
 
   async function conectar(): Promise<void> {
     // A versao do protocolo vem do proprio Baileys, e nao de um arquivo
@@ -256,9 +272,42 @@ export async function criarProvedorBaileys(
           (typeof codigo === 'number' && NAO_ADIANTA_RECONECTAR.has(codigo));
 
         if (deslogado) {
-          log('Sessao invalidada — sera preciso ler o QR de novo', { codigo, motivo });
+          // ============================================================
+          // SESSAO INVALIDA E UM BECO SEM SAIDA SE A CREDENCIAL FICAR
+          // ============================================================
+          // Antes isto so avisava e parava. So que a credencial morta
+          // continuava no disco: no arranque seguinte o Baileys a lia,
+          // tentava logar, levava 401 de novo, e o canal voltava para
+          // FALHOU — sem nunca pedir QR.
+          //
+          // A tela dizia "Reinicie o worker", e reiniciar nao resolvia
+          // nada. O unico jeito era apagar a pasta na mao, sabendo qual
+          // pasta e com o worker parado. Um beco sem saida que exige
+          // conhecimento de dentro do codigo nao e um aviso: e um
+          // defeito.
+          //
+          // Apagar aqui nao perde nada: a credencial JA nao vale. O que
+          // ela impedia era justamente a recuperacao.
+          log('Sessao invalidada — apagando a credencial e pedindo QR novo', {
+            codigo,
+            motivo,
+          });
           emitir('auth_failure', motivo);
-          emitir('disconnected', motivo);
+
+          const apagadas = apagarCredenciais(opcoes.sessionPath, log);
+          log('Credencial invalida removida', { arquivos: apagadas });
+
+          // Reconectar SEM credencial e o que faz o Baileys emitir um QR.
+          // A releitura e obrigatoria: sem ela o socket novo reusaria a
+          // credencial que ainda esta em memoria, e o 401 se repetiria.
+          setTimeout(() => {
+            void recarregarCredencial()
+              .then(() => conectar())
+              .catch((err) => {
+                log('Falha ao reconectar para pedir o QR', { err: String(err) });
+                emitir('disconnected', String(err));
+              });
+          }, 1_000);
           return;
         }
 
