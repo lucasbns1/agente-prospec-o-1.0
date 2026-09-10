@@ -90,6 +90,8 @@ export async function criarWhatsAppAdapter(
     })());
 
   return new WhatsAppWebAdapter({
+    // Para a tela de diagnostico dizer a verdade mesmo sem conexao.
+    canal,
     provedor,
     ...(options.logger ? { logger: options.logger } : {}),
   });

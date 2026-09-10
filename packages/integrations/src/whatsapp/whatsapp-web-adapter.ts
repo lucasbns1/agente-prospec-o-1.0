@@ -53,6 +53,17 @@ export interface OpcoesWhatsAppWebAdapter {
   maxTentativasReconexao?: number;
   /** Injetavel para o teste nao esperar de verdade. */
   aguardar?: (ms: number) => Promise<void>;
+  /**
+   * Qual canal este adapter esta servindo — `baileys`, `whatsapp-web`
+   * ou `simulado`.
+   *
+   * Serve para a tela de diagnostico nao mentir quando NAO ha conexao:
+   * sem isto, o fallback era o literal 'whatsapp-web', e a tela dizia
+   * "Provedor: whatsapp-web" com o Baileys rodando. Numa tela de
+   * diagnostico, um rotulo errado manda quem esta depurando para o lado
+   * errado — foi o que aconteceu.
+   */
+  canal?: string;
 }
 
 const espera = (ms: number): Promise<void> =>
@@ -60,6 +71,7 @@ const espera = (ms: number): Promise<void> =>
 
 export class WhatsAppWebAdapter implements WhatsAppAdapter {
   private readonly provedor: ProvedorWhatsApp;
+  private readonly canal: string | null;
   private readonly log: (m: string, d?: Record<string, unknown>) => void;
   private readonly maxTentativas: number;
   private readonly aguardar: (ms: number) => Promise<void>;
@@ -91,6 +103,7 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
     this.provedor = opcoes.provedor;
     this.log = opcoes.logger ?? ((): void => {});
     this.maxTentativas = opcoes.maxTentativasReconexao ?? 5;
+    this.canal = opcoes.canal ?? null;
     this.aguardar = opcoes.aguardar ?? espera;
     this.registrarEventos();
   }
@@ -355,7 +368,10 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
       // reais, um rotulo cravado faz a tela de diagnostico dizer
       // "whatsapp-web" enquanto quem responde e o Baileys — e a tela de
       // diagnostico e justamente onde a mentira custa mais caro.
-      provider: this.provedor.getInfo()?.plataforma ?? 'whatsapp-web',
+      // Conectado: o que o proprio provedor diz. Desconectado: o canal
+      // configurado. Nunca um literal — ver `canal` nas opcoes.
+      provider:
+        this.provedor.getInfo()?.plataforma ?? this.canal ?? 'desconhecido',
       status: this.status,
       autenticado: this.telefoneConta !== null,
       conectado: this.status === 'CONECTADO',

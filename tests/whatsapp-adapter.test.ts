@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FakeWhatsAppAdapter } from '../packages/integrations/src/whatsapp/fake-adapter.js';
 import { criarWhatsAppAdapter } from '../packages/integrations/src/whatsapp/factory.js';
+import { WhatsAppWebAdapter } from '../packages/integrations/src/whatsapp/whatsapp-web-adapter.js';
 import {
   telefoneParaChatId,
   chatIdParaTelefone,
@@ -110,5 +111,51 @@ describe('conversao de telefone e chatId', () => {
 
   it('chatId -> telefone', () => {
     expect(chatIdParaTelefone('5519999998888@c.us')).toBe('5519999998888');
+  });
+});
+
+// =============================================================================
+// A TELA DE DIAGNÓSTICO NÃO PODE MENTIR O PROVEDOR
+// =============================================================================
+
+/**
+ * O caso real: a sessão do Baileys caiu, e a tela de configuração do
+ * canal mostrou "Provedor: whatsapp-web".
+ *
+ * O fallback era o literal `'whatsapp-web'` — sem conexão não há
+ * `getInfo()`, e o rótulo cravado assumia. Numa tela de DIAGNÓSTICO,
+ * onde a pessoa vai justamente quando algo quebrou, um rótulo errado
+ * manda quem depura para o lado errado. Foi o que aconteceu: fui olhar
+ * o `.env` atrás de um canal mal configurado que não existia.
+ */
+describe('saude() — qual provedor a tela mostra', () => {
+  // Desconectado de propósito: é quando `getInfo()` devolve null e o
+  // fallback passa a decidir sozinho.
+  const provedorMudo = {
+    getInfo: () => null,
+    on: () => {},
+    inicializar: async () => {},
+    destroy: async () => {},
+    enviar: async () => ({ id: 'x' }),
+    numeroExiste: async () => false,
+    mensagensDesde: async () => [],
+    procurarEnviada: async () => null,
+  } as never;
+
+  it('sem conexão, mostra o canal configurado — não um literal', () => {
+    const a = new WhatsAppWebAdapter({ provedor: provedorMudo, canal: 'baileys' });
+    expect(a.saude().provider).toBe('baileys');
+  });
+
+  it('não inventa "whatsapp-web" quando o canal é outro', () => {
+    const a = new WhatsAppWebAdapter({ provedor: provedorMudo, canal: 'baileys' });
+    expect(a.saude().provider).not.toBe('whatsapp-web');
+  });
+
+  it('sem canal e sem conexão, assume a ignorância em vez de chutar', () => {
+    // "desconhecido" e feio, e e a verdade. Um nome de biblioteca ali
+    // seria bonito e mentiroso.
+    const a = new WhatsAppWebAdapter({ provedor: provedorMudo });
+    expect(a.saude().provider).toBe('desconhecido');
   });
 });
