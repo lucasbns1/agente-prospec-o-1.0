@@ -460,6 +460,116 @@ describe('despachante — o que vira job e o que nao vira', () => {
     expect(r.adiadas).toBe(0);
   });
 
+  /**
+   * ============================================================
+   * O LIMITE DIARIO CONTA PESSOAS, NAO MENSAGENS
+   * ============================================================
+   * "Hoje eu falo com 50" e uma frase sobre gente. Enquanto a conta era
+   * de mensagens, uma pessoa que recebia a abordagem e o follow-up no
+   * mesmo dia gastava duas vagas — e "50 por dia" virava vinte e poucas
+   * pessoas, sem que ninguem tivesse pedido isso.
+   *
+   * Aqui a cota do dia ja esta inteira gasta (limite 1, uma pessoa
+   * abordada). A mensagem que espera e da MESMA pessoa: continuar a
+   * conversa nao abre uma vaga nova, porque ela ja esta entre as de hoje.
+   */
+  it('a segunda mensagem do mesmo lead nao gasta outra vaga do dia', async () => {
+    const lead = await criarLead();
+    const campanha = await criarCampanha({ limiteDiarioEnvios: 1 });
+    const etapa2 = await prisma.campaignStep.create({
+      data: { campaignId: campanha.id, ordem: 2, nome: 'Follow-up', texto: 'Oi de novo', ativo: true },
+    });
+
+    const referencia = new Date(Date.now() + 3600_000);
+
+    // A etapa 1 deste lead ja saiu de verdade hoje: ele E a pessoa do dia.
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: (await prisma.campaignStep.findFirstOrThrow({
+          where: { campaignId: campanha.id, ordem: 1 },
+        })).id,
+        idempotencyKey: `etapa1-${Date.now()}`,
+        status: 'ENVIADA',
+        processedAt: referencia,
+        dryRun: false,
+      },
+    });
+
+    // A etapa 2, do MESMO lead, esperando.
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapa2.id,
+        idempotencyKey: `etapa2-${Date.now()}`,
+        status: 'AGENDADA',
+        scheduledAt: new Date(Date.now() - 1000),
+        textoRenderizado: 'Oi de novo',
+        dryRun: true,
+      },
+    });
+
+    const r = await varrer(referencia);
+
+    expect(r.despachadas).toBe(1);
+    expect(r.adiadas).toBe(0);
+  });
+
+  /**
+   * O limite POR HORA continua sendo de mensagens — de proposito. Ele nao
+   * existe para dosar com quantas pessoas voce fala, e sim para nao
+   * disparar em rajada: o que o antispam do WhatsApp enxerga e a
+   * mensagem, nao a pessoa por tras dela.
+   */
+  it('o limite por hora continua contando mensagens, mesmo do mesmo lead', async () => {
+    const lead = await criarLead();
+    const campanha = await criarCampanha({
+      limiteDiarioEnvios: 500,
+      limiteHorarioEnvios: 1,
+    });
+    const etapa2 = await prisma.campaignStep.create({
+      data: { campaignId: campanha.id, ordem: 2, nome: 'Follow-up', texto: 'Oi de novo', ativo: true },
+    });
+
+    const agora = new Date();
+
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: (await prisma.campaignStep.findFirstOrThrow({
+          where: { campaignId: campanha.id, ordem: 1 },
+        })).id,
+        idempotencyKey: `hora1-${Date.now()}`,
+        status: 'ENVIADA',
+        processedAt: agora,
+        dryRun: false,
+      },
+    });
+
+    await prisma.outboundMessage.create({
+      data: {
+        leadId: lead.id,
+        campaignId: campanha.id,
+        campaignStepId: etapa2.id,
+        idempotencyKey: `hora2-${Date.now()}`,
+        status: 'AGENDADA',
+        scheduledAt: new Date(agora.getTime() - 1000),
+        textoRenderizado: 'Oi de novo',
+        dryRun: true,
+      },
+    });
+
+    const r = await varrer(agora);
+
+    // A pessoa ja e de hoje, entao o limite diario deixa passar. Quem
+    // segura e o por hora — e ele conta a mensagem.
+    expect(r.despachadas).toBe(0);
+    expect(r.adiadas).toBe(1);
+  });
+
   it('nao despacha mensagem cujo horario ainda nao chegou', async () => {
     await criarLead();
     const campanha = await criarCampanha();

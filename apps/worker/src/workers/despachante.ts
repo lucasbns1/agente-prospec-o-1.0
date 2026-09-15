@@ -67,6 +67,45 @@ function contarEnviosReais(campaignId: string, desde: Date): Promise<number> {
 }
 
 /**
+ * QUEM ja foi abordado hoje nesta campanha — nao quantas mensagens.
+ *
+ * ============================================================
+ * POR QUE PESSOAS, E NAO MENSAGENS
+ * ============================================================
+ * O limite diario contava MENSAGENS. Numa cadencia de quatro etapas,
+ * uma pessoa que recebe a abordagem e o primeiro follow-up no mesmo dia
+ * gastava DUAS vagas — e "50 por dia" virava, na pratica, vinte e poucas
+ * pessoas.
+ *
+ * Quem opera pensa em pessoas: "hoje eu falo com 50". Quantas mensagens
+ * cada uma recebe e consequencia da cadencia, e nao uma decisao separada
+ * que se toma toda manha.
+ *
+ * Entao a cota diaria passa a ser um CONJUNTO de leads. Continuar uma
+ * conversa ja comecada hoje nao consome vaga nova: a pessoa ja esta
+ * dentro. So um lead NOVO ocupa lugar.
+ *
+ * O limite por HORA continua em mensagens, de proposito: ele nao existe
+ * para dosar quantas pessoas voce aborda, e sim para nao disparar em
+ * rajada — e o que o antispam enxerga e a mensagem, nao a pessoa.
+ */
+async function pessoasAbordadasDesde(
+  campaignId: string,
+  desde: Date
+): Promise<Set<string>> {
+  const linhas = await prisma.outboundMessage.findMany({
+    where: {
+      campaignId,
+      status: { in: ['ENVIADA'] },
+      processedAt: { gte: desde },
+    },
+    select: { leadId: true },
+    distinct: ['leadId'],
+  });
+  return new Set(linhas.map((l) => l.leadId));
+}
+
+/**
  * Uma passada: pega o que venceu, valida e despacha.
  *
  * Exportada para poder ser chamada direto no teste, sem depender de
@@ -263,7 +302,7 @@ export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredu
   // Cache por campanha: varias mensagens da mesma campanha compartilham
   // a mesma contagem, e recontar por mensagem seria uma consulta a mais
   // para cada linha.
-  const cota = new Map<string, { hoje: number; hora: number }>();
+  const cota = new Map<string, { pessoasHoje: Set<string>; hora: number }>();
 
   const inicioDoDia = new Date(agora);
   inicioDoDia.setHours(0, 0, 0, 0);
@@ -310,13 +349,17 @@ export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredu
     let contagem = cota.get(c.id);
     if (!contagem) {
       contagem = {
-        hoje: await contarEnviosReais(c.id, inicioDoDia),
+        pessoasHoje: await pessoasAbordadasDesde(c.id, inicioDoDia),
         hora: await contarEnviosReais(c.id, umaHoraAtras),
       };
       cota.set(c.id, contagem);
     }
 
-    if (contagem.hoje >= c.limiteDiarioEnvios) {
+    // Continuar uma conversa ja comecada hoje NAO consome vaga nova: a
+    // pessoa ja esta entre as de hoje. So um lead novo ocupa lugar.
+    const jaEhDeHoje = contagem.pessoasHoje.has(m.leadId);
+
+    if (!jaEhDeHoje && contagem.pessoasHoje.size >= c.limiteDiarioEnvios) {
       // Amanha, no inicio da janela. O limite diario nao e motivo para
       // desistir do lead.
       const amanha = new Date(inicioDoDia.getTime() + 24 * 3600_000);
@@ -354,7 +397,9 @@ export async function varrer(agora: Date = new Date()): Promise<ResultadoVarredu
     // Reservado de forma otimista para a proxima varredura nao contar de
     // novo a mesma mensagem. Quem confirma o consumo e o worker.
     contagem.hora += 1;
-    contagem.hoje += 1;
+    // A vaga do dia e da PESSOA — por isso um Set, e nao um contador. A
+    // etapa 2 do mesmo lead, na mesma varredura, nao gasta outra vaga.
+    contagem.pessoasHoje.add(m.leadId);
     resultado.despachadas += 1;
   }
 

@@ -204,7 +204,7 @@ export function ConfiguracoesCampanha({
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div>
-            <Label htmlFor="ld">Por dia</Label>
+            <Label htmlFor="ld">Pessoas por dia</Label>
             <Input
               id="ld"
               type="number"
@@ -214,7 +214,7 @@ export function ConfiguracoesCampanha({
             />
           </div>
           <div>
-            <Label htmlFor="lh">Por hora</Label>
+            <Label htmlFor="lh">Mensagens por hora</Label>
             <Input
               id="lh"
               type="number"
@@ -235,6 +235,16 @@ export function ConfiguracoesCampanha({
           </div>
         </div>
 
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          <strong>Por dia conta gente, não mensagem.</strong> “50 por dia” é
+          falar com 50 pessoas: se alguém recebe a abordagem e o follow-up no
+          mesmo dia, isso ocupa <em>uma</em> vaga, não duas.
+        </p>
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          <strong>Por hora conta mensagem</strong> — de propósito. Ele não
+          existe para dosar com quantas pessoas você fala, e sim para não
+          disparar em rajada: o que o antispam enxerga é a mensagem.
+        </p>
         <p className="text-xs text-[var(--color-texto-suave)]">
           Só envio <strong>real</strong> consome os limites. Simulação e
           falha não contam — senão testar queimaria a cota do dia.

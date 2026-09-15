@@ -214,7 +214,7 @@ function NovaCampanha({ aoCancelar }: { aoCancelar: () => void }) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label htmlFor="ld">Limite por dia</Label>
+                  <Label htmlFor="ld">Pessoas por dia</Label>
                   <Input
                     id="ld"
                     type="number"
@@ -224,7 +224,7 @@ function NovaCampanha({ aoCancelar }: { aoCancelar: () => void }) {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="lh">Limite por hora</Label>
+                  <Label htmlFor="lh">Mensagens por hora</Label>
                   <Input
                     id="lh"
                     type="number"
@@ -426,7 +426,7 @@ export function Campanhas() {
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <Users className="h-3 w-3" aria-hidden="true" />
-                  {c.limiteDiarioEnvios}/dia
+                  {c.limiteDiarioEnvios} pessoas/dia
                 </span>
               </div>
 
