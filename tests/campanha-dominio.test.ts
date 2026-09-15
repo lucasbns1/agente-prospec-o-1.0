@@ -619,3 +619,59 @@ describe('renderizarMensagem — nome da variável e maiúsculas', () => {
     expect(r.motivoBloqueio).toContain('Baiiro');
   });
 });
+
+// =============================================================================
+// EM PORTUGAL NÃO É BAIRRO, É ZONA
+// =============================================================================
+
+/**
+ * A mesma armadilha do `{{Bairro}}`, com outra palavra. A campanha de
+ * Lisboa voltou inteira BLOQUEADA:
+ *
+ *   Mensagem vazia — Variavel desconhecida no template: zona
+ *
+ * Quem escreve o texto usa a palavra da vida real, e não a da lista
+ * interna. Onde a outra palavra significa exatamente o mesmo campo,
+ * aceitá-la não cria ambiguidade nenhuma.
+ */
+describe('renderizarMensagem — sinônimos de variável', () => {
+  it('{{zona}} lê o bairro do lead', () => {
+    const r = renderizarMensagem('Encontrei a {{empresa}} aí de {{zona}}.', {
+      ...CTX,
+      bairro: 'Alvalade',
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.texto).toBe('Encontrei a Clínica Odonto Sorriso aí de Alvalade.');
+  });
+
+  it('{{freguesia}}, {{Zona}} e {{nota}} também chegam no campo certo', () => {
+    const ctx = { ...CTX, bairro: 'Arroios', avaliacao: 4.8 };
+
+    expect(renderizarMensagem('Em {{freguesia}}.', ctx).texto).toBe('Em Arroios.');
+    expect(renderizarMensagem('Em {{Zona}}.', ctx).texto).toBe('Em Arroios.');
+    expect(renderizarMensagem('Tem {{nota}} estrelas.', ctx).texto).toBe(
+      'Tem 4.8 estrelas.'
+    );
+  });
+
+  /**
+   * O sinônimo não afrouxa nada além do nome: sem valor no campo de
+   * destino, `{{zona}}` bloqueia igual `{{bairro}}` bloquearia. Se
+   * passasse, a frase sairia com um buraco — "aí de ." — que é
+   * justamente o que o bloqueio existe para evitar.
+   */
+  it('{{zona}} sem bairro no lead bloqueia, como {{bairro}} bloquearia', () => {
+    const r = renderizarMensagem('Aí de {{zona}}.', { ...CTX, bairro: null });
+
+    expect(r.ok).toBe(false);
+    expect(r.faltando).toContain('zona');
+  });
+
+  it('palavra que não é sinônimo de nada continua bloqueando', () => {
+    const r = renderizarMensagem('Aí de {{arredores}}.', CTX);
+
+    expect(r.ok).toBe(false);
+    expect(r.desconhecidas).toContain('arredores');
+  });
+});

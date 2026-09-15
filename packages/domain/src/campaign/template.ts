@@ -104,13 +104,54 @@ const RE_VARIAVEL = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
  * caixa, entao casar sem olhar maiuscula nao cria ambiguidade — so
  * deixa de punir quem escreveu como se fala.
  */
+/**
+ * Outro nome para a mesma coisa.
+ *
+ * ============================================================
+ * A MESMA ARMADILHA, COM OUTRA PALAVRA
+ * ============================================================
+ * `{{Bairro}}` com maiuscula ja tinha travado 80 mensagens. Depois foi
+ * `{{zona}}`: em Portugal ninguem chama de bairro, chama de zona — e a
+ * campanha inteira de Lisboa voltou BLOQUEADA com "variavel desconhecida
+ * no template: zona".
+ *
+ * A licao e a mesma das duas vezes: quem escreve o texto usa a palavra
+ * que usa na vida, e nao a palavra que esta na lista interna. Onde a
+ * outra palavra significa exatamente o mesmo campo, aceita-la nao cria
+ * ambiguidade nenhuma — so deixa de punir quem escreveu certo.
+ *
+ * Aqui entram SO sinonimos exatos. Nada que mude o sentido: `{{zona}}`
+ * e o bairro do lead, ponto. Se um dia aparecer uma palavra que pode
+ * ser dois campos diferentes, ela NAO entra nesta lista — bloquear e
+ * melhor do que escolher errado no lugar da pessoa.
+ */
+const SINONIMOS: Record<string, string> = {
+  // Portugal
+  zona: 'bairro',
+  freguesia: 'bairro',
+  // Variacoes que o texto pede naturalmente
+  distrito: 'bairro',
+  nome_empresa: 'nome_estabelecimento',
+  estabelecimento: 'nome_estabelecimento',
+  nota: 'avaliacao',
+  estrelas: 'avaliacao',
+};
+
 export function nomeCanonicoDaVariavel(nome: string): string | null {
   const alvo = nome.toLowerCase();
-  return (
-    (VARIAVEIS_CAMPANHA as readonly string[]).find(
-      (v) => v.toLowerCase() === alvo
-    ) ?? null
+  const direto = (VARIAVEIS_CAMPANHA as readonly string[]).find(
+    (v) => v.toLowerCase() === alvo
   );
+  if (direto) return direto;
+
+  // O sinonimo so vale se apontar para uma variavel que existe de
+  // verdade — senao um erro de digitacao nesta tabela criaria uma
+  // variavel fantasma que renderiza vazio.
+  const sinonimo = SINONIMOS[alvo];
+  if (sinonimo && (VARIAVEIS_CAMPANHA as readonly string[]).includes(sinonimo)) {
+    return sinonimo;
+  }
+  return null;
 }
 
 /** Extrai as variaveis referenciadas, sem renderizar. */
