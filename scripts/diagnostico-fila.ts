@@ -91,13 +91,22 @@ async function main(): Promise<void> {
           console.log(`       ${String(b.motivoBloqueio ?? '(sem motivo)').padEnd(28)} ${b._count}`);
         }
 
-        // Uma linha de exemplo com o detalhe: o motivo e a categoria, o
-        // `erro` e a frase que diz QUAL variavel faltou.
+        // O campo e `detalheBloqueio`, e nao `erro`. A primeira versao
+        // deste script leu `erro` — que fica vazio num bloqueio — e por
+        // isso NUNCA imprimiu a frase que diz QUAL variavel faltou.
+        // Justamente a informacao que faz o diagnostico valer a pena.
         const exemplo = await prisma.outboundMessage.findFirst({
-          where: { campaignId: c.id, campaignStepId: etapa.id, status: 'BLOQUEADA', erro: { not: null } },
-          select: { erro: true },
+          where: {
+            campaignId: c.id,
+            campaignStepId: etapa.id,
+            status: 'BLOQUEADA',
+            detalheBloqueio: { not: null },
+          },
+          select: { detalheBloqueio: true },
         });
-        if (exemplo?.erro) console.log(`       detalhe: ${exemplo.erro}`);
+        if (exemplo?.detalheBloqueio) {
+          console.log(`       detalhe: ${exemplo.detalheBloqueio}`);
+        }
       }
 
       // As variaveis do texto — e o que costuma explicar o bloqueio.

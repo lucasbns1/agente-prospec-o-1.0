@@ -547,3 +547,75 @@ describe('distribuirNoTempo', () => {
     expect(datas[75]!.getTime() - datas[0]!.getTime()).toBeGreaterThan(60 * 75 * 1000 * 0.9);
   });
 });
+
+// =============================================================================
+// UMA LETRA MAIÚSCULA BLOQUEAVA A MENSAGEM INTEIRA
+// =============================================================================
+
+/**
+ * O caso real, lido do banco com `pnpm diagnostico-fila`:
+ *
+ *   ETAPA 2 — Follow-up 1
+ *      BLOQUEADA    80
+ *      MENSAGEM_VAZIA               80
+ *      variaveis no texto: empresa, Bairro, avaliacao
+ *
+ * `{{Bairro}}` com B maiúsculo. A comparação com as variáveis conhecidas
+ * era exata, então ele virava "variável desconhecida", o texto voltava
+ * `null`, e as 80 mensagens da etapa 2 ficavam bloqueadas.
+ *
+ * Ninguém digita `{{Bairro}}` esperando que falhe. O conjunto de
+ * variáveis é fechado e não há duas que se distingam só pela caixa, então
+ * casar sem olhar maiúscula não cria ambiguidade — só deixa de punir quem
+ * escreveu como se fala.
+ */
+describe('renderizarMensagem — nome da variável e maiúsculas', () => {
+  it('{{Bairro}} funciona igual a {{bairro}}', () => {
+    const r = renderizarMensagem('Vi a {{empresa}} no {{Bairro}}.', {
+      ...CTX,
+      bairro: 'Cambuí',
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.texto).toBe('Vi a Clínica Odonto Sorriso no Cambuí.');
+  });
+
+  it('não importa como foi escrito — o valor é o mesmo', () => {
+    const ctx = { ...CTX, bairro: 'Cambuí' };
+    const variantes = ['{{bairro}}', '{{Bairro}}', '{{BAIRRO}}', '{{BaIrRo}}'];
+
+    for (const v of variantes) {
+      const r = renderizarMensagem(`No ${v}.`, ctx);
+      expect(r.ok, `falhou em ${v}`).toBe(true);
+      expect(r.texto, `errou em ${v}`).toBe('No Cambuí.');
+    }
+  });
+
+  it('obrigatória continua obrigatória em maiúscula', () => {
+    // Se a caixa desligasse a checagem, `{{Empresa}}` sem valor passaria
+    // e a mensagem sairia com um buraco no lugar do nome do negócio.
+    //
+    // `nome` vai a null junto de propósito: `valorDe('empresa')` cai
+    // para o nome quando não há empresa, e esse fallback é intencional.
+    // Zerar só a empresa não testaria nada — foi o que a primeira versão
+    // deste teste fez, e ela passou por engano.
+    const r = renderizarMensagem('Vi a {{Empresa}} no Google.', {
+      ...CTX,
+      empresa: null,
+      nome: null,
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.faltando).toContain('Empresa');
+  });
+
+  it('variável que NÃO existe continua bloqueando', () => {
+    // A tolerância é só com a caixa. Um nome inventado tem que bloquear,
+    // senão o texto sai com um buraco e ninguém fica sabendo.
+    const r = renderizarMensagem('Vi a {{empresa}} no {{Baiiro}}.', CTX);
+
+    expect(r.ok).toBe(false);
+    expect(r.desconhecidas).toContain('Baiiro');
+    expect(r.motivoBloqueio).toContain('Baiiro');
+  });
+});

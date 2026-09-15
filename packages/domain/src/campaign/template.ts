@@ -85,6 +85,34 @@ export interface ResultadoRender {
 
 const RE_VARIAVEL = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 
+/**
+ * O nome canonico de uma variavel, ou `null` se ela nao existe.
+ *
+ * ============================================================
+ * POR QUE A COMPARACAO NAO PODE SER EXATA
+ * ============================================================
+ * Era: `VARIAVEIS_CAMPANHA.includes(v)`. Entao `{{Bairro}}`, com B
+ * maiusculo, nao era `{{bairro}}` — virava "variavel desconhecida", o
+ * texto inteiro voltava `null`, e a mensagem era bloqueada.
+ *
+ * Aconteceu em uso real, e o estrago foi silencioso: 80 mensagens da
+ * etapa 2 de uma campanha ficaram BLOQUEADAS por causa de uma letra. A
+ * tela dizia so "MENSAGEM_VAZIA", que nao aponta para lugar nenhum.
+ *
+ * Ninguem digita `{{Bairro}}` esperando que falhe. O conjunto de
+ * variaveis e fechado e nao ha dois nomes que se distingam so pela
+ * caixa, entao casar sem olhar maiuscula nao cria ambiguidade — so
+ * deixa de punir quem escreveu como se fala.
+ */
+export function nomeCanonicoDaVariavel(nome: string): string | null {
+  const alvo = nome.toLowerCase();
+  return (
+    (VARIAVEIS_CAMPANHA as readonly string[]).find(
+      (v) => v.toLowerCase() === alvo
+    ) ?? null
+  );
+}
+
 /** Extrai as variaveis referenciadas, sem renderizar. */
 export function extrairVariaveis(template: string): string[] {
   const achadas = new Set<string>();
@@ -209,7 +237,7 @@ export function renderizarMensagem(
 
   // --- Variaveis inexistentes no sistema ---
   const desconhecidas = referenciadas.filter(
-    (v) => !(VARIAVEIS_CAMPANHA as readonly string[]).includes(v)
+    (v) => nomeCanonicoDaVariavel(v) === null
   );
   if (desconhecidas.length > 0) {
     return {
@@ -219,9 +247,12 @@ export function renderizarMensagem(
   }
 
   // --- Obrigatorias ausentes bloqueiam ---
-  const faltandoObrigatorias = referenciadas.filter(
-    (v) => obrigatorias.includes(v) && !valorDe(contexto, v)
-  );
+  // Pelo nome CANONICO: `{{Empresa}}` e obrigatoria do mesmo jeito que
+  // `{{empresa}}`, e precisa bloquear igual quando nao tem valor.
+  const faltandoObrigatorias = referenciadas.filter((v) => {
+    const canonico = nomeCanonicoDaVariavel(v);
+    return canonico !== null && obrigatorias.includes(canonico) && !valorDe(contexto, canonico);
+  });
   if (faltandoObrigatorias.length > 0) {
     return {
       ...vazio(
@@ -268,7 +299,10 @@ export function renderizarMensagem(
   const faltando: string[] = [];
 
   texto = texto.replace(RE_VARIAVEL, (_m, nomeVar: string) => {
-    const valor = valorDe(contexto, nomeVar);
+    // Pelo canonico: `{{Bairro}}` busca o valor de `bairro`. O que o
+    // usuario escreveu fica no relatorio, para ele se reconhecer ali.
+    const canonico = nomeCanonicoDaVariavel(nomeVar) ?? nomeVar;
+    const valor = valorDe(contexto, canonico);
     if (valor === null || valor === '') {
       faltando.push(nomeVar);
       return '';
