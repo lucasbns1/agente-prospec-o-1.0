@@ -665,10 +665,21 @@ export async function rotasCampaigns(app: FastifyInstance): Promise<void> {
     { preHandler: exigirAutenticacao },
     async (request) => {
       const { id } = idSchema.parse(request.params);
+      // ============================================================
+      // O TETO DA LISTA
+      // ============================================================
+      // Era 500, e a tela nem chegava la: ela nunca mandava `limite`, e
+      // o padrao de 100 era o que voce via. Numa campanha de mil linhas,
+      // "Agendada: 700" com 100 na lista parece mensagem sumida.
+      //
+      // Agora o teto e 5000 e a tela pede em blocos. Ele existe porque
+      // cada linha traz o texto renderizado inteiro: sem limite nenhum,
+      // uma campanha grande viraria uma resposta de dezenas de MB que
+      // trava o navegador — o oposto de mostrar mais.
       const { status, limite } = z
         .object({
           status: z.string().optional(),
-          limite: z.coerce.number().int().min(1).max(500).default(100),
+          limite: z.coerce.number().int().min(1).max(5000).default(100),
         })
         .parse(request.query);
 

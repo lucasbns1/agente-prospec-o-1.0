@@ -657,16 +657,34 @@ function Fila({ campanhaId }: { campanhaId: string }) {
   // o sistema perdeu 45 mensagens. Nao perdeu: elas estao na fila e vao
   // sair. Faltava a tela deixar isso ver.
   //
-  // Duas coisas resolvem: o filtro por status (clicar no contador) e o
-  // aviso de quantas ficaram de fora.
+  // Tres coisas resolvem: o filtro por status (clicar no contador), o
+  // aviso de quantas ficaram de fora, e o botao que traz mais.
   const [filtro, setFiltro] = useState<string | null>(null);
 
+  // Quanto a lista pede. A tela ANTES nao mandava `limite` nenhum e
+  // ficava presa no padrao de 100 da API — mesmo com a API aceitando
+  // bem mais. Trocar o numero no servidor sozinho nao mudaria nada aqui.
+  const BLOCO = 500;
+  const TETO = 5000;
+  const [limite, setLimite] = useState(BLOCO);
+
+  // Trocar de filtro comeca a contagem de novo: as 500 de "Agendada" nao
+  // sao as mesmas 500 da fila inteira.
+  const mudarFiltro = (s: string | null): void => {
+    setFiltro(s);
+    setLimite(BLOCO);
+  };
+
   const { data, isLoading } = useQuery({
-    queryKey: ['campanha-fila', campanhaId, filtro],
+    queryKey: ['campanha-fila', campanhaId, filtro, limite],
     queryFn: () =>
       get<{ mensagens: MensagemFila[]; contagem: Record<string, number> }>(
-        `/api/campaigns/${campanhaId}/fila${filtro ? `?status=${filtro}` : ''}`
+        `/api/campaigns/${campanhaId}/fila?limite=${limite}` +
+          (filtro ? `&status=${filtro}` : '')
       ),
+    // Sem isto a lista pisca vazia a cada "mostrar mais": o React Query
+    // descarta o bloco anterior enquanto o proximo nao chega.
+    placeholderData: (anterior) => anterior,
   });
 
   if (isLoading) {
@@ -714,7 +732,7 @@ function Fila({ campanhaId }: { campanhaId: string }) {
           <button
             key={status}
             type="button"
-            onClick={() => setFiltro(filtro === status ? null : status)}
+            onClick={() => mudarFiltro(filtro === status ? null : status)}
             className={
               'rounded-full transition ' +
               (filtro === status
@@ -733,7 +751,7 @@ function Fila({ campanhaId }: { campanhaId: string }) {
         {filtro && (
           <button
             type="button"
-            onClick={() => setFiltro(null)}
+            onClick={() => mudarFiltro(null)}
             className="text-xs text-[var(--color-texto-suave)] underline"
           >
             limpar filtro
@@ -742,13 +760,31 @@ function Fila({ campanhaId }: { campanhaId: string }) {
       </div>
 
       {escondidas > 0 && (
-        <p className="text-xs text-[var(--color-texto-suave)]">
-          Mostrando as {mensagens.length} mais antigas
-          {filtro ? ` de ${humanizar(filtro).toLowerCase()}` : ''} — faltam{' '}
-          <strong>{escondidas}</strong>. Elas continuam na fila; a lista é que
-          para em 100.
-          {!filtro && ' Clique num contador acima para ver só aquele estado.'}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-[var(--color-texto-suave)]">
+            Mostrando as {mensagens.length} mais antigas
+            {filtro ? ` de ${humanizar(filtro).toLowerCase()}` : ''} — faltam{' '}
+            <strong>{escondidas}</strong>. Elas continuam na fila; a lista é que
+            para aqui.
+            {!filtro && ' Clique num contador acima para ver só aquele estado.'}
+          </p>
+
+          {limite < TETO && (
+            <button
+              type="button"
+              onClick={() => setLimite((n) => Math.min(n + BLOCO, TETO))}
+              className="rounded-md border border-[var(--color-borda)] px-2 py-1 text-xs font-medium hover:bg-[var(--color-fundo)]"
+            >
+              Mostrar mais {Math.min(BLOCO, escondidas)}
+            </button>
+          )}
+
+          {limite >= TETO && (
+            <span className="text-xs text-[var(--color-texto-fraco)]">
+              Teto de {TETO} na tela — o diagnóstico da fila conta tudo.
+            </span>
+          )}
+        </div>
       )}
 
       {mensagens.length === 0 && filtro && (
