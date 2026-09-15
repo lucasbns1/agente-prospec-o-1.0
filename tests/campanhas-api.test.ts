@@ -271,6 +271,77 @@ describe('enfileirarCampanha — guardas', () => {
   });
 });
 
+/**
+ * ============================================================
+ * CORRIGIR O TEXTO E DESTRAVAR O QUE JA ESTA NA FILA
+ * ============================================================
+ * O bloqueio guarda o texto e o motivo de QUANDO a mensagem foi
+ * enfileirada. Consertar o template nao mexe sozinho em nada que ja
+ * esta na fila.
+ *
+ * Aconteceu assim: `{{zona}}` nao era variavel conhecida, a campanha de
+ * Lisboa inteira travou, a pessoa trocou o texto — e a tela continuou
+ * repetindo "Variavel desconhecida no template: zona". Parecia que a
+ * correcao nao tinha pegado.
+ *
+ * Pegou. Faltava REAPLICAR o template nas linhas paradas. Isto prova
+ * que o reenfileiramento faz exatamente isso — e, na outra ponta, que
+ * ele nao reabre o que ja saiu.
+ */
+describe('enfileirarCampanha — destravar o que ficou bloqueado', () => {
+  it('corrigir o template e reenfileirar destrava a mensagem', async () => {
+    await criarLead({ bairro: 'Cambuí' });
+    const campanha = await criarCampanha({}, 'Vi a {{empresa}} aí de {{zonaa}}.');
+
+    const primeira = await servico.enfileirarCampanha(campanha.id);
+    expect(primeira.bloqueadas).toBe(1);
+
+    const travada = await prisma.outboundMessage.findFirstOrThrow();
+    expect(travada.status).toBe('BLOQUEADA');
+    expect(travada.detalheBloqueio).toContain('zonaa');
+
+    // A correcao na aba Etapas.
+    await prisma.campaignStep.updateMany({
+      where: { campaignId: campanha.id },
+      data: { texto: 'Vi a {{empresa}} aí de {{bairro}}.' },
+    });
+
+    const segunda = await servico.enfileirarCampanha(campanha.id);
+    expect(segunda.atualizadas).toBe(1);
+    expect(segunda.bloqueadas).toBe(0);
+
+    const destravada = await prisma.outboundMessage.findFirstOrThrow();
+    expect(destravada.status).toBe('AGENDADA');
+    expect(destravada.motivoBloqueio).toBeNull();
+    // O texto foi RECALCULADO, e nao so o status trocado. Sem isto a
+    // mensagem sairia com o texto velho e quebrado.
+    expect(destravada.textoRenderizado).toContain('Cambuí');
+    expect(await prisma.outboundMessage.count()).toBe(1);
+  });
+
+  /**
+   * A outra ponta, e a que nao pode falhar nunca: reenfileirar depois de
+   * corrigir o texto NAO pode reabrir quem ja recebeu. Se ENVIADA
+   * voltasse para AGENDADA, um conserto de template viraria um segundo
+   * disparo para a mesma pessoa.
+   */
+  it('reenfileirar nao toca em quem ja recebeu', async () => {
+    await criarLead({ bairro: 'Cambuí' });
+    const campanha = await criarCampanha({}, 'Vi a {{empresa}} aí de {{bairro}}.');
+    await servico.enfileirarCampanha(campanha.id);
+
+    await prisma.outboundMessage.updateMany({
+      data: { status: 'ENVIADA', processedAt: new Date(), dryRun: false },
+    });
+
+    await servico.enfileirarCampanha(campanha.id);
+
+    const depois = await prisma.outboundMessage.findFirstOrThrow();
+    expect(depois.status).toBe('ENVIADA');
+    expect(depois.processedAt).not.toBeNull();
+  });
+});
+
 describe('enfileirarCampanha — idempotencia', () => {
   it('enfileirar duas vezes nao duplica a mensagem', async () => {
     await criarLead();

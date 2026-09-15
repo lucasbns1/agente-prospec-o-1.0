@@ -644,7 +644,13 @@ function Previa({ campanha }: { campanha: Campanha }) {
 }
 
 // ----------------------------------------------------------------- fila
-function Fila({ campanhaId }: { campanhaId: string }) {
+function Fila({
+  campanhaId,
+  campanhaAtiva,
+}: {
+  campanhaId: string;
+  campanhaAtiva: boolean;
+}) {
   // ============================================================
   // "AGENDADA: 47" E DUAS NA LISTA
   // ============================================================
@@ -687,6 +693,37 @@ function Fila({ campanhaId }: { campanhaId: string }) {
     placeholderData: (anterior) => anterior,
   });
 
+  // ============================================================
+  // O TEXTO FOI CORRIGIDO E A FILA CONTINUA COM O ERRO ANTIGO
+  // ============================================================
+  // O bloqueio guarda o texto e o motivo de QUANDO a mensagem foi
+  // enfileirada. Consertar o template na aba Etapas nao mexe em nada
+  // que ja esta na fila: as linhas seguem BLOQUEADA, repetindo um
+  // motivo que nao existe mais.
+  //
+  // Aconteceu assim: `{{zona}}` nao era variavel conhecida, a campanha
+  // inteira travou, a pessoa trocou para `{{bairro}}` — e a tela
+  // continuou dizendo "Variavel desconhecida no template: zona". Parece
+  // que a correcao nao pegou.
+  //
+  // Pegou. Faltava REAPLICAR o template nas linhas paradas, que e o que
+  // o reenfileiramento ja faz: ele revive CANCELADA, BLOQUEADA,
+  // PENDENTE e AGENDADA, recalculando texto, horario e modo de envio.
+  // ENVIADA e SIMULADA ele nao toca — quem ja recebeu nao recebe de
+  // novo. Faltava um caminho para isso a partir daqui, onde o problema
+  // aparece.
+  const queryClient = useQueryClient();
+  const recalcular = useMutation({
+    mutationFn: () =>
+      post<{ criadas: number; atualizadas: number; jaExistiam: number; bloqueadas: number }>(
+        `/api/campaigns/${campanhaId}/enfileirar`
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['campanha-fila', campanhaId] });
+      void queryClient.invalidateQueries({ queryKey: ['campanhas'] });
+    },
+  });
+
   if (isLoading) {
     return (
       <Card>
@@ -725,8 +762,61 @@ function Fila({ campanhaId }: { campanhaId: string }) {
     );
   }
 
+  const bloqueadas = contagem.BLOQUEADA ?? 0;
+
   return (
     <div className="space-y-4">
+      {bloqueadas > 0 && (
+        <div className="rounded-lg border border-[var(--color-borda)] bg-[var(--color-fundo)] p-3">
+          <p className="text-sm">
+            <strong>{bloqueadas}</strong>{' '}
+            {bloqueadas === 1 ? 'mensagem bloqueada' : 'mensagens bloqueadas'} —
+            com o texto e o motivo de quando entraram na fila.
+          </p>
+          <p className="mt-1 text-xs text-[var(--color-texto-suave)]">
+            Corrigiu o template na aba Etapas? A fila não muda sozinha. Isto
+            reaplica o texto atual nas linhas paradas. Quem já recebeu não é
+            tocado — enviada e simulada ficam como estão.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => recalcular.mutate()}
+            disabled={recalcular.isPending || !campanhaAtiva}
+            className="mt-2 inline-flex items-center gap-2 rounded-md bg-[var(--color-primaria)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          >
+            {recalcular.isPending && (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            )}
+            Reaplicar o texto atual
+          </button>
+
+          {!campanhaAtiva && (
+            <p className="mt-2 text-xs text-[var(--color-texto-suave)]">
+              A campanha precisa estar ativa para reenfileirar.
+            </p>
+          )}
+
+          {recalcular.isSuccess && (
+            <p className="mt-2 text-xs text-[var(--color-texto-suave)]">
+              {recalcular.data.atualizadas} destravadas,{' '}
+              {recalcular.data.bloqueadas} ainda bloqueadas
+              {recalcular.data.bloqueadas > 0 &&
+                ' — veja o motivo novo na linha, ele foi recalculado agora'}
+              .
+            </p>
+          )}
+
+          {recalcular.isError && (
+            <p className="mt-2 text-xs text-[var(--color-perigo)]">
+              {recalcular.error instanceof ApiError
+                ? recalcular.error.message
+                : 'Falha ao reenfileirar'}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         {Object.entries(contagem).map(([status, total]) => (
           <button
@@ -1085,7 +1175,9 @@ export function CampanhaDetalhe() {
       )}
 
       {aba === 'previa' && <Previa campanha={campanha} />}
-      {aba === 'fila' && <Fila campanhaId={campanha.id} />}
+      {aba === 'fila' && (
+        <Fila campanhaId={campanha.id} campanhaAtiva={campanha.status === 'ATIVA'} />
+      )}
 
       {aba === 'config' && (
         <div className="space-y-5">
