@@ -181,6 +181,22 @@ export function normalizarCidade(bruto: string | null | undefined): string | nul
   if (limpo === null) return null;
   // Descarta valores que sao claramente outra coisa
   if (/^\d+$/.test(limpo)) return null;
+
+  // ============================================================
+  // "Lisboa, Portugal" E CIDADE E PAIS NO MESMO CAMPO
+  // ============================================================
+  // E como o Google Maps exporta, e foi o que chegou numa planilha real.
+  // Guardado inteiro, o texto vira "no Google ai de Lisboa, Portugal" —
+  // que ninguem escreveria.
+  //
+  // O corte exige EXATAMENTE duas partes. Um endereco inteiro mapeado
+  // aqui por engano ("Rua X, 123, Campinas") tem tres ou mais e fica
+  // intacto: melhor um valor feio do que um endereco virando "Rua X".
+  const partes = limpo.split(',').map((p) => p.trim()).filter((p) => p !== '');
+  if (partes.length === 2 && partes[0] && !/\d/.test(partes[0])) {
+    return normalizarNome(partes[0]);
+  }
+
   return normalizarNome(limpo);
 }
 

@@ -409,3 +409,38 @@ describe('celular no formato antigo, de oito dígitos', () => {
     expect(r.celular).toBe(true);
   });
 });
+
+// =============================================================================
+// "Lisboa, Portugal" — CIDADE E PAÍS NO MESMO CAMPO
+// =============================================================================
+
+/**
+ * É como o Google Maps exporta, e foi o que chegou numa planilha real de
+ * barbearias de Lisboa. Guardado inteiro, o texto da campanha viraria
+ * "no Google aí de Lisboa, Portugal" — que ninguém escreveria.
+ */
+describe('normalizarCidade — cidade com país junto', () => {
+  it('fica só com a cidade', () => {
+    expect(normalizarCidade('Lisboa, Portugal')).toBe('Lisboa');
+  });
+
+  it('vale para cidade com estado', () => {
+    expect(normalizarCidade('Campinas, SP')).toBe('Campinas');
+  });
+
+  it('cidade sozinha não muda', () => {
+    expect(normalizarCidade('Muzambinho')).toBe('Muzambinho');
+  });
+
+  it('endereço inteiro NÃO é mutilado', () => {
+    // Três partes ou mais: alguém mapeou um endereço para cidade por
+    // engano. Um valor feio é melhor do que virar "Rua das Flores".
+    expect(normalizarCidade('Rua das Flores, 123, Campinas')).toContain('Campinas');
+  });
+
+  it('não corta quando a primeira parte tem número', () => {
+    // "Av Paulista 1000, Sao Paulo" — a primeira parte é logradouro, não
+    // cidade. Cortar ali devolveria a rua como se fosse a cidade.
+    expect(normalizarCidade('Av Paulista 1000, Sao Paulo')).toContain('Paulista');
+  });
+});

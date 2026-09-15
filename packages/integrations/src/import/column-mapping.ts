@@ -91,7 +91,17 @@ const ALIASES: Record<CampoMapeavel, string[]> = {
     'endereco completo', 'full address', 'rua', 'street address',
   ],
   bairro: ['bairro', 'neighborhood', 'neighbourhood', 'distrito', 'district'],
-  cidade: ['cidade', 'city', 'municipio', 'town', 'localidade'],
+  cidade: [
+    'cidade', 'city', 'municipio', 'town', 'localidade',
+    // `local` e `localizacao` entraram por um caso real: uma planilha
+    // de barbearias de Lisboa trazia a coluna "Local", com
+    // "Lisboa, Portugal". Ela nao casava com nada, os 50 leads entravam
+    // SEM cidade, e a etapa que usa `{{cidade}}` bloqueava.
+    //
+    // Ninguem olha a lista de sinonimos antes de nomear uma coluna. Se o
+    // nome e obvio para uma pessoa, ele precisa ser obvio aqui.
+    'local', 'localizacao', 'regiao',
+  ],
   estado: ['estado', 'state', 'uf', 'provincia', 'region'],
   cep: ['cep', 'zip', 'zipcode', 'zip code', 'postal code', 'codigo postal'],
   website: [
