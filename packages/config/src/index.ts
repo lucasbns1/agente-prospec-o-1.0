@@ -37,6 +37,14 @@ const envSchema = z.object({
   WHATSAPP_SESSION_PATH: z.string().default('./data/whatsapp'),
   CHROME_PATH: z.string().optional(),
 
+  // Slots de numero. Cada slot guarda a propria sessao em uma subpasta de
+  // WHATSAPP_SESSION_PATH, para alternar entre dois numeros sem reescanear
+  // o QR. O numero aqui e so para CONFERIR quem autenticou — ver sessions.ts.
+  WHATSAPP_SLOT_1_LABEL: z.string().optional(),
+  WHATSAPP_SLOT_1_NUMERO: z.string().optional(),
+  WHATSAPP_SLOT_2_LABEL: z.string().optional(),
+  WHATSAPP_SLOT_2_NUMERO: z.string().optional(),
+
   LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
     .default('info'),

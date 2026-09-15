@@ -9,6 +9,7 @@ import {
   Bell,
   Settings,
   Radar,
+  Smartphone,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,7 @@ const NAVEGACAO = [
   { para: '/captura', rotulo: 'Captura', icone: Download },
   { para: '/tarefas', rotulo: 'Tarefas', icone: CheckSquare },
   { para: '/notificacoes', rotulo: 'Notificações', icone: Bell },
+  { para: '/whatsapp', rotulo: 'WhatsApp', icone: Smartphone },
 ];
 
 export function Sidebar() {

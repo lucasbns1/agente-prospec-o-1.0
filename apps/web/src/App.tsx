@@ -5,6 +5,7 @@ import { Dashboard } from '@/pages/Dashboard';
 import { Login } from '@/pages/Login';
 import { EmBreve } from '@/pages/EmBreve';
 import { Configuracoes } from '@/pages/Configuracoes';
+import { WhatsApp } from '@/pages/WhatsApp';
 import { useUsuario } from '@/hooks/useAuth';
 import { useEvents } from '@/hooks/useEvents';
 
@@ -94,6 +95,7 @@ function AppAutenticado({
                     />
                   }
                 />
+                <Route path="/whatsapp" element={<WhatsApp />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route
                   path="*"
