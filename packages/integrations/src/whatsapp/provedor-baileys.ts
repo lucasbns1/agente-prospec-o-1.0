@@ -58,6 +58,7 @@ import { exigirPermissaoDeEnvioReal } from './guarda-envio.js';
 import { ArquivoDeMensagens, escolherJid, traduzir } from './baileys-traducao.js';
 import { caminhoDoArquivo, carregarArquivo, salvarArquivo } from './arquivo-em-disco.js';
 import { apagarCredenciais } from './apagar-credenciais.js';
+import { criarGuardaCredencial } from './guarda-credencial.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -190,10 +191,27 @@ export async function criarProvedorBaileys(
   // apagar.
   let { state, saveCreds } = await useMultiFileAuthState(opcoes.sessionPath);
 
+  // ============================================================
+  // ENTRE APAGAR E RECARREGAR, NINGUEM GRAVA CREDENCIAL
+  // ============================================================
+  // O socket antigo continua vivo durante o encerramento e ainda emite
+  // `creds.update`. Esse evento chama `saveCreds`, que grava em disco o
+  // estado que esta em MEMORIA — a credencial morta.
+  //
+  // Em uso real isso apareceu assim: 1448 arquivos apagados e, logo
+  // depois, "logging in..." com a mesma conta, em vez de um QR. A
+  // remocao acontecia e um evento atrasado a desfazia; o 401 se repetia
+  // ate esgotar as tentativas, e reiniciar nao adiantava porque o
+  // arquivo estava de volta no disco.
+  const guardaCredencial = criarGuardaCredencial(() => saveCreds());
+
   async function recarregarCredencial(): Promise<void> {
     const novo = await useMultiFileAuthState(opcoes.sessionPath);
     state = novo.state;
     saveCreds = novo.saveCreds;
+    // Reabre ja apontando para o estado NOVO: reabrir com o gravador
+    // antigo seria o mesmo defeito com mais passos.
+    guardaCredencial.liberar(() => novo.saveCreds());
   }
 
   async function conectar(): Promise<void> {
@@ -234,7 +252,15 @@ export async function criarProvedorBaileys(
       qrTimeout: TTL_QR_MS,
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    // Passa pela trava, e nao direto: um `creds.update` atrasado do
+    // socket antigo regravaria a credencial que acabou de ser apagada.
+    sock.ev.on('creds.update', () => {
+      void guardaCredencial.gravar().then((r) => {
+        if (r === 'bloqueado') {
+          log('Gravação de credencial barrada — sessão sendo trocada');
+        }
+      });
+    });
 
     sock.ev.on('connection.update', (u: any) => {
       const { connection, lastDisconnect, qr } = u ?? {};
@@ -293,6 +319,23 @@ export async function criarProvedorBaileys(
             motivo,
           });
           emitir('auth_failure', motivo);
+
+          // A ORDEM AQUI E O CONSERTO. Travar vem antes de apagar: o
+          // socket antigo ainda emite `creds.update` durante o
+          // encerramento, e uma unica gravacao atrasada devolve ao disco
+          // a credencial que acabou de sair.
+          guardaCredencial.travar();
+
+          // E melhor ainda calar a fonte: sem ouvintes, nao ha evento
+          // atrasado nenhum. Nao substitui a trava — o `end` pode falhar
+          // e a emissao pode ja estar a caminho — mas evita o trabalho
+          // inutil.
+          try {
+            sock?.ev?.removeAllListeners?.('creds.update');
+            sock?.end?.(undefined);
+          } catch {
+            // Um socket que nem encerra ja esta perdido; a trava cobre.
+          }
 
           const apagadas = apagarCredenciais(opcoes.sessionPath, log);
           log('Credencial invalida removida', { arquivos: apagadas });
