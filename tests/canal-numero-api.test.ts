@@ -22,7 +22,11 @@ import type { FastifyInstance } from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
-import { CANAL_COMANDO, CHAVE_SETTING_NUMERO_ATIVO } from '@prospector/shared';
+import {
+  CANAL_COMANDO,
+  CHAVE_CODIGO_CANAL,
+  CHAVE_SETTING_NUMERO_ATIVO,
+} from '@prospector/shared';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 config({ path: path.join(raiz, '.env') });
@@ -176,6 +180,70 @@ describe('POST /api/canal/numero', () => {
 
     expect(r.statusCode).toBe(200);
     expect(r.json().novoQr).toBe(false);
+  });
+
+  /**
+   * O codigo pareia um aparelho na conta: ele nao pode ficar guardado
+   * sem prazo, e um codigo antigo na tela ao lado de um pedido novo e a
+   * receita para digitar o errado tres vezes.
+   */
+  it('pedir codigo limpa o codigo anterior antes de publicar', async () => {
+    const { getPublicador, fecharPublicador } = await import(
+      '../apps/worker/src/redis.js'
+    );
+    const redis = getPublicador();
+
+    try {
+      await redis.set(CHAVE_CODIGO_CANAL, JSON.stringify({ codigo: 'VELHO123' }));
+
+      const r = await app.inject({
+        method: 'POST',
+        url: '/api/canal/codigo',
+        headers: { cookie },
+        payload: { telefone: '5511968662120' },
+      });
+
+      expect(r.statusCode).toBe(200);
+      expect(await redis.get(CHAVE_CODIGO_CANAL)).toBeNull();
+    } finally {
+      await fecharPublicador();
+    }
+  });
+
+  it('o erro do worker chega a tela em vez de virar espera eterna', async () => {
+    const { getPublicador, fecharPublicador } = await import(
+      '../apps/worker/src/redis.js'
+    );
+    const redis = getPublicador();
+
+    try {
+      await redis.set(
+        CHAVE_CODIGO_CANAL,
+        JSON.stringify({ erro: 'Esta sessão já está pareada.' })
+      );
+
+      const r = await app.inject({
+        method: 'GET',
+        url: '/api/canal/codigo',
+        headers: { cookie },
+      });
+
+      expect(r.statusCode).toBe(422);
+      expect(r.json().erro.mensagem).toContain('já está pareada');
+    } finally {
+      await fecharPublicador();
+    }
+  });
+
+  it('recusa telefone curto demais para ser um numero com DDI', async () => {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/canal/codigo',
+      headers: { cookie },
+      payload: { telefone: '11968' },
+    });
+
+    expect(r.statusCode).toBeGreaterThanOrEqual(400);
   });
 
   it('pausa as campanhas ativas ao trocar', async () => {

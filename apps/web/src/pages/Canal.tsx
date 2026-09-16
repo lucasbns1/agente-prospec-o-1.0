@@ -299,6 +299,105 @@ function RefazerConexao({ falhou }: { falhou: boolean }): JSX.Element {
   );
 }
 
+/**
+ * Conectar digitando um código, em vez de apontar a câmera.
+ *
+ * ============================================================
+ * O QR FALHA SEM DIZER POR QUÊ
+ * ============================================================
+ * Ele vence entre a tela e a câmera, o brilho atrapalha, a câmera não
+ * pega, os quatro aparelhos conectados estão ocupados. Quando não
+ * fecha, não há o que depurar: a tela mostra o mesmo quadrado de novo,
+ * e você fica tentando.
+ *
+ * O código é o MESMO pareamento por outro caminho — oito caracteres
+ * digitados no celular. Sem câmera, sem pressa, e quando dá errado o
+ * erro é uma frase.
+ */
+function PorCodigo(): JSX.Element {
+  const [telefone, setTelefone] = useState('');
+  const [pedido, setPedido] = useState(false);
+
+  const pedir = useMutation({
+    mutationFn: (numero: string) =>
+      post<{ pedido: boolean }>('/api/canal/codigo', { telefone: numero }),
+    onSuccess: () => setPedido(true),
+  });
+
+  const { data: codigo, error: erroCodigo } = useQuery({
+    queryKey: ['canal-codigo'],
+    queryFn: () =>
+      get<{ codigo: string; expiraEmSegundos: number }>('/api/canal/codigo'),
+    enabled: pedido,
+    // O worker leva alguns segundos para pedir o código ao WhatsApp.
+    // Para de perguntar assim que houver resposta — código ou erro; o
+    // erro também vem por aqui, e insistir nele seria pedir de novo a
+    // mesma recusa a cada dois segundos.
+    refetchInterval: (consulta) =>
+      consulta.state.data || consulta.state.error ? false : 2000,
+    retry: false,
+  });
+
+  return (
+    <div className="space-y-2 border-t border-[var(--color-borda)] pt-4">
+      <p className="text-xs font-medium">Ou conecte digitando um código</p>
+      <p className="text-xs text-[var(--color-texto-suave)]">
+        Sem câmera. O WhatsApp pede o código no próprio celular que vai ser
+        conectado.
+      </p>
+
+      <div className="flex gap-2">
+        <input
+          type="tel"
+          inputMode="numeric"
+          value={telefone}
+          onChange={(e) => setTelefone(e.target.value)}
+          placeholder="5511968662120"
+          aria-label="Número do celular com DDI"
+          className="w-full rounded-md border border-[var(--color-borda)] bg-transparent px-2 py-1.5 text-sm"
+        />
+        <Button
+          variant="secundario"
+          onClick={() => pedir.mutate(telefone)}
+          disabled={pedir.isPending || telefone.replace(/\D/g, '').length < 10}
+        >
+          {pedir.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            'Pedir'
+          )}
+        </Button>
+      </div>
+
+      {pedido && !codigo && !erroCodigo && (
+        <p className="flex items-center gap-2 text-xs text-[var(--color-texto-suave)]">
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          Pedindo o código ao WhatsApp…
+        </p>
+      )}
+
+      {codigo?.codigo && (
+        <div className="rounded-lg border border-[var(--color-primaria)] p-3 text-center">
+          <p className="font-mono text-2xl tracking-[0.3em]">{codigo.codigo}</p>
+          <p className="mt-2 text-xs text-[var(--color-texto-suave)]">
+            No celular: WhatsApp → Aparelhos conectados → Conectar aparelho →
+            <strong> Conectar com número de telefone</strong>. Digite este
+            código.
+          </p>
+        </div>
+      )}
+
+      {erroCodigo && (
+        <p className="text-xs text-[var(--color-alerta)]">
+          {erroCodigo instanceof ApiError
+            ? erroCodigo.message
+            : 'Não foi possível obter o código'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function Canal() {
   const [mostrarQr, setMostrarQr] = useState(false);
 
@@ -462,6 +561,7 @@ export function Canal() {
                       </p>
                     )}
 
+                    <PorCodigo />
                     <RefazerConexao falhou={data?.status === 'FALHOU'} />
                   </>
                 ) : (
@@ -519,6 +619,13 @@ export function Canal() {
                         Esconder
                       </Button>
                     </div>
+
+                    {/* O caminho alternativo fica AO LADO do QR, e não
+                        escondido atrás dele: quando o QR não fecha, é
+                        justamente olhando para ele que você precisa da
+                        outra opção. */}
+                    <PorCodigo />
+                    <RefazerConexao falhou={data?.status === 'FALHOU'} />
                   </div>
                 )}
               </>

@@ -23,6 +23,7 @@ import { prisma } from '@prospector/database';
 import {
   CANAL_COMANDO,
   CHAVE_ESTADO_CANAL,
+  CHAVE_CODIGO_CANAL,
   CHAVE_QR_CANAL,
   CHAVE_SETTING_NUMERO_ATIVO,
   CHAVE_SETTING_TELEFONES,
@@ -274,6 +275,54 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
       detalhe: novoQr
         ? 'A credencial foi descartada. O QR aparece em alguns segundos — clique em "Mostrar QR Code".'
         : 'O worker vai tentar conectar de novo com a sessão salva.',
+    };
+  });
+
+  /**
+   * Parear digitando um código, em vez de escanear.
+   *
+   * O QR falha de formas que não se explicam — vence entre a tela e a
+   * câmera, o brilho atrapalha, os quatro aparelhos conectados estão
+   * ocupados. Quando ele não fecha, não há o que depurar.
+   *
+   * O código é o mesmo pareamento por outro caminho: o worker pede ao
+   * WhatsApp e deixa aqui por 3 minutos. Ele nunca vai para o banco nem
+   * para o log — parear um aparelho é dar acesso à conta.
+   */
+  app.post('/api/canal/codigo', { preHandler: exigirAutenticacao }, async (request) => {
+    const { telefone } = z
+      .object({ telefone: z.string().trim().min(10).max(20) })
+      .parse(request.body);
+
+    // Um código antigo na tela, ao lado de um pedido novo, é a receita
+    // para digitar o errado três vezes.
+    await getLeitor().del(CHAVE_CODIGO_CANAL);
+
+    const comando: ComandoCanal = {
+      tipo: 'codigo-pareamento',
+      telefone: telefone.replace(/\D/g, ''),
+    };
+    await getLeitor().publish(CANAL_COMANDO, JSON.stringify(comando));
+
+    request.log.info('Código de pareamento pedido pela tela');
+    return { pedido: true };
+  });
+
+  /** O código, quando o worker já respondeu. 404 enquanto não. */
+  app.get('/api/canal/codigo', { preHandler: exigirAutenticacao }, async () => {
+    const bruto = await getLeitor().get(CHAVE_CODIGO_CANAL);
+    if (!bruto) {
+      throw new AppError('Nenhum código disponível agora', 404, 'SEM_CODIGO');
+    }
+
+    const salvo = JSON.parse(bruto) as { codigo?: string; erro?: string };
+    if (salvo.erro) {
+      throw new AppError(salvo.erro, 422, 'PAREAMENTO_FALHOU');
+    }
+
+    return {
+      codigo: salvo.codigo ?? '',
+      expiraEmSegundos: await getLeitor().ttl(CHAVE_CODIGO_CANAL),
     };
   });
 

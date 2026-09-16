@@ -524,6 +524,49 @@ export async function criarProvedorBaileys(
       return { id: String(id) };
     },
 
+    /**
+     * Conectar digitando um codigo, em vez de apontar a camera.
+     *
+     * ============================================================
+     * POR QUE ISTO EXISTE
+     * ============================================================
+     * O QR e uma foto de uma credencial que vive 60 segundos, e falha
+     * de formas que nao dizem o porque: codigo vencido entre a tela e a
+     * camera, brilho, camera ruim, WhatsApp Business com os 4 aparelhos
+     * ocupados. Quando ele nao fecha, nao ha o que depurar — a tela
+     * mostra o mesmo quadrado de novo.
+     *
+     * O codigo de pareamento e o mesmo pareamento por outro caminho:
+     * oito caracteres que voce digita no celular. Sem camera, sem
+     * pressa, e o erro, quando existe, e uma frase em vez de um quadrado
+     * silencioso.
+     *
+     * O numero pedido aqui e o do CELULAR que vai ser pareado, com DDI:
+     * o WhatsApp manda o pedido para ele.
+     */
+    async solicitarCodigo(telefone: string): Promise<string> {
+      if (!sock) {
+        throw new Error(
+          'Não há conexão em andamento. Espere o canal entrar em "Aguardando QR Code".'
+        );
+      }
+      if (state?.creds?.registered) {
+        throw new Error(
+          'Esta sessão já está pareada. Use "Gerar QR Code novo" antes de parear outro aparelho.'
+        );
+      }
+
+      const numero = telefone.replace(/\D/g, '');
+      if (numero.length < 10) {
+        throw new Error('Informe o número com DDI e DDD, ex: 5511968662120');
+      }
+
+      const codigo = await sock.requestPairingCode(numero);
+      // O codigo NAO vai para o log: ele parea um aparelho na conta.
+      log('Código de pareamento gerado');
+      return String(codigo);
+    },
+
     async numeroExiste(telefone: string): Promise<boolean> {
       if (!sock) return false;
       try {

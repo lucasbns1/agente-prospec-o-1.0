@@ -124,6 +124,17 @@ export interface ProvedorWhatsApp {
    * marcava como falha um envio que deu certo, parando a sequencia.
    */
   procurarEnviada(chatId: string, texto: string, desde: Date): Promise<string | null>;
+
+  /**
+   * Pareia digitando um codigo, em vez de apontar a camera para o QR.
+   *
+   * OPCIONAL: nem todo provedor suporta. O `whatsapp-web.js` nao expoe
+   * isso — quem chama precisa tratar a ausencia, e a tela precisa dizer
+   * "este canal nao oferece" em vez de falhar calada.
+   *
+   * `telefone` e o numero do CELULAR a ser pareado, com DDI.
+   */
+  solicitarCodigo?(telefone: string): Promise<string>;
 }
 
 export interface OpcoesProvedor {

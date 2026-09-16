@@ -344,6 +344,23 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
   }
 
   /**
+   * Pede o codigo de pareamento — conectar digitando, sem camera.
+   *
+   * O QR falha de formas que nao se explicam: codigo vencido entre a
+   * tela e a camera, brilho, camera ruim, aparelhos conectados no
+   * limite. Quando ele nao fecha, nao ha o que depurar. O codigo e o
+   * mesmo pareamento por outro caminho, e o erro dele e uma frase.
+   */
+  async solicitarCodigoDePareamento(telefone: string): Promise<string> {
+    if (!this.provedor.solicitarCodigo) {
+      throw new Error(
+        'Este canal não oferece pareamento por código. Use o QR Code.'
+      );
+    }
+    return this.provedor.solicitarCodigo(telefone);
+  }
+
+  /**
    * Troca a conexao por baixo, mantendo ESTE adapter.
    *
    * ============================================================

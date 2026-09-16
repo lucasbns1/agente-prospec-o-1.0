@@ -82,7 +82,34 @@ export interface ComandoReconectar {
   apagarCredencial: boolean;
 }
 
-export type ComandoCanal = ComandoTrocarNumero | ComandoReconectar;
+/**
+ * Parear digitando um codigo, em vez de apontar a camera para o QR.
+ *
+ * O QR falha de formas que nao dizem o porque: vence entre a tela e a
+ * camera, o brilho atrapalha, os quatro aparelhos conectados estao
+ * ocupados. Quando ele nao fecha, nao ha o que depurar — a tela mostra o
+ * mesmo quadrado de novo.
+ *
+ * `telefone` e o numero do CELULAR a ser pareado, com DDI.
+ */
+export interface ComandoPareamentoPorCodigo {
+  tipo: 'codigo-pareamento';
+  telefone: string;
+}
+
+export type ComandoCanal =
+  | ComandoTrocarNumero
+  | ComandoReconectar
+  | ComandoPareamentoPorCodigo;
+
+/**
+ * Onde o worker deixa o codigo para a tela ler.
+ *
+ * TTL curto pelo mesmo motivo do QR: o codigo pareia um aparelho na
+ * conta. Ele nao vai para o banco, nao vai para o log e some sozinho.
+ */
+export const CHAVE_CODIGO_CANAL = 'prospector:canal:codigo-pareamento';
+export const TTL_CODIGO_SEGUNDOS = 180;
 
 export function ehNumeroWhatsApp(valor: unknown): valor is NumeroWhatsApp {
   return valor === '1' || valor === '2';

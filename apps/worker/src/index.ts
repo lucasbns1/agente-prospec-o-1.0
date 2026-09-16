@@ -20,6 +20,8 @@ import {
 } from '@prospector/integrations';
 import {
   CANAL_COMANDO,
+  CHAVE_CODIGO_CANAL,
+  TTL_CODIGO_SEGUNDOS,
   caminhoDaSessao,
   ehNumeroWhatsApp,
   type ComandoCanal,
@@ -42,7 +44,7 @@ import {
   varrerAgora,
 } from './services/varredura-periodica.js';
 import { criarWorkerReconciliacaoWhatsApp } from './workers/reconciliacao-whatsapp.js';
-import { fecharPublicador, opcoesRedis } from './redis.js';
+import { fecharPublicador, getPublicador, opcoesRedis } from './redis.js';
 import { publicarEvento } from './events.js';
 import { publicarEstadoCanal, publicarQr, limparQr } from './estado-canal.js';
 import { WhatsAppWebAdapter } from '@prospector/integrations';
@@ -477,6 +479,42 @@ async function main(): Promise<void> {
     }
   };
 
+  /**
+   * O codigo de pareamento — conectar digitando, sem camera.
+   *
+   * O erro vai para a MESMA chave que o codigo. Sem isso a tela ficaria
+   * esperando para sempre um codigo que nunca vem, sem dizer por que —
+   * que e exatamente o defeito do QR que este caminho existe para
+   * contornar.
+   *
+   * Nem o codigo nem o erro vao para o log: parear um aparelho e dar
+   * acesso a conta.
+   */
+  const pedirCodigo = async (telefone: string): Promise<void> => {
+    const guardar = (valor: Record<string, string>): Promise<unknown> =>
+      getPublicador().set(
+        CHAVE_CODIGO_CANAL,
+        JSON.stringify(valor),
+        'EX',
+        TTL_CODIGO_SEGUNDOS
+      );
+
+    if (!(adapter instanceof WhatsAppWebAdapter)) {
+      await guardar({ erro: 'O canal simulado não pareia aparelho nenhum.' });
+      return;
+    }
+
+    try {
+      const codigo = await adapter.solicitarCodigoDePareamento(telefone);
+      await guardar({ codigo });
+      log.info('Código de pareamento gerado e publicado para a tela');
+    } catch (err) {
+      const motivo = err instanceof Error ? err.message : String(err);
+      await guardar({ erro: motivo });
+      log.error({ erro: motivo }, 'Falha ao gerar código de pareamento');
+    }
+  };
+
   await assinante.subscribe(CANAL_COMANDO);
   assinante.on('message', (_canal: string, bruto: string) => {
     let comando: ComandoCanal;
@@ -489,6 +527,11 @@ async function main(): Promise<void> {
 
     if (comando?.tipo === 'reconectar') {
       void reconectar(Boolean(comando.apagarCredencial));
+      return;
+    }
+
+    if (comando?.tipo === 'codigo-pareamento') {
+      void pedirCodigo(String(comando.telefone ?? ''));
       return;
     }
 
