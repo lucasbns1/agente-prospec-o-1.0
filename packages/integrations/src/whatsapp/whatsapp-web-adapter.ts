@@ -70,7 +70,7 @@ const espera = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
 export class WhatsAppWebAdapter implements WhatsAppAdapter {
-  private readonly provedor: ProvedorWhatsApp;
+  private provedor: ProvedorWhatsApp;
   private readonly canal: string | null;
   private readonly log: (m: string, d?: Record<string, unknown>) => void;
   private readonly maxTentativas: number;
@@ -341,6 +341,63 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
     this.telefoneConta = null;
     this.conectadoDesde = null;
     await this.mudarStatus('DESCONECTADO', { qr: null, detalhe: null });
+  }
+
+  /**
+   * Troca a conexao por baixo, mantendo ESTE adapter.
+   *
+   * ============================================================
+   * POR QUE O ADAPTER NAO PODE SER SUBSTITUIDO
+   * ============================================================
+   * O worker de envio, o de reconciliacao, a varredura periodica e a
+   * publicacao de estado guardam, cada um, uma referencia a este objeto,
+   * pegas na inicializacao. Criar um adapter novo para o segundo numero
+   * deixaria todos eles falando com a conexao ANTIGA — morta. O sintoma
+   * seria o pior possivel: a tela mostrando o numero novo conectado
+   * enquanto nenhuma mensagem sai e nenhuma resposta chega.
+   *
+   * Entao o que troca e a peca de baixo. Quem esta em volta nem fica
+   * sabendo.
+   *
+   * ============================================================
+   * O ANTIGO MORRE ANTES DE O NOVO NASCER
+   * ============================================================
+   * Duas sessoes vivas do WhatsApp ao mesmo tempo derrubam as duas. Por
+   * isso `destroy()` vem primeiro, e `encerrando` fica ligado durante a
+   * troca: ele e a trava que impede a reconexao automatica de
+   * ressuscitar o numero que voce acabou de deixar.
+   *
+   * Se o antigo falhar ao morrer, a troca CONTINUA — uma sessao que nao
+   * responde nem ao destroy ja esta perdida, e travar aqui deixaria voce
+   * sem numero nenhum.
+   */
+  async trocarProvedor(novo: ProvedorWhatsApp): Promise<void> {
+    this.encerrando = true;
+
+    try {
+      await this.provedor.destroy();
+    } catch (err) {
+      this.log('Conexão antiga não encerrou limpo; seguindo com a troca', {
+        erro: String(err),
+      });
+    }
+
+    this.provedor = novo;
+    this.telefoneConta = null;
+    this.conectadoDesde = null;
+    this.qrAtual = null;
+    // A contagem de tentativas e do numero antigo: mante-la faria a
+    // primeira instabilidade do numero novo esgotar o orcamento de
+    // reconexao dele.
+    this.tentativas = 0;
+    this.registrarEventos();
+
+    await this.mudarStatus('DESCONECTADO', {
+      qr: null,
+      detalhe: 'Trocando de número',
+    });
+
+    await this.connect();
   }
 
   getStatus(): StatusConexao {

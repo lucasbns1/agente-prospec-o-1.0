@@ -18,12 +18,21 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { Redis } from 'ioredis';
+import { z } from 'zod';
+import { prisma } from '@prospector/database';
 import {
+  CANAL_COMANDO,
   CHAVE_ESTADO_CANAL,
   CHAVE_QR_CANAL,
+  CHAVE_SETTING_NUMERO_ATIVO,
+  CHAVE_SETTING_TELEFONES,
   ESTADO_CANAL_DESCONHECIDO,
   estadoEstaVelho,
+  numeroAtivoDeSetting,
+  NUMEROS_WHATSAPP,
+  type ComandoCanal,
   type EstadoCanal,
+  type NumeroWhatsApp,
 } from '@prospector/shared';
 import { renderizarQrComoImagem, resolverCanal } from '@prospector/integrations';
 import { exigirAutenticacao } from '../plugins/auth.js';
@@ -78,7 +87,127 @@ async function lerEstado(): Promise<EstadoCanal> {
   }
 }
 
+/**
+ * Qual numero esta ativo, e o telefone que cada um mostrou ao autenticar.
+ *
+ * O telefone NAO e configurado a mao: ele e gravado pelo worker quando a
+ * sessao autentica. Rotular o botao com um numero digitado por alguem
+ * seria uma promessa que a tela nao pode cumprir — se o QR for lido com
+ * o celular errado, o rotulo continuaria dizendo o numero certo e voce
+ * so descobriria pela conversa do cliente.
+ */
+async function lerNumeros(): Promise<{
+  ativo: NumeroWhatsApp;
+  telefones: Record<string, string | null>;
+}> {
+  const [ativo, telefones] = await Promise.all([
+    prisma.setting.findUnique({ where: { chave: CHAVE_SETTING_NUMERO_ATIVO } }),
+    prisma.setting.findUnique({ where: { chave: CHAVE_SETTING_TELEFONES } }),
+  ]);
+
+  const mapa: Record<string, string | null> = {};
+  const bruto = telefones?.valor;
+  for (const n of NUMEROS_WHATSAPP) {
+    const v =
+      bruto && typeof bruto === 'object' && !Array.isArray(bruto)
+        ? (bruto as Record<string, unknown>)[n]
+        : null;
+    mapa[n] = typeof v === 'string' && v !== '' ? v : null;
+  }
+
+  return { ativo: numeroAtivoDeSetting(ativo?.valor), telefones: mapa };
+}
+
 export async function rotasCanal(app: FastifyInstance): Promise<void> {
+  /** Os dois numeros, para a tela desenhar os botoes. */
+  app.get('/api/canal/numeros', { preHandler: exigirAutenticacao }, async () => {
+    const { ativo, telefones } = await lerNumeros();
+    const estado = await lerEstado();
+
+    return {
+      ativo,
+      numeros: NUMEROS_WHATSAPP.map((n) => ({
+        numero: n,
+        telefone: telefones[n] ?? null,
+        ativo: n === ativo,
+        // So o ativo pode estar conectado — e nem ele sempre esta.
+        conectado: n === ativo && estado.conectado,
+      })),
+    };
+  });
+
+  /**
+   * Trocar o numero ativo.
+   *
+   * ============================================================
+   * A API NAO TROCA: ELA PEDE
+   * ============================================================
+   * Quem segura a sessao e o worker. A API grava a escolha e publica um
+   * comando; o worker desconecta um numero e conecta o outro. Se a API
+   * abrisse a conexao, seriam duas sessoes disputando a mesma conta — e
+   * o WhatsApp derruba as duas.
+   *
+   * ============================================================
+   * POR QUE AS CAMPANHAS SAO PAUSADAS
+   * ============================================================
+   * A cadencia e uma CONVERSA. Quem recebeu "Encontrei sua barbearia no
+   * Google" do numero 1 e recebe o follow-up do numero 2 nao ve
+   * continuidade nenhuma: ve um desconhecido cobrando resposta de uma
+   * conversa que nunca teve.
+   *
+   * Pausar e a escolha conservadora e reversivel: nada e perdido, e
+   * voce reativa quando quiser. O contrario — seguir enviando — nao tem
+   * volta depois que a mensagem sai.
+   */
+  app.post('/api/canal/numero', { preHandler: exigirAutenticacao }, async (request) => {
+    const { numero } = z
+      .object({ numero: z.enum(['1', '2']) })
+      .parse(request.body);
+
+    const { ativo } = await lerNumeros();
+
+    if (numero === ativo) {
+      return { numero, trocou: false, campanhasPausadas: 0, detalhe: 'Já era o número ativo' };
+    }
+
+    // A escolha e gravada ANTES do comando. Se o worker reiniciar no meio
+    // da troca, ele acorda no numero novo — e nao no antigo, o que seria
+    // mandar mensagem pelo numero que voce acabou de abandonar.
+    await prisma.setting.upsert({
+      where: { chave: CHAVE_SETTING_NUMERO_ATIVO },
+      create: {
+        chave: CHAVE_SETTING_NUMERO_ATIVO,
+        valor: numero,
+        categoria: 'whatsapp',
+        sistema: true,
+        descricao: 'Qual dos dois números de WhatsApp está conectado',
+      },
+      update: { valor: numero },
+    });
+
+    const pausadas = await prisma.campaign.updateMany({
+      where: { status: 'ATIVA' },
+      data: { status: 'PAUSADA' },
+    });
+
+    const comando: ComandoCanal = { tipo: 'trocar-numero', numero };
+    await getLeitor().publish(CANAL_COMANDO, JSON.stringify(comando));
+
+    request.log.warn(
+      { numero, campanhasPausadas: pausadas.count },
+      'Troca de número de WhatsApp pedida pela tela'
+    );
+
+    return {
+      numero,
+      trocou: true,
+      campanhasPausadas: pausadas.count,
+      detalhe:
+        'O worker vai desconectar e conectar no outro número. Se ele ainda não ' +
+        'conhece esse número, a tela vai pedir o QR.',
+    };
+  });
+
   /** Retrato completo, para a tela de configuração do canal. */
   app.get('/api/canal/status', { preHandler: exigirAutenticacao }, async () => {
     const estado = await lerEstado();

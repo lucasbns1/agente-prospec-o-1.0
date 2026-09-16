@@ -53,6 +53,43 @@ export function resolverCanal(valor: string | undefined): CanalWhatsApp {
   return 'simulado';
 }
 
+/**
+ * So o provedor — a peca que fala com o WhatsApp de verdade.
+ *
+ * Separada de `criarWhatsAppAdapter` porque trocar de numero e trocar o
+ * PROVEDOR, mantendo o mesmo adapter: os workers, o despachante e a
+ * varredura ja seguram uma referencia ao adapter, e trocar o objeto
+ * inteiro deixaria todos eles falando com uma conexao morta.
+ */
+export async function criarProvedorWhatsApp(
+  options: WhatsAppFactoryOptions = {}
+): Promise<ProvedorWhatsApp> {
+  const canal = resolverCanal(options.canal ?? process.env.WHATSAPP_CANAL);
+
+  // Import dinamico: mantem o Puppeteer fora do processo enquanto
+  // ninguem pedir uma conexao real.
+  if (canal === 'baileys') {
+    // Sem navegador: nao ha Chromium, nao ha pagina, nao ha injecao.
+    const { criarProvedorBaileys } = await import('./provedor-baileys.js');
+    return criarProvedorBaileys({
+      sessionPath: options.sessionPath ?? './data/whatsapp',
+      ...(options.logger ? { logger: options.logger } : {}),
+    });
+  }
+
+  const { criarProvedorWhatsAppWeb } = await import('./provedor-whatsapp-web.js');
+  return criarProvedorWhatsAppWeb({
+    sessionPath: options.sessionPath ?? './data/whatsapp',
+    ...(options.chromePath ? { chromePath: options.chromePath } : {}),
+    ...(options.webVersion ? { webVersion: options.webVersion } : {}),
+    ...(options.webVersionUrl ? { webVersionUrl: options.webVersionUrl } : {}),
+    ...(options.webVersionCachePath
+      ? { webVersionCachePath: options.webVersionCachePath }
+      : {}),
+    ...(options.logger ? { logger: options.logger } : {}),
+  });
+}
+
 export async function criarWhatsAppAdapter(
   options: WhatsAppFactoryOptions = {}
 ): Promise<WhatsAppAdapter> {
@@ -62,32 +99,7 @@ export async function criarWhatsAppAdapter(
     return new FakeWhatsAppAdapter({ logger: options.logger });
   }
 
-  const provedor =
-    options.provedor ??
-    (await (async () => {
-      // Import dinamico: mantem o Puppeteer fora do processo enquanto
-      // ninguem pedir uma conexao real.
-      if (canal === 'baileys') {
-        // Sem navegador: nao ha Chromium, nao ha pagina, nao ha injecao.
-        const { criarProvedorBaileys } = await import('./provedor-baileys.js');
-        return criarProvedorBaileys({
-          sessionPath: options.sessionPath ?? './data/whatsapp',
-          ...(options.logger ? { logger: options.logger } : {}),
-        });
-      }
-
-      const { criarProvedorWhatsAppWeb } = await import('./provedor-whatsapp-web.js');
-      return criarProvedorWhatsAppWeb({
-        sessionPath: options.sessionPath ?? './data/whatsapp',
-        ...(options.chromePath ? { chromePath: options.chromePath } : {}),
-        ...(options.webVersion ? { webVersion: options.webVersion } : {}),
-        ...(options.webVersionUrl ? { webVersionUrl: options.webVersionUrl } : {}),
-        ...(options.webVersionCachePath
-          ? { webVersionCachePath: options.webVersionCachePath }
-          : {}),
-        ...(options.logger ? { logger: options.logger } : {}),
-      });
-    })());
+  const provedor = options.provedor ?? (await criarProvedorWhatsApp(options));
 
   return new WhatsAppWebAdapter({
     // Para a tela de diagnostico dizer a verdade mesmo sem conexao.

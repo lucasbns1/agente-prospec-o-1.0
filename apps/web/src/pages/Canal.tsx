@@ -12,11 +12,11 @@
  * Ele tambem nao e guardado: some da tela assim que a sessao autentica.
  */
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   QrCode, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Smartphone,
 } from 'lucide-react';
-import { get, ApiError } from '@/lib/api';
+import { get, post, ApiError } from '@/lib/api';
 import {
   Card, CardContent, CardHeader, CardTitle, Badge, Button,
 } from '@/components/ui/primitives';
@@ -81,6 +81,139 @@ const ESTADOS: Record<
   },
 };
 
+interface NumerosCanal {
+  ativo: '1' | '2';
+  numeros: Array<{
+    numero: '1' | '2';
+    telefone: string | null;
+    ativo: boolean;
+    conectado: boolean;
+  }>;
+}
+
+/**
+ * Os dois números — e o botão que troca.
+ *
+ * ============================================================
+ * UM DE CADA VEZ
+ * ============================================================
+ * Duas sessões disputando a mesma conta derrubam as duas, e o worker é
+ * um processo só. Então não existe "os dois ligados": existe qual está
+ * ligado agora.
+ *
+ * Cada número guarda a própria sessão em disco, então trocar não apaga
+ * nada: você escaneia cada um UMA vez e depois alterna à vontade.
+ *
+ * ============================================================
+ * O RÓTULO É O TELEFONE QUE CONECTOU, NÃO UM QUE ALGUÉM DIGITOU
+ * ============================================================
+ * Antes do primeiro login o botão diz só "Número 1". Depois passa a
+ * mostrar o telefone que aquela sessão apresentou. Um rótulo digitado à
+ * mão continuaria dizendo o número certo se o QR fosse lido com o
+ * celular errado — e você só descobriria pela conversa do cliente.
+ */
+function EscolhaDeNumero(): JSX.Element {
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ['canal-numeros'],
+    queryFn: () => get<NumerosCanal>('/api/canal/numeros'),
+    refetchInterval: 10_000,
+  });
+
+  const trocar = useMutation({
+    mutationFn: (numero: '1' | '2') =>
+      post<{
+        numero: string;
+        trocou: boolean;
+        campanhasPausadas: number;
+        detalhe: string;
+      }>('/api/canal/numero', { numero }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['canal-numeros'] });
+      void queryClient.invalidateQueries({ queryKey: ['canal-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['campanhas'] });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Qual número está conectado</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid gap-2 sm:grid-cols-2">
+          {(data?.numeros ?? [{ numero: '1' as const, telefone: null, ativo: true, conectado: false }, { numero: '2' as const, telefone: null, ativo: false, conectado: false }]).map(
+            (n) => (
+              <button
+                key={n.numero}
+                type="button"
+                onClick={() => trocar.mutate(n.numero)}
+                disabled={trocar.isPending || n.ativo}
+                aria-pressed={n.ativo}
+                className={
+                  'rounded-lg border p-3 text-left transition disabled:cursor-default ' +
+                  (n.ativo
+                    ? 'border-[var(--color-primaria)] bg-[var(--color-fundo)]'
+                    : 'border-[var(--color-borda)] hover:border-[var(--color-primaria)]')
+                }
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Número {n.numero}</span>
+                  {n.ativo && (
+                    <Badge variant={n.conectado ? 'sucesso' : 'info'}>
+                      {n.conectado ? 'conectado' : 'ativo'}
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-[var(--color-texto-suave)]">
+                  {n.telefone ?? 'ainda não conectou nenhuma vez'}
+                </p>
+              </button>
+            )
+          )}
+        </div>
+
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          Só um número fica conectado por vez — dois ao mesmo tempo derrubariam
+          os dois. Cada um guarda a própria sessão, então trocar não apaga nada
+          e não pede QR de novo depois da primeira vez.
+        </p>
+
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          <strong>Ao trocar, as campanhas ativas são pausadas.</strong> Quem
+          recebeu a abordagem de um número e o follow-up de outro não vê
+          continuidade nenhuma — vê um desconhecido. Reative quando quiser.
+        </p>
+
+        {trocar.isPending && (
+          <p className="flex items-center gap-2 text-xs text-[var(--color-texto-suave)]">
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            Pedindo a troca ao worker…
+          </p>
+        )}
+
+        {trocar.isSuccess && trocar.data.trocou && (
+          <p className="text-xs text-[var(--color-texto-suave)]">
+            Trocando para o número {trocar.data.numero}.{' '}
+            {trocar.data.campanhasPausadas > 0 &&
+              `${trocar.data.campanhasPausadas} campanha(s) pausada(s). `}
+            {trocar.data.detalhe}
+          </p>
+        )}
+
+        {trocar.isError && (
+          <p className="text-xs text-[var(--color-alerta)]">
+            {trocar.error instanceof ApiError
+              ? trocar.error.message
+              : 'Não foi possível trocar de número'}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function Canal() {
   const [mostrarQr, setMostrarQr] = useState(false);
 
@@ -119,6 +252,8 @@ export function Canal() {
           Conexão do canal e estado da sessão.
         </p>
       </div>
+
+      <EscolhaDeNumero />
 
       {/* ---- A trava desta fase ---- */}
       {data && !data.envioRealPermitidoNaFase && (

@@ -8,10 +8,22 @@
  * continua utilizavel mesmo com o WhatsApp fora do ar.
  */
 import { config } from 'dotenv';
+import { Redis } from 'ioredis';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { carregarEnv } from '@prospector/config';
-import { criarWhatsAppAdapter, FASE_PERMITE_ENVIO_REAL } from '@prospector/integrations';
+import {
+  criarProvedorWhatsApp,
+  criarWhatsAppAdapter,
+  FASE_PERMITE_ENVIO_REAL,
+} from '@prospector/integrations';
+import {
+  CANAL_COMANDO,
+  caminhoDaSessao,
+  ehNumeroWhatsApp,
+  type ComandoCanal,
+} from '@prospector/shared';
+import { lerNumeroAtivo, gravarTelefoneDoNumero } from './services/numero-ativo.js';
 import { disconnectPrisma, checkDatabaseConnection } from '@prospector/database';
 import pino from 'pino';
 import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
@@ -29,7 +41,7 @@ import {
   varrerAgora,
 } from './services/varredura-periodica.js';
 import { criarWorkerReconciliacaoWhatsApp } from './workers/reconciliacao-whatsapp.js';
-import { fecharPublicador } from './redis.js';
+import { fecharPublicador, opcoesRedis } from './redis.js';
 import { publicarEvento } from './events.js';
 import { publicarEstadoCanal, publicarQr, limparQr } from './estado-canal.js';
 import { WhatsAppWebAdapter } from '@prospector/integrations';
@@ -117,9 +129,23 @@ async function main(): Promise<void> {
   }
 
   // --- WhatsApp ---
+  //
+  // ============================================================
+  // QUAL DOS DOIS NUMEROS
+  // ============================================================
+  // A escolha mora no banco, e nao numa variavel de ambiente: ela e
+  // feita por um botao na tela, e precisa sobreviver a reinicio sem
+  // ninguem editar arquivo. Valor ausente ou estranho cai no numero 1 —
+  // o que ja estava em uso antes desta funcionalidade existir.
+  let numeroAtivo = await lerNumeroAtivo();
+  log.info(
+    { numero: numeroAtivo, sessao: caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo) },
+    'Número de WhatsApp escolhido'
+  );
+
   const adapter = await criarWhatsAppAdapter({
     canal: env.WHATSAPP_CANAL,
-    sessionPath: env.WHATSAPP_SESSION_PATH,
+    sessionPath: caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo),
     chromePath: env.CHROME_PATH,
     // Vazio = a biblioteca pega a versao que o WhatsApp servir. Ver
     // `WHATSAPP_WEB_VERSION` em packages/config para o defeito que esta
@@ -314,6 +340,99 @@ async function main(): Promise<void> {
     })();
   });
 
+  // ============================================================
+  // O TELEFONE QUE CADA NUMERO MOSTROU AO AUTENTICAR
+  // ============================================================
+  // E ele que rotula os botoes da tela. Ninguem digita: um rotulo
+  // escrito a mao continuaria dizendo o numero certo se o QR fosse lido
+  // com o celular errado.
+  adapter.onStatusChange((s) => {
+    if (s.status !== 'CONECTADO') return;
+    void gravarTelefoneDoNumero(numeroAtivo, s.telefone ?? null);
+  });
+
+  // ============================================================
+  // A TROCA DE NUMERO, PEDIDA PELA TELA
+  // ============================================================
+  // Primeira vez que a tela COMANDA o worker — ate aqui ela so lia o
+  // retrato publicado no Redis. O pedido chega por pub/sub; quem
+  // desconecta e conecta e este processo, que e onde a sessao mora.
+  //
+  // Uma troca de cada vez: o pedido que chega no meio de outra troca e
+  // recusado com log. Duas trocas simultaneas destruiriam a conexao que
+  // a outra acabou de criar, e o resultado seria ficar sem numero
+  // nenhum.
+  const assinante = new Redis(opcoesRedis());
+  let trocando = false;
+
+  const trocarNumero = async (destino: typeof numeroAtivo): Promise<void> => {
+    if (trocando) {
+      log.warn({ destino }, 'Troca de número ignorada: já há uma em andamento');
+      return;
+    }
+    if (destino === numeroAtivo) {
+      log.info({ destino }, 'Troca de número ignorada: já é o número ativo');
+      return;
+    }
+    if (!(adapter instanceof WhatsAppWebAdapter)) {
+      // Canal simulado: nao ha sessao para trocar. Anotar o numero e o
+      // suficiente, e dizer isso e melhor do que fingir que trocou.
+      numeroAtivo = destino;
+      log.warn({ destino }, 'Canal simulado — número anotado, nada a reconectar');
+      return;
+    }
+
+    trocando = true;
+    const anterior = numeroAtivo;
+    try {
+      const sessao = caminhoDaSessao(env.WHATSAPP_SESSION_PATH, destino);
+      log.warn({ de: anterior, para: destino, sessao }, 'Trocando de número de WhatsApp');
+
+      const novo = await criarProvedorWhatsApp({
+        canal: env.WHATSAPP_CANAL,
+        sessionPath: sessao,
+        chromePath: env.CHROME_PATH,
+        webVersion: env.WHATSAPP_WEB_VERSION,
+        webVersionUrl: env.WHATSAPP_WEB_VERSION_URL,
+        logger: (m, d) => log.info(d ?? {}, m),
+      });
+
+      // So depois que o provedor novo existe: se a criacao falhar, a
+      // conexao antiga continua de pe em vez de morrer por nada.
+      numeroAtivo = destino;
+      await adapter.trocarProvedor(novo);
+
+      // O numero novo tem outras conversas e outro historico: a
+      // varredura de recuperacao precisa rodar de novo para ele.
+      jaVarreu = false;
+      pararVarredura?.();
+      pararVarredura = null;
+
+      log.warn({ numero: destino }, 'Número trocado. Se o WhatsApp pedir QR, ele aparece na tela.');
+    } catch (err) {
+      log.error({ err, de: anterior, para: destino }, 'Falha ao trocar de número');
+    } finally {
+      trocando = false;
+      await publicarEstado();
+    }
+  };
+
+  await assinante.subscribe(CANAL_COMANDO);
+  assinante.on('message', (_canal: string, bruto: string) => {
+    let comando: ComandoCanal;
+    try {
+      comando = JSON.parse(bruto) as ComandoCanal;
+    } catch {
+      log.warn('Comando de canal ilegível, ignorado');
+      return;
+    }
+    if (comando?.tipo !== 'trocar-numero' || !ehNumeroWhatsApp(comando.numero)) {
+      log.warn({ comando }, 'Comando de canal desconhecido, ignorado');
+      return;
+    }
+    void trocarNumero(comando.numero);
+  });
+
   await adapter.connect();
 
   if (!FASE_PERMITE_ENVIO_REAL) {
@@ -386,6 +505,10 @@ async function main(): Promise<void> {
       await Promise.allSettled(workers.map((w) => w.close()));
       await fecharFilas();
       await adapter.disconnect();
+      // O assinante e uma conexao Redis em modo subscribe: ela nao fecha
+      // junto com o publicador, e um processo que nao encerra e um
+      // processo que voce mata na mao toda vez.
+      await assinante.quit();
       await fecharPublicador();
       await disconnectPrisma();
       log.info('Worker encerrado com sucesso.');
