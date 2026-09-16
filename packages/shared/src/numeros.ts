@@ -58,7 +58,31 @@ export interface ComandoTrocarNumero {
   numero: NumeroWhatsApp;
 }
 
-export type ComandoCanal = ComandoTrocarNumero;
+/**
+ * Refazer a conexao do numero que ja esta ativo.
+ *
+ * ============================================================
+ * QUANDO ISTO E A UNICA SAIDA
+ * ============================================================
+ * Depois de cinco tentativas o adapter desiste, e numa falha de
+ * autenticacao ele desiste de primeira — reconectar com credencial
+ * recusada so repetiria a recusa. O canal fica em FALHOU e nao ha QR:
+ * ninguem esta tentando conectar, entao ninguem esta pedindo codigo.
+ *
+ * Ate aqui a unica saida era reiniciar o worker pelo terminal. Este
+ * comando faz a mesma coisa sem sair da tela.
+ *
+ * `apagarCredencial` e o passo a mais: sem ele o Baileys reusa a sessao
+ * salva e nao gera QR nenhum. Com ele, a credencial some e o WhatsApp
+ * volta a pedir o codigo — preservando o arquivo de mensagens e o mapa
+ * LID, que NAO sao credencial e custaram caro para recuperar.
+ */
+export interface ComandoReconectar {
+  tipo: 'reconectar';
+  apagarCredencial: boolean;
+}
+
+export type ComandoCanal = ComandoTrocarNumero | ComandoReconectar;
 
 export function ehNumeroWhatsApp(valor: unknown): valor is NumeroWhatsApp {
   return valor === '1' || valor === '2';

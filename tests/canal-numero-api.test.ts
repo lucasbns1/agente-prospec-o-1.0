@@ -144,6 +144,40 @@ describe('POST /api/canal/numero', () => {
     }
   });
 
+  /**
+   * Em FALHOU nao ha QR: ninguem esta tentando conectar, entao ninguem
+   * esta pedindo codigo. Este pedido e a saida sem passar pelo terminal
+   * — e ele NAO pode pausar campanha nem mexer no numero ativo, porque
+   * nao esta trocando nada, so religando o mesmo.
+   */
+  it('reconectar pede ao worker sem mexer nas campanhas', async () => {
+    await prisma.campaign.create({ data: { nome: 'Ativa', status: 'ATIVA' } });
+
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/canal/reconectar',
+      headers: { cookie },
+      payload: { novoQr: true },
+    });
+
+    expect(r.statusCode).toBe(200);
+    expect(r.json().novoQr).toBe(true);
+    expect(await prisma.campaign.count({ where: { status: 'ATIVA' } })).toBe(1);
+  });
+
+  it('reconectar sem corpo nenhum nao apaga credencial', async () => {
+    // O padrao precisa ser o passo CONSERVADOR: um pedido sem parametro
+    // nao pode descartar a sessao salva e obrigar a escanear QR.
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/canal/reconectar',
+      headers: { cookie },
+    });
+
+    expect(r.statusCode).toBe(200);
+    expect(r.json().novoQr).toBe(false);
+  });
+
   it('pausa as campanhas ativas ao trocar', async () => {
     await prisma.campaign.create({ data: { nome: 'Ativa 1', status: 'ATIVA' } });
     await prisma.campaign.create({ data: { nome: 'Ativa 2', status: 'ATIVA' } });

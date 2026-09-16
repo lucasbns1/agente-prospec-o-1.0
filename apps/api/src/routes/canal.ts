@@ -247,6 +247,37 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * Refazer a conexão — com ou sem QR novo.
+   *
+   * Em FALHOU não há QR para mostrar: ninguém está tentando conectar,
+   * então ninguém está pedindo código. Reiniciar o worker pelo terminal
+   * era a única saída; agora é um botão.
+   *
+   * `novoQr: true` apaga a credencial do número ativo, que é o que faz o
+   * WhatsApp pedir o código de novo. O arquivo de mensagens e o mapa
+   * LID<->telefone ficam: eles não são credencial, e apagá-los custaria
+   * o histórico que o sistema usa para casar resposta com lead.
+   */
+  app.post('/api/canal/reconectar', { preHandler: exigirAutenticacao }, async (request) => {
+    const { novoQr } = z
+      .object({ novoQr: z.boolean().default(false) })
+      .parse(request.body ?? {});
+
+    const comando: ComandoCanal = { tipo: 'reconectar', apagarCredencial: novoQr };
+    await getLeitor().publish(CANAL_COMANDO, JSON.stringify(comando));
+
+    request.log.warn({ novoQr }, 'Reconexão do canal pedida pela tela');
+
+    return {
+      pedido: true,
+      novoQr,
+      detalhe: novoQr
+        ? 'A credencial foi descartada. O QR aparece em alguns segundos — clique em "Mostrar QR Code".'
+        : 'O worker vai tentar conectar de novo com a sessão salva.',
+    };
+  });
+
+  /**
    * O QR, servido separadamente — já como imagem.
    *
    * Devolve 404 quando não há QR — o que também acontece quando a sessão

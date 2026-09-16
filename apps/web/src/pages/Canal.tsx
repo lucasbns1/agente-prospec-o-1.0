@@ -214,6 +214,91 @@ function EscolhaDeNumero(): JSX.Element {
   );
 }
 
+/**
+ * Refazer a conexão — e, quando preciso, pedir um QR novo.
+ *
+ * ============================================================
+ * EM "FALHOU" NÃO EXISTE QR PARA MOSTRAR
+ * ============================================================
+ * Depois de cinco tentativas o sistema desiste; numa falha de
+ * autenticação ele desiste de primeira. Ninguém está tentando conectar,
+ * então ninguém está pedindo código — e o botão "Mostrar QR Code"
+ * responde "nenhum QR disponível", que é verdade e não ajuda.
+ *
+ * A saída era reiniciar o worker pelo terminal. Agora é um botão.
+ */
+function RefazerConexao({ falhou }: { falhou: boolean }): JSX.Element {
+  const queryClient = useQueryClient();
+
+  const reconectar = useMutation({
+    mutationFn: (novoQr: boolean) =>
+      post<{ pedido: boolean; novoQr: boolean; detalhe: string }>(
+        '/api/canal/reconectar',
+        { novoQr }
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['canal-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['canal-qr'] });
+    },
+  });
+
+  return (
+    <div className="space-y-2 border-t border-[var(--color-borda)] pt-4">
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secundario"
+          onClick={() => reconectar.mutate(false)}
+          disabled={reconectar.isPending}
+        >
+          {reconectar.isPending ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+          )}
+          Tentar conectar de novo
+        </Button>
+
+        <Button
+          variant="secundario"
+          onClick={() => reconectar.mutate(true)}
+          disabled={reconectar.isPending}
+        >
+          <QrCode className="mr-2 h-4 w-4" aria-hidden="true" />
+          Gerar QR Code novo
+        </Button>
+      </div>
+
+      <p className="text-xs text-[var(--color-texto-suave)]">
+        <strong>Tentar de novo</strong> reusa a sessão salva — é o primeiro a
+        tentar. <strong>Gerar QR novo</strong> descarta a credencial deste
+        número e faz o WhatsApp pedir o código outra vez; o histórico de
+        mensagens e o mapa de contatos ficam intactos.
+      </p>
+
+      {falhou && (
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          Como a falha foi de autenticação, reusar a sessão salva tende a
+          repetir a recusa — aqui o QR novo costuma ser o caminho.
+        </p>
+      )}
+
+      {reconectar.isSuccess && (
+        <p className="text-xs text-[var(--color-texto-suave)]">
+          {reconectar.data.detalhe}
+        </p>
+      )}
+
+      {reconectar.isError && (
+        <p className="text-xs text-[var(--color-alerta)]">
+          {reconectar.error instanceof ApiError
+            ? reconectar.error.message
+            : 'Não foi possível pedir a reconexão'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function Canal() {
   const [mostrarQr, setMostrarQr] = useState(false);
 
@@ -376,6 +461,8 @@ export function Canal() {
                         entra em “Aguardando QR Code”.
                       </p>
                     )}
+
+                    <RefazerConexao falhou={data?.status === 'FALHOU'} />
                   </>
                 ) : (
                   <div className="space-y-3">

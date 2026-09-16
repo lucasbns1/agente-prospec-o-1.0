@@ -21,6 +21,7 @@ export * from './whatsapp/qr-imagem.js';
 export * from './whatsapp/telefone-da-mensagem.js';
 export * from './whatsapp/procurar-enviada.js';
 export * from './whatsapp/baileys-traducao.js';
+export * from './whatsapp/apagar-credenciais.js';
 
 // --- Importacao (Fase 2) ---
 export * from './import/parser.js';

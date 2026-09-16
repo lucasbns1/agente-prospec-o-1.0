@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { carregarEnv } from '@prospector/config';
 import {
+  apagarCredenciais,
   criarProvedorWhatsApp,
   criarWhatsAppAdapter,
   FASE_PERMITE_ENVIO_REAL,
@@ -417,6 +418,65 @@ async function main(): Promise<void> {
     }
   };
 
+  /**
+   * Refazer a conexao do numero que ja esta ativo.
+   *
+   * Depois de cinco tentativas — ou de uma falha de autenticacao, que
+   * queima o orcamento de uma vez — o adapter desiste. O canal fica em
+   * FALHOU e nao ha QR: ninguem esta tentando conectar, entao ninguem
+   * esta pedindo codigo. Ate aqui a saida era reiniciar o worker pelo
+   * terminal.
+   *
+   * Apagar a credencial e o que faz o WhatsApp pedir QR de novo: sem
+   * isso o Baileys reusa a sessao salva. O que NAO e credencial fica —
+   * `apagarCredenciais` trabalha por lista de permissao, entao o
+   * arquivo de mensagens e o mapa LID<->telefone sobrevivem.
+   */
+  const reconectar = async (apagarCredencial: boolean): Promise<void> => {
+    if (trocando) {
+      log.warn('Reconexão ignorada: há uma troca de número em andamento');
+      return;
+    }
+    if (!(adapter instanceof WhatsAppWebAdapter)) {
+      log.warn('Canal simulado — nada a reconectar');
+      return;
+    }
+
+    trocando = true;
+    try {
+      const sessao = caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo);
+
+      if (apagarCredencial) {
+        const apagados = apagarCredenciais(sessao, (m, d) => log.warn(d ?? {}, m));
+        log.warn(
+          { numero: numeroAtivo, arquivos: apagados },
+          'Credencial descartada a pedido da tela. Histórico e mapa LID preservados.'
+        );
+      }
+
+      const novo = await criarProvedorWhatsApp({
+        canal: env.WHATSAPP_CANAL,
+        sessionPath: sessao,
+        chromePath: env.CHROME_PATH,
+        webVersion: env.WHATSAPP_WEB_VERSION,
+        webVersionUrl: env.WHATSAPP_WEB_VERSION_URL,
+        logger: (m, d) => log.info(d ?? {}, m),
+      });
+
+      await adapter.trocarProvedor(novo);
+      // A conexao e nova: o que ficou para tras precisa ser varrido de
+      // novo.
+      jaVarreu = false;
+      pararVarredura?.();
+      pararVarredura = null;
+    } catch (err) {
+      log.error({ err }, 'Falha ao reconectar');
+    } finally {
+      trocando = false;
+      await publicarEstado();
+    }
+  };
+
   await assinante.subscribe(CANAL_COMANDO);
   assinante.on('message', (_canal: string, bruto: string) => {
     let comando: ComandoCanal;
@@ -426,6 +486,12 @@ async function main(): Promise<void> {
       log.warn('Comando de canal ilegível, ignorado');
       return;
     }
+
+    if (comando?.tipo === 'reconectar') {
+      void reconectar(Boolean(comando.apagarCredencial));
+      return;
+    }
+
     if (comando?.tipo !== 'trocar-numero' || !ehNumeroWhatsApp(comando.numero)) {
       log.warn({ comando }, 'Comando de canal desconhecido, ignorado');
       return;
