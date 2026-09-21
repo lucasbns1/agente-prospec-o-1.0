@@ -2,12 +2,18 @@
  * Configuracao do canal — conectar o WhatsApp.
  *
  * ============================================================
- * O QR NAO E BUSCADO EM SEGUNDO PLANO
+ * O QR APARECE SOZINHO, MAS SO QUANDO E HORA
  * ============================================================
- * Ele so e pedido quando VOCE clica em "Mostrar QR Code". Um QR do
- * WhatsApp Web da acesso a conta; deixar a tela buscando sozinha
- * significaria ter uma credencial trafegando e desenhada em toda aba
- * aberta, o tempo todo, sem ninguem olhando.
+ * Antes ele exigia um clique em "Mostrar QR Code". A intencao era boa —
+ * um QR da acesso a conta, e nao deve ficar trafegando em toda aba
+ * aberta o tempo todo — mas o efeito nao: quando o canal ESTA pedindo
+ * pareamento, esconder o codigo atras de um botao so adia o
+ * escaneamento. E ele vive sessenta segundos.
+ *
+ * A condicao substitui o clique: so ha busca quando o canal esta em
+ * AGUARDANDO_QR, ou seja, exatamente quando o codigo existe para ser
+ * lido. Fora disso, nenhuma requisicao — o mesmo cuidado de antes, sem
+ * o clique no caminho.
  *
  * Ele tambem nao e guardado: some da tela assim que a sessao autentica.
  */
@@ -430,7 +436,7 @@ function PorCodigo({ workerAtivo }: { workerAtivo: boolean }): JSX.Element {
 }
 
 export function Canal() {
-  const [mostrarQr, setMostrarQr] = useState(false);
+  const [escondido, setEscondido] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['canal-status'],
@@ -439,6 +445,23 @@ export function Canal() {
     // mentiria até alguém apertar F5.
     refetchInterval: 5000,
   });
+
+  // ============================================================
+  // O QR APARECE SOZINHO QUANDO É HORA DE ESCANEAR
+  // ============================================================
+  // Antes ele só era buscado com um clique, para não ficar uma
+  // credencial trafegando em toda aba aberta o tempo todo. A intenção
+  // era boa e o efeito, não: quando o canal ESTÁ pedindo pareamento,
+  // esconder o código atrás de um botão só adia o escaneamento — e o
+  // código vive 60 segundos, então boa parte da vida dele se gastava
+  // antes de alguém clicar.
+  //
+  // O meio-termo é a condição: o QR só é buscado quando o canal está
+  // em AGUARDANDO_QR, ou seja, exatamente quando ele existe para ser
+  // lido. Fora disso não há busca nenhuma — é o mesmo cuidado de
+  // antes, sem o clique no meio do caminho.
+  const querendoQr = data?.status === 'AGUARDANDO_QR' && data?.temQr === true;
+  const mostrarQr = querendoQr && !escondido;
 
   const {
     data: qr,
@@ -629,27 +652,28 @@ export function Canal() {
               <>
                 {!mostrarQr ? (
                   <>
+                    {/* Sem QR no ar, o que importa é o caminho para
+                        conseguir um — e não um botão que só diz
+                        "nenhum disponível". */}
                     <p className="text-xs leading-relaxed text-[var(--color-texto-suave)]">
-                      O QR Code dá acesso à sua conta e vale poucos segundos.
-                      Ele só é carregado quando você pede.
+                      {escondido && querendoQr
+                        ? 'O QR está pronto. Clique para mostrar de novo.'
+                        : 'Sem sessão ativa. Abra uma nova sessão abaixo — o QR aparece aqui sozinho, assim que o WhatsApp gerar.'}
                     </p>
-                    <Button onClick={() => setMostrarQr(true)} disabled={!data?.temQr}>
-                      <QrCode className="h-4 w-4" aria-hidden="true" />
-                      Mostrar QR Code
-                    </Button>
-                    {!data?.temQr && (
-                      <p className="text-xs text-[var(--color-texto-fraco)]">
-                        Nenhum QR disponível agora. Ele aparece quando o canal
-                        entra em “Aguardando QR Code”.
-                      </p>
+
+                    {escondido && querendoQr && (
+                      <Button onClick={() => setEscondido(false)}>
+                        <QrCode className="h-4 w-4" aria-hidden="true" />
+                        Mostrar QR Code
+                      </Button>
                     )}
 
-                    <PorCodigo workerAtivo={data?.workerAtivo ?? false} />
                     <RefazerConexao
                       falhou={data?.status === 'FALHOU'}
                       workerAtivo={data?.workerAtivo ?? false}
-                      aoPedirQr={() => setMostrarQr(true)}
+                      aoPedirQr={() => setEscondido(false)}
                     />
+                    <PorCodigo workerAtivo={data?.workerAtivo ?? false} />
                   </>
                 ) : (
                   <div className="space-y-3">
@@ -701,22 +725,29 @@ export function Canal() {
                       <Button
                         variant="fantasma"
                         size="sm"
-                        onClick={() => setMostrarQr(false)}
+                        onClick={() => setEscondido(true)}
                       >
                         Esconder
                       </Button>
                     </div>
 
-                    {/* O caminho alternativo fica AO LADO do QR, e não
-                        escondido atrás dele: quando o QR não fecha, é
-                        justamente olhando para ele que você precisa da
-                        outra opção. */}
-                    <PorCodigo workerAtivo={data?.workerAtivo ?? false} />
-                    <RefazerConexao
-                      falhou={data?.status === 'FALHOU'}
-                      workerAtivo={data?.workerAtivo ?? false}
-                      aoPedirQr={() => setMostrarQr(true)}
-                    />
+                    {/* Com o código na tela, o que importa é escanear.
+                        O resto continua alcançável, recolhido: deixar
+                        tudo aberto ao lado do QR foi o que transformou
+                        esta tela num paredão de texto. */}
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-[var(--color-texto-suave)]">
+                        Não consegue escanear?
+                      </summary>
+                      <div className="mt-2">
+                        <PorCodigo workerAtivo={data?.workerAtivo ?? false} />
+                        <RefazerConexao
+                          falhou={data?.status === 'FALHOU'}
+                          workerAtivo={data?.workerAtivo ?? false}
+                          aoPedirQr={() => setEscondido(false)}
+                        />
+                      </div>
+                    </details>
                   </div>
                 )}
               </>
