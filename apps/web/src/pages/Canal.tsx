@@ -513,10 +513,32 @@ export function Canal() {
                   className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-alerta)]"
                   aria-hidden="true"
                 />
-                <p className="text-xs leading-relaxed text-[var(--color-alerta)]">
-                  Reinicie o worker. Se voltar a falhar, apague a pasta da
-                  sessão e escaneie o QR de novo.
-                </p>
+                {/* O texto antigo mandava "apague a pasta da sessão" —
+                    conselho obsoleto e caro: a pasta guarda também o
+                    histórico de mensagens e o mapa de contatos, que não
+                    são credencial. Hoje existe botão para isso, e ele
+                    apaga só o que precisa. */}
+                <div className="text-xs leading-relaxed text-[var(--color-alerta)]">
+                  <p className="font-medium">A conexão parou. Na ordem:</p>
+                  <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+                    <li>
+                      Confira se não há <strong>outro</strong> <code>pnpm dev</code>{' '}
+                      aberto — inclusive em outro computador. Dois derrubam um ao
+                      outro, e o erro é este mesmo.
+                    </li>
+                    <li>
+                      <strong>Tentar conectar de novo</strong>, aqui ao lado.
+                    </li>
+                    <li>
+                      <strong>Gerar QR Code novo</strong>, se o de cima não
+                      resolver.
+                    </li>
+                  </ol>
+                  <p className="mt-1">
+                    Não apague a pasta da sessão: ela guarda o histórico e o mapa
+                    de contatos, que não são credencial.
+                  </p>
+                </div>
               </div>
             )}
           </CardContent>

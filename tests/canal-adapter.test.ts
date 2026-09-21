@@ -137,6 +137,37 @@ describe('conexão — a máquina de estados', () => {
     });
   });
 
+  /**
+   * O beco sem saída que a tela mostrava por dias: "Falhou",
+   * tentativas 5, e nenhum QR — para sempre.
+   *
+   * `auth_failure` empurra as tentativas para o teto de propósito:
+   * reconectar com credencial recusada só repete a recusa. Só que o
+   * teto continuava lá DEPOIS, e o provedor — que nesse caso apaga a
+   * credencial e reconecta justamente para pedir um QR novo — esbarrava
+   * na contagem esgotada do ciclo anterior. Qualquer oscilação da
+   * conexão seguinte voltava a FALHOU, e não havia saída pela tela.
+   *
+   * Um QR é o oposto de fracasso: há conexão viva com o WhatsApp e ele
+   * está esperando uma pessoa.
+   */
+  it('5c. um QR novo tira o canal de FALHOU e zera as tentativas', async () => {
+    const { provedor, adapter } = montar({ falharAutenticacao: true });
+    await adapter.connect();
+    expect(adapter.getStatus().status).toBe('FALHOU');
+
+    // O provedor apagou a credencial e reconectou: chega um QR.
+    provedor.novoQr();
+    expect(adapter.getStatus().status).toBe('AGUARDANDO_QR');
+
+    // E a contagem zerou: a próxima queda volta a tentar, em vez de
+    // parar de novo em FALHOU sem nunca mais pedir código.
+    provedor.derrubar('oscilação');
+    await vi.waitFor(() => {
+      expect(adapter.getStatus().status).not.toBe('FALHOU');
+    });
+  });
+
   it('6. falha de autenticação vai direto para FALHOU, sem reconectar', async () => {
     const { adapter, eventos } = montar({ falharAutenticacao: true });
     await adapter.connect();

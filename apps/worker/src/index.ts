@@ -9,6 +9,7 @@
  */
 import { config } from 'dotenv';
 import { Redis } from 'ioredis';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { carregarEnv } from '@prospector/config';
@@ -27,6 +28,12 @@ import {
   type ComandoCanal,
 } from '@prospector/shared';
 import { lerNumeroAtivo, gravarTelefoneDoNumero } from './services/numero-ativo.js';
+import {
+  assumirSessao,
+  renovarSessao,
+  soltarSessao,
+  RENOVACAO_MS,
+} from './services/dono-da-sessao.js';
 import { disconnectPrisma, checkDatabaseConnection } from '@prospector/database';
 import pino from 'pino';
 import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
@@ -146,9 +153,55 @@ async function main(): Promise<void> {
     'Número de WhatsApp escolhido'
   );
 
+  // ============================================================
+  // UM WORKER DE CADA VEZ
+  // ============================================================
+  // Dois workers na mesma pasta de sessao conectam com a MESMA
+  // credencial. O WhatsApp derruba um, o derrubado reconecta e derruba
+  // o outro: `401 Connection Failure` em looping, ate parar em
+  // "Falhou". Nada no erro diz que ha outro worker — pelo contrario,
+  // ele parece problema de credencial, e a reacao natural (apagar a
+  // sessao, escanear o QR) reconecta e recomeca a briga.
+  //
+  // Acontece facil: um `pnpm dev` esquecido noutro PowerShell, ou a
+  // ferramenta aberta em dois computadores contra o mesmo banco.
+  let sessaoAtual = caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo);
+  const identidade = `${os.hostname()}:${process.pid}`;
+
+  const trava = await assumirSessao(getPublicador(), sessaoAtual, identidade);
+  if (!trava.assumiu) {
+    log.error(
+      { sessao: sessaoAtual, dono: trava.dono },
+      '========================================================\n' +
+        '  JA HA UM WORKER USANDO ESTA SESSAO DO WHATSAPP\n' +
+        `  Dono atual: ${trava.dono ?? 'desconhecido'}\n\n` +
+        '  Dois workers na mesma sessao se derrubam sem parar, e o\n' +
+        '  sintoma e "Falha na autenticacao: Connection Failure".\n\n' +
+        '  Feche o outro `pnpm dev` (inclusive em outro computador) e\n' +
+        '  tente de novo. Se ele ja foi fechado, espere um minuto: a\n' +
+        '  trava vence sozinha.\n' +
+        '========================================================'
+    );
+    process.exit(1);
+  }
+
+  // Renova enquanto estiver vivo. Quem morre deixa a chave vencer, e o
+  // proximo worker assume sem ninguem limpar nada — uma trava que so
+  // abre na mao deixaria a ferramenta parada depois de uma queda feia.
+  const renovacaoDaTrava = setInterval(() => {
+    void renovarSessao(getPublicador(), sessaoAtual, identidade).then((ok) => {
+      if (!ok) {
+        log.warn(
+          { sessao: sessaoAtual },
+          'A trava da sessão passou para outro worker. Encerrando para não brigar pela conexão.'
+        );
+      }
+    });
+  }, RENOVACAO_MS);
+
   const adapter = await criarWhatsAppAdapter({
     canal: env.WHATSAPP_CANAL,
-    sessionPath: caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo),
+    sessionPath: sessaoAtual,
     chromePath: env.CHROME_PATH,
     // Vazio = a biblioteca pega a versao que o WhatsApp servir. Ver
     // `WHATSAPP_WEB_VERSION` em packages/config para o defeito que esta
@@ -391,6 +444,21 @@ async function main(): Promise<void> {
       const sessao = caminhoDaSessao(env.WHATSAPP_SESSION_PATH, destino);
       log.warn({ de: anterior, para: destino, sessao }, 'Trocando de número de WhatsApp');
 
+      // A trava e por SESSAO: trocar de numero e trocar de pasta, entao
+      // ela tem que acompanhar. Sem isto, a pasta nova ficaria sem dono
+      // (outro worker poderia assumi-la no meio) e a antiga ficaria
+      // travada por um minuto sem ninguem usando.
+      const travaNova = await assumirSessao(getPublicador(), sessao, identidade);
+      if (!travaNova.assumiu) {
+        log.error(
+          { sessao, dono: travaNova.dono },
+          'Outro worker já está usando a sessão desse número. Troca cancelada.'
+        );
+        return;
+      }
+      await soltarSessao(getPublicador(), sessaoAtual, identidade);
+      sessaoAtual = sessao;
+
       const novo = await criarProvedorWhatsApp({
         canal: env.WHATSAPP_CANAL,
         sessionPath: sessao,
@@ -614,6 +682,11 @@ async function main(): Promise<void> {
       await Promise.allSettled(workers.map((w) => w.close()));
       await fecharFilas();
       await adapter.disconnect();
+      // Solta a trava ANTES de fechar o Redis, e so se ela ainda for
+      // nossa. Assim o proximo `pnpm dev` sobe na hora, em vez de
+      // esperar o prazo vencer.
+      clearInterval(renovacaoDaTrava);
+      await soltarSessao(getPublicador(), sessaoAtual, identidade);
       // O assinante e uma conexao Redis em modo subscribe: ela nao fecha
       // junto com o publicador, e um processo que nao encerra e um
       // processo que voce mata na mao toda vez.

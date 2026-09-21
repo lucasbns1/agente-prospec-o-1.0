@@ -133,6 +133,22 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
   // ------------------------------------------------- traducao dos eventos
   private registrarEventos(): void {
     this.provedor.on('qr', (qr) => {
+      // ============================================================
+      // UM QR ZERA A CONTAGEM DE FRACASSOS
+      // ============================================================
+      // `auth_failure` empurra as tentativas para o teto de proposito:
+      // reconectar com credencial recusada so repete a recusa. So que o
+      // teto ficava la DEPOIS, e o provedor, que nesse caso apaga a
+      // credencial e reconecta justamente para pedir um QR novo, caia
+      // num beco: qualquer oscilacao da conexao seguinte batia em
+      // "tentativas esgotadas" e parava em FALHOU para sempre — com
+      // tentativas: 5 na tela e nenhum QR.
+      //
+      // Um QR significa o contrario de fracasso: ha conexao viva com o
+      // WhatsApp e ele esta esperando uma pessoa. O ciclo e novo, e a
+      // contagem do ciclo velho nao vale mais.
+      this.tentativas = 0;
+
       // O QR e volatil: vale segundos e nunca e persistido.
       void this.mudarStatus('AGUARDANDO_QR', {
         qr: String(qr),
