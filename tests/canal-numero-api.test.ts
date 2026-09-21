@@ -25,6 +25,7 @@ import { config } from 'dotenv';
 import {
   CANAL_COMANDO,
   CHAVE_CODIGO_CANAL,
+  CHAVE_ESTADO_CANAL,
   CHAVE_SETTING_NUMERO_ATIVO,
 } from '@prospector/shared';
 
@@ -66,6 +67,15 @@ beforeEach(async () => {
   await prisma.campaignStep.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.setting.deleteMany({ where: { chave: CHAVE_SETTING_NUMERO_ATIVO } });
+
+  // Um worker vivo: as rotas de comando recusam quando o retrato do
+  // canal esta velho, e sem isto todo teste cairia em "worker parado".
+  // O carimbo de agora e o que faz o retrato valer.
+  const { getPublicador } = await import('../apps/worker/src/redis.js');
+  await getPublicador().set(
+    CHAVE_ESTADO_CANAL,
+    JSON.stringify({ atualizadoEm: new Date().toISOString(), conectado: true })
+  );
 });
 
 function trocar(numero: string) {
@@ -244,6 +254,46 @@ describe('POST /api/canal/numero', () => {
     });
 
     expect(r.statusCode).toBeGreaterThanOrEqual(400);
+  });
+
+  /**
+   * ============================================================
+   * PUBLICAR NO VAZIO E PIOR DO QUE RECUSAR
+   * ============================================================
+   * Todo comando desta tela e executado pelo WORKER. Com ele parado, a
+   * publicacao funciona, a rota responde 200 e nada acontece: a tela
+   * fica igual, sem erro nenhum, e quem clicou conclui que a
+   * ferramenta esta quebrada.
+   *
+   * Nos testes acima o estado do canal nem existe no Redis — que e
+   * exatamente "worker parado". Entao e este o caso padrao aqui.
+   */
+  it('recusa os comandos quando o worker nao esta publicando estado', async () => {
+    const { getPublicador, fecharPublicador } = await import(
+      '../apps/worker/src/redis.js'
+    );
+
+    try {
+      await getPublicador().del(CHAVE_ESTADO_CANAL);
+
+      for (const [url, payload] of [
+        ['/api/canal/numero', { numero: '2' }],
+        ['/api/canal/reconectar', { novoQr: true }],
+        ['/api/canal/codigo', { telefone: '5511968662120' }],
+      ] as const) {
+        const r = await app.inject({
+          method: 'POST',
+          url,
+          headers: { cookie },
+          payload,
+        });
+
+        expect(r.statusCode, `${url} deveria recusar`).toBe(503);
+        expect(r.json().erro.codigo).toBe('WORKER_PARADO');
+      }
+    } finally {
+      await fecharPublicador();
+    }
   });
 
   it('pausa as campanhas ativas ao trocar', async () => {

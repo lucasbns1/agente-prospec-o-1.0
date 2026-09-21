@@ -119,6 +119,41 @@ async function lerNumeros(): Promise<{
   return { ativo: numeroAtivoDeSetting(ativo?.valor), telefones: mapa };
 }
 
+/**
+ * Recusa o pedido quando não há worker para executá-lo.
+ *
+ * ============================================================
+ * PUBLICAR NO VAZIO É PIOR DO QUE RECUSAR
+ * ============================================================
+ * Todo comando desta tela é publicado no Redis e executado pelo
+ * worker. Com ele parado, a publicação funciona, a rota responde 200, e
+ * NADA acontece. A tela fica igual, sem erro nenhum — e quem clicou
+ * conclui que a ferramenta está quebrada, quando o que falta é um
+ * processo rodando.
+ *
+ * Falhar com a frase certa é a única resposta honesta aqui.
+ */
+async function exigirWorkerVivo(): Promise<void> {
+  const bruto = await getLeitor().get(CHAVE_ESTADO_CANAL);
+  const vivo = (() => {
+    if (!bruto) return false;
+    try {
+      return !estadoEstaVelho(JSON.parse(bruto) as EstadoCanal);
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!vivo) {
+    throw new AppError(
+      'O worker não está rodando — sem ele nada conecta. Abra um PowerShell na ' +
+        'pasta do projeto e rode `pnpm dev`.',
+      503,
+      'WORKER_PARADO'
+    );
+  }
+}
+
 export async function rotasCanal(app: FastifyInstance): Promise<void> {
   /** Os dois numeros, para a tela desenhar os botoes. */
   app.get('/api/canal/numeros', { preHandler: exigirAutenticacao }, async () => {
@@ -164,6 +199,8 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
     const { numero } = z
       .object({ numero: z.enum(['1', '2']) })
       .parse(request.body);
+
+    await exigirWorkerVivo();
 
     const { ativo } = await lerNumeros();
 
@@ -213,6 +250,29 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
   app.get('/api/canal/status', { preHandler: exigirAutenticacao }, async () => {
     const estado = await lerEstado();
 
+    // ============================================================
+    // O WORKER ESTÁ VIVO?
+    // ============================================================
+    // Todo botão desta tela é um PEDIDO publicado no Redis: quem
+    // executa é o worker. Com ele parado, clicar não faz nada e nada
+    // avisa — o pedido fica no vazio e a tela segue igual. Quem clicou
+    // conclui que a ferramenta está quebrada.
+    //
+    // O retrato do canal tem carimbo de hora e o worker o republica num
+    // batimento próprio. Carimbo velho = worker parado. É a mesma
+    // informação que já derruba o status para DESCONECTADO; aqui ela
+    // vira um campo, para a tela poder desligar os botões em vez de
+    // deixar você clicar em coisa que não vai acontecer.
+    const bruto = await getLeitor().get(CHAVE_ESTADO_CANAL);
+    let workerAtivo = false;
+    if (bruto) {
+      try {
+        workerAtivo = !estadoEstaVelho(JSON.parse(bruto) as EstadoCanal);
+      } catch {
+        workerAtivo = false;
+      }
+    }
+
     const canal = process.env.WHATSAPP_CANAL ?? 'simulado';
 
     // DUAS coisas diferentes podem impedir o envio no nivel do SISTEMA, e
@@ -242,6 +302,7 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
     return {
       ...estado,
       canal,
+      workerAtivo,
       motivoSimulacao: motivo,
       dryRun: motivo !== null,
     };
@@ -263,6 +324,8 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
     const { novoQr } = z
       .object({ novoQr: z.boolean().default(false) })
       .parse(request.body ?? {});
+
+    await exigirWorkerVivo();
 
     const comando: ComandoCanal = { tipo: 'reconectar', apagarCredencial: novoQr };
     await getLeitor().publish(CANAL_COMANDO, JSON.stringify(comando));
@@ -293,6 +356,8 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
     const { telefone } = z
       .object({ telefone: z.string().trim().min(10).max(20) })
       .parse(request.body);
+
+    await exigirWorkerVivo();
 
     // Um código antigo na tela, ao lado de um pedido novo, é a receita
     // para digitar o errado três vezes.

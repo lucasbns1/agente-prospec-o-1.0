@@ -33,6 +33,7 @@ interface StatusCanal {
   ultimoEventoEm: string | null;
   sessaoDesde: string | null;
   envioRealPermitidoNaFase: boolean;
+  workerAtivo: boolean;
   tentativasReconexao: number;
   atualizadoEm: string;
   dryRun: boolean;
@@ -227,7 +228,16 @@ function EscolhaDeNumero(): JSX.Element {
  *
  * A saída era reiniciar o worker pelo terminal. Agora é um botão.
  */
-function RefazerConexao({ falhou }: { falhou: boolean }): JSX.Element {
+function RefazerConexao({
+  falhou,
+  workerAtivo,
+  aoPedirQr,
+}: {
+  falhou: boolean;
+  workerAtivo: boolean;
+  /** Abre o painel do QR: quem abre sessão nova quer ver o código. */
+  aoPedirQr: () => void;
+}): JSX.Element {
   const queryClient = useQueryClient();
 
   const reconectar = useMutation({
@@ -236,49 +246,66 @@ function RefazerConexao({ falhou }: { falhou: boolean }): JSX.Element {
         '/api/canal/reconectar',
         { novoQr }
       ),
-    onSuccess: () => {
+    onSuccess: (_d, novoQr) => {
       void queryClient.invalidateQueries({ queryKey: ['canal-status'] });
       void queryClient.invalidateQueries({ queryKey: ['canal-qr'] });
+      // Sessão nova existe para ser escaneada: abrir o painel é o passo
+      // seguinte óbvio, e pedir um segundo clique para isso só serve
+      // para o código nascer e vencer enquanto ninguém olha.
+      if (novoQr) aoPedirQr();
     },
   });
 
   return (
     <div className="space-y-2 border-t border-[var(--color-borda)] pt-4">
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="secundario"
-          onClick={() => reconectar.mutate(false)}
-          disabled={reconectar.isPending}
-        >
-          {reconectar.isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
-          )}
-          Tentar conectar de novo
-        </Button>
-
-        <Button
-          variant="secundario"
-          onClick={() => reconectar.mutate(true)}
-          disabled={reconectar.isPending}
-        >
+      {/* ============================================================
+          ABRIR SESSÃO NOVA É O BOTÃO PRINCIPAL
+          ============================================================
+          É o que se quer quando a conexão não está de pé: descartar o
+          que havia e ler o QR de novo, na hora que VOCÊ decidir. Ele
+          vem primeiro e destacado; o resto é detalhe. */}
+      <Button
+        onClick={() => reconectar.mutate(true)}
+        disabled={reconectar.isPending || !workerAtivo}
+        className="w-full"
+      >
+        {reconectar.isPending ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+        ) : (
           <QrCode className="mr-2 h-4 w-4" aria-hidden="true" />
-          Gerar QR Code novo
-        </Button>
-      </div>
+        )}
+        Abrir nova sessão e ler o QR
+      </Button>
+
+      <Button
+        variant="secundario"
+        onClick={() => reconectar.mutate(false)}
+        disabled={reconectar.isPending || !workerAtivo}
+        className="w-full"
+      >
+        <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+        Só tentar conectar de novo
+      </Button>
+
+      {!workerAtivo && (
+        <p className="rounded-md border border-[var(--color-alerta)] bg-[var(--color-alerta-bg)] px-2 py-1.5 text-xs text-[var(--color-alerta)]">
+          <strong>O worker não está rodando.</strong> Nenhum destes botões faz
+          efeito sem ele — quem conecta no WhatsApp é ele, não esta tela. Abra
+          um PowerShell na pasta do projeto e rode <code>pnpm dev</code>.
+        </p>
+      )}
 
       <p className="text-xs text-[var(--color-texto-suave)]">
-        <strong>Tentar de novo</strong> reusa a sessão salva — é o primeiro a
-        tentar. <strong>Gerar QR novo</strong> descarta a credencial deste
-        número e faz o WhatsApp pedir o código outra vez; o histórico de
-        mensagens e o mapa de contatos ficam intactos.
+        <strong>Abrir nova sessão</strong> descarta a credencial deste número e
+        faz o WhatsApp pedir o QR outra vez — o histórico de mensagens e o mapa
+        de contatos ficam intactos. <strong>Só tentar de novo</strong> reusa a
+        sessão salva, sem pedir código.
       </p>
 
       {falhou && (
         <p className="text-xs text-[var(--color-texto-suave)]">
           Como a falha foi de autenticação, reusar a sessão salva tende a
-          repetir a recusa — aqui o QR novo costuma ser o caminho.
+          repetir a recusa — aqui a sessão nova costuma ser o caminho.
         </p>
       )}
 
@@ -314,7 +341,7 @@ function RefazerConexao({ falhou }: { falhou: boolean }): JSX.Element {
  * digitados no celular. Sem câmera, sem pressa, e quando dá errado o
  * erro é uma frase.
  */
-function PorCodigo(): JSX.Element {
+function PorCodigo({ workerAtivo }: { workerAtivo: boolean }): JSX.Element {
   const [telefone, setTelefone] = useState('');
   const [pedido, setPedido] = useState(false);
 
@@ -359,7 +386,11 @@ function PorCodigo(): JSX.Element {
         <Button
           variant="secundario"
           onClick={() => pedir.mutate(telefone)}
-          disabled={pedir.isPending || telefone.replace(/\D/g, '').length < 10}
+          disabled={
+            pedir.isPending ||
+            !workerAtivo ||
+            telefone.replace(/\D/g, '').length < 10
+          }
         >
           {pedir.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -583,8 +614,12 @@ export function Canal() {
                       </p>
                     )}
 
-                    <PorCodigo />
-                    <RefazerConexao falhou={data?.status === 'FALHOU'} />
+                    <PorCodigo workerAtivo={data?.workerAtivo ?? false} />
+                    <RefazerConexao
+                      falhou={data?.status === 'FALHOU'}
+                      workerAtivo={data?.workerAtivo ?? false}
+                      aoPedirQr={() => setMostrarQr(true)}
+                    />
                   </>
                 ) : (
                   <div className="space-y-3">
@@ -646,8 +681,12 @@ export function Canal() {
                         escondido atrás dele: quando o QR não fecha, é
                         justamente olhando para ele que você precisa da
                         outra opção. */}
-                    <PorCodigo />
-                    <RefazerConexao falhou={data?.status === 'FALHOU'} />
+                    <PorCodigo workerAtivo={data?.workerAtivo ?? false} />
+                    <RefazerConexao
+                      falhou={data?.status === 'FALHOU'}
+                      workerAtivo={data?.workerAtivo ?? false}
+                      aoPedirQr={() => setMostrarQr(true)}
+                    />
                   </div>
                 )}
               </>
