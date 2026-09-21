@@ -516,24 +516,36 @@ async function main(): Promise<void> {
     try {
       const sessao = caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo);
 
-      if (apagarCredencial) {
-        const apagados = apagarCredenciais(sessao, (m, d) => log.warn(d ?? {}, m));
-        log.warn(
-          { numero: numeroAtivo, arquivos: apagados },
-          'Credencial descartada a pedido da tela. Histórico e mapa LID preservados.'
-        );
-      }
-
-      const novo = await criarProvedorWhatsApp({
-        canal: env.WHATSAPP_CANAL,
-        sessionPath: sessao,
-        chromePath: env.CHROME_PATH,
-        webVersion: env.WHATSAPP_WEB_VERSION,
-        webVersionUrl: env.WHATSAPP_WEB_VERSION_URL,
-        logger: (m, d) => log.info(d ?? {}, m),
-      });
-
-      await adapter.trocarProvedor(novo);
+      // ============================================================
+      // MATAR A CONEXAO ANTES DE APAGAR OS ARQUIVOS
+      // ============================================================
+      // Apagar com o socket antigo vivo nao apaga nada: ele ainda emite
+      // `creds.update` e o ouvinte grava de volta o que esta em
+      // memoria. Foi o que aconteceu aqui: a tela dizia "credencial
+      // descartada" e o canal caia em 401 sem nunca mostrar QR, porque
+      // a conexao nova nascia lendo a credencial ressuscitada.
+      //
+      // `reiniciarSessao` existe para a ordem nao depender de quem
+      // chama: antigo morre, disco muda, novo nasce.
+      await adapter.reiniciarSessao(
+        () => {
+          if (!apagarCredencial) return;
+          const apagados = apagarCredenciais(sessao, (m, d) => log.warn(d ?? {}, m));
+          log.warn(
+            { numero: numeroAtivo, arquivos: apagados },
+            'Credencial descartada a pedido da tela. Histórico e mapa LID preservados.'
+          );
+        },
+        () =>
+          criarProvedorWhatsApp({
+            canal: env.WHATSAPP_CANAL,
+            sessionPath: sessao,
+            chromePath: env.CHROME_PATH,
+            webVersion: env.WHATSAPP_WEB_VERSION,
+            webVersionUrl: env.WHATSAPP_WEB_VERSION_URL,
+            logger: (m, d) => log.info(d ?? {}, m),
+          })
+      );
       // A conexao e nova: o que ficou para tras precisa ser varrido de
       // novo.
       jaVarreu = false;

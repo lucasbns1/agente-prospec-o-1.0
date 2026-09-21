@@ -404,6 +404,46 @@ export class WhatsAppWebAdapter implements WhatsAppAdapter {
    * responde nem ao destroy ja esta perdida, e travar aqui deixaria voce
    * sem numero nenhum.
    */
+  /**
+   * Mata a conexao atual, faz algo com o disco, e SO ENTAO abre a nova.
+   *
+   * ============================================================
+   * A ORDEM E O CONSERTO — DE NOVO
+   * ============================================================
+   * Apagar a credencial com o socket antigo VIVO nao apaga nada: ele
+   * ainda emite `creds.update`, e o ouvinte grava de volta em disco o
+   * estado que esta em memoria. Ja aconteceu uma vez, dentro do
+   * provedor, e voltou a acontecer pelo caminho novo — o botao "abrir
+   * nova sessao", em que quem apaga os arquivos e o worker, de fora.
+   *
+   * O sintoma e cruel porque a tela diz a verdade pela metade: "a
+   * credencial foi descartada" aparece, e logo em seguida o canal cai em
+   * `401 Connection Failure` sem nunca mostrar QR. A credencial voltou
+   * antes de a conexao nova nascer, e a conexao nova nasceu com ela.
+   *
+   * Por isso a sequencia vive AQUI, e nao em quem chama: primeiro o
+   * antigo morre, depois `entreUmEOutro` mexe no disco, e so no fim o
+   * provedor novo e criado — ja lendo o que sobrou.
+   */
+  async reiniciarSessao(
+    entreUmEOutro: () => void | Promise<void>,
+    criarNovo: () => Promise<ProvedorWhatsApp>
+  ): Promise<void> {
+    // `encerrando` antes de tudo: sem ele, a morte do socket antigo
+    // dispara a reconexao automatica, que abre outra conexao com a
+    // credencial que estamos prestes a apagar.
+    this.encerrando = true;
+    try {
+      await this.provedor.destroy();
+    } catch (err) {
+      this.log('Conexão antiga não encerrou limpo; seguindo', { erro: String(err) });
+    }
+
+    await entreUmEOutro();
+
+    await this.trocarProvedor(await criarNovo());
+  }
+
   async trocarProvedor(novo: ProvedorWhatsApp): Promise<void> {
     this.encerrando = true;
 

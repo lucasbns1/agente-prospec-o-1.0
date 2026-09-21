@@ -168,6 +168,47 @@ describe('conexão — a máquina de estados', () => {
     });
   });
 
+  /**
+   * ============================================================
+   * APAGAR COM O SOCKET VIVO NÃO APAGA NADA
+   * ============================================================
+   * O botão "abrir nova sessão" apaga a credencial de FORA, pelo
+   * worker. Se a conexão antiga ainda estiver viva nesse instante, ela
+   * emite `creds.update` e o ouvinte grava de volta em disco o estado
+   * que está em memória — a credencial volta antes de a conexão nova
+   * nascer, e a nova nasce com ela.
+   *
+   * O sintoma foi exatamente esse: a tela dizia "a credencial foi
+   * descartada" e o canal caía em `401 Connection Failure` sem nunca
+   * mostrar QR.
+   *
+   * Este teste prende a ORDEM: quando o disco é mexido, o provedor
+   * antigo já tem que estar morto.
+   */
+  it('5d. reiniciarSessao mata a conexão ANTES de mexer no disco', async () => {
+    const { provedor, adapter } = montar();
+    await adapter.connect();
+    expect(provedor.foiDestruido).toBe(false);
+
+    const ordem: string[] = [];
+    const novo = new ProvedorSimulado();
+
+    await adapter.reiniciarSessao(
+      () => {
+        // É aqui que o worker apaga creds.json. Se o antigo ainda
+        // estivesse vivo, ele regravaria o arquivo logo em seguida.
+        ordem.push(provedor.foiDestruido ? 'antigo-morto' : 'antigo-VIVO');
+      },
+      async () => {
+        ordem.push('novo-criado');
+        return novo;
+      }
+    );
+
+    expect(ordem).toEqual(['antigo-morto', 'novo-criado']);
+    expect(adapter.getStatus().status).not.toBe('DESCONECTADO');
+  });
+
   it('6. falha de autenticação vai direto para FALHOU, sem reconectar', async () => {
     const { adapter, eventos } = montar({ falharAutenticacao: true });
     await adapter.connect();
