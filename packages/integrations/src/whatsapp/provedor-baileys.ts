@@ -59,6 +59,7 @@ import { ArquivoDeMensagens, escolherJid, traduzir } from './baileys-traducao.js
 import { caminhoDoArquivo, carregarArquivo, salvarArquivo } from './arquivo-em-disco.js';
 import { apagarCredenciais } from './apagar-credenciais.js';
 import { criarGuardaCredencial } from './guarda-credencial.js';
+import { criarControleDeReinicio } from './controle-de-reinicio.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -205,6 +206,14 @@ export async function criarProvedorBaileys(
   // arquivo estava de volta no disco.
   const guardaCredencial = criarGuardaCredencial(() => saveCreds());
 
+  // Enquanto a credencial esta sendo trocada, queda nao e queda: o
+  // encerramento do socket antigo e PARTE da troca. Sem isto, ele
+  // dispara o tratamento de queda, que agenda uma reconexao sem reler o
+  // disco — e essa reconexao reusa a credencial morta que ainda esta em
+  // memoria, levando 401 de novo. Era ela que ganhava a corrida contra a
+  // nossa, e por isso o QR nunca aparecia.
+  const controleDeReinicio = criarControleDeReinicio();
+
   async function recarregarCredencial(): Promise<void> {
     const novo = await useMultiFileAuthState(opcoes.sessionPath);
     state = novo.state;
@@ -293,6 +302,14 @@ export async function criarProvedorBaileys(
         // Encerramento pedido por nos nao e queda.
         if (encerrando) return;
 
+        // Nem o encerramento que NOS provocamos para trocar a
+        // credencial. A unica reconexao valida nesse intervalo e a que
+        // agendamos logo abaixo, que rele o disco.
+        if (!controleDeReinicio.devoTratarQueda()) {
+          log('Queda ignorada: a credencial esta sendo trocada', { codigo, motivo });
+          return;
+        }
+
         const deslogado =
           codigo === DisconnectReason?.loggedOut ||
           (typeof codigo === 'number' && NAO_ADIANTA_RECONECTAR.has(codigo));
@@ -345,6 +362,7 @@ export async function criarProvedorBaileys(
           // socket antigo ainda emite `creds.update` durante o
           // encerramento, e uma unica gravacao atrasada devolve ao disco
           // a credencial que acabou de sair.
+          controleDeReinicio.comecar();
           guardaCredencial.travar();
 
           // E melhor ainda calar a fonte: sem ouvintes, nao ha evento
@@ -370,7 +388,11 @@ export async function criarProvedorBaileys(
               .catch((err) => {
                 log('Falha ao reconectar para pedir o QR', { err: String(err) });
                 emitir('disconnected', String(err));
-              });
+              })
+              // So depois que a conexao nova esta de pe (ou falhou de
+              // vez) as quedas voltam a valer. Liberar antes devolveria
+              // a corrida que este controle existe para acabar.
+              .finally(() => controleDeReinicio.terminar());
           }, 1_000);
           return;
         }
