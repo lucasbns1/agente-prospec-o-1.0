@@ -139,6 +139,25 @@ export interface ProvedorWhatsApp {
 
 export interface OpcoesProvedor {
   sessionPath: string;
+  /**
+   * Comecar do zero, IGNORANDO a credencial que estiver no disco.
+   *
+   * ============================================================
+   * POR QUE ISTO NAO E O MESMO QUE APAGAR OS ARQUIVOS
+   * ============================================================
+   * Apagar depende do sistema de arquivos cooperar. No Windows, um
+   * arquivo aberto por um processo NAO e removido: a chamada falha, e
+   * `creds.json` continua la. A reconexao seguinte le a credencial
+   * morta, leva 401, apaga de novo, e o ciclo nunca chega ao QR — foi
+   * exatamente o que aconteceu em uso real, com 899 arquivos apagados e
+   * `logging in...` logo em seguida.
+   *
+   * Com esta opcao a credencial nova nasce em MEMORIA. Nao importa o
+   * que sobrou no disco: o socket e criado sem registro, e o WhatsApp
+   * responde com um QR. O disco e atualizado depois, quando o
+   * pareamento der certo.
+   */
+  sessaoNova?: boolean;
   chromePath?: string;
   /**
    * Fixa a versao do WhatsApp Web a carregar.

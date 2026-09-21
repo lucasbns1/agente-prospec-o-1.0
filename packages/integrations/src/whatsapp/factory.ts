@@ -27,6 +27,8 @@ export type CanalWhatsApp = 'simulado' | 'whatsapp-web' | 'baileys';
 export interface WhatsAppFactoryOptions {
   canal?: string;
   sessionPath?: string;
+  /** Ignora a credencial salva e comeca do zero. Ver `OpcoesProvedor`. */
+  sessaoNova?: boolean;
   chromePath?: string;
   /** Fixa a versao do WhatsApp Web. Ver `OpcoesProvedor.webVersion`. */
   webVersion?: string;
@@ -73,6 +75,7 @@ export async function criarProvedorWhatsApp(
     const { criarProvedorBaileys } = await import('./provedor-baileys.js');
     return criarProvedorBaileys({
       sessionPath: options.sessionPath ?? './data/whatsapp',
+      ...(options.sessaoNova ? { sessaoNova: true } : {}),
       ...(options.logger ? { logger: options.logger } : {}),
     });
   }

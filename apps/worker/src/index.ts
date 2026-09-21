@@ -540,6 +540,10 @@ async function main(): Promise<void> {
           criarProvedorWhatsApp({
             canal: env.WHATSAPP_CANAL,
             sessionPath: sessao,
+            // Sessao nova nao depende de o arquivo ter sido apagado: a
+            // credencial nasce em memoria, e o socket sem registro so
+            // tem um caminho — pedir QR.
+            ...(apagarCredencial ? { sessaoNova: true } : {}),
             chromePath: env.CHROME_PATH,
             webVersion: env.WHATSAPP_WEB_VERSION,
             webVersionUrl: env.WHATSAPP_WEB_VERSION_URL,

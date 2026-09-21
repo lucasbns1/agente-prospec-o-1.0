@@ -118,8 +118,12 @@ export async function criarProvedorBaileys(
   // processo enquanto ninguem pedir uma conexao real.
   const baileys: any = await import('@whiskeysockets/baileys');
   const makeWASocket = baileys.default ?? baileys.makeWASocket;
-  const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } =
-    baileys;
+  const {
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    initAuthCreds,
+  } = baileys;
 
   const arquivo = new ArquivoDeMensagens(MAX_POR_CONVERSA);
 
@@ -193,6 +197,24 @@ export async function criarProvedorBaileys(
   let { state, saveCreds } = await useMultiFileAuthState(opcoes.sessionPath);
 
   // ============================================================
+  // SESSAO NOVA NASCE EM MEMORIA, E NAO DO DISCO
+  // ============================================================
+  // Apagar os arquivos depende do sistema de arquivos cooperar. No
+  // Windows, um arquivo ABERTO por um processo nao e removido: a
+  // chamada falha e `creds.json` continua la. A leitura seguinte traz a
+  // credencial morta de volta, o WhatsApp responde 401, e o ciclo nunca
+  // chega ao QR — com 899 arquivos apagados e `logging in...` logo
+  // depois, que foi o que o log real mostrou.
+  //
+  // Aqui a credencial e substituida por uma recem-criada, em memoria.
+  // Nao importa o que sobrou no disco: o socket nasce SEM registro, e
+  // um socket sem registro so tem um caminho — pedir QR.
+  if (opcoes.sessaoNova) {
+    state.creds = initAuthCreds();
+    log('Sessao nova: credencial do disco ignorada, comecando do zero');
+  }
+
+  // ============================================================
   // ENTRE APAGAR E RECARREGAR, NINGUEM GRAVA CREDENCIAL
   // ============================================================
   // O socket antigo continua vivo durante o encerramento e ainda emite
@@ -218,6 +240,19 @@ export async function criarProvedorBaileys(
     const novo = await useMultiFileAuthState(opcoes.sessionPath);
     state = novo.state;
     saveCreds = novo.saveCreds;
+
+    // ============================================================
+    // NAO BASTA RELER: A CREDENCIAL PODE TER SOBREVIVIDO
+    // ============================================================
+    // Esta funcao so e chamada depois de um 401, com a intencao de
+    // pedir QR. Se `creds.json` nao pode ser apagado — arquivo travado
+    // pelo Windows, permissao, antivirus —, reler o disco traz de volta
+    // exatamente a credencial recusada, e a conexao nova nasce morta.
+    //
+    // Zerar aqui torna o resultado independente do disco: depois de um
+    // 401, o proximo socket SEMPRE nasce sem registro, e socket sem
+    // registro pede QR.
+    state.creds = initAuthCreds();
     // Reabre ja apontando para o estado NOVO: reabrir com o gravador
     // antigo seria o mesmo defeito com mais passos.
     guardaCredencial.liberar(() => novo.saveCreds());
