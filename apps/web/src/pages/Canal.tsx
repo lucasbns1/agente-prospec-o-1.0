@@ -550,6 +550,36 @@ export function Canal() {
                     são credencial. Hoje existe botão para isso, e ele
                     apaga só o que precisa. */}
                 <div className="text-xs leading-relaxed text-[var(--color-alerta)]">
+                  {/* ============================================================
+                      O NÚMERO DO ERRO DIZ QUAL DOS TRÊS PROBLEMAS É
+                      ============================================================
+                      "Connection Failure" é o mesmo texto para causas
+                      que pedem ações opostas. Sem o código, "escaneie o
+                      QR de novo" vira o conselho para todas — e para
+                      conta restrita ele é pior que inútil. */}
+                  {data?.detalhe?.includes('403') && (
+                    <p className="mb-2 font-medium">
+                      Código 403: o WhatsApp está <strong>restringindo esta
+                      conta</strong>. Parear de novo não resolve — é a conta, não
+                      a sessão. Costuma acontecer depois de muitas mensagens para
+                      quem nunca te respondeu. Use o outro número e espere alguns
+                      dias antes de voltar com este.
+                    </p>
+                  )}
+                  {data?.detalhe?.includes('401') && (
+                    <p className="mb-2 font-medium">
+                      Código 401: a sessão foi encerrada — normalmente porque o
+                      aparelho foi removido no celular. Abrir nova sessão e ler o
+                      QR resolve.
+                    </p>
+                  )}
+                  {data?.detalhe?.includes('405') && (
+                    <p className="mb-2 font-medium">
+                      Código 405: o WhatsApp recusou a conexão. Quase sempre é
+                      outra sessão assumindo o lugar desta — confira se não há
+                      outro <code>pnpm dev</code> aberto.
+                    </p>
+                  )}
                   <p className="font-medium">A conexão parou. Na ordem:</p>
                   <ol className="mt-1 list-decimal space-y-0.5 pl-4">
                     <li>

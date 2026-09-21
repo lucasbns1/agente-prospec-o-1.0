@@ -318,7 +318,28 @@ export async function criarProvedorBaileys(
             codigo,
             motivo,
           });
-          emitir('auth_failure', motivo);
+          // ============================================================
+          // O NUMERO DO ERRO E O DIAGNOSTICO INTEIRO
+          // ============================================================
+          // "Connection Failure" e o texto que o WhatsApp manda para
+          // situacoes MUITO diferentes, e sozinho ele nao diz nada:
+          //
+          //   401 — a sessao foi encerrada (aparelho removido no
+          //         celular, ou credencial invalidada). Parear de novo
+          //         resolve.
+          //   403 — a conta esta restrita pelo WhatsApp. Parear de novo
+          //         NAO resolve: nenhuma mudanca de codigo resolve.
+          //   405 — a conexao foi recusada (versao do protocolo, ou
+          //         outra sessao assumindo o lugar desta).
+          //
+          // A tela mostrava so o texto, entao "escaneie o QR de novo"
+          // era o conselho para os tres — e para o 403 ele e pior do que
+          // inutil: insistir em parear numa conta restrita chama mais
+          // atencao ainda.
+          emitir(
+            'auth_failure',
+            codigo === null ? motivo : `${motivo} (código ${String(codigo)})`
+          );
 
           // A ORDEM AQUI E O CONSERTO. Travar vem antes de apagar: o
           // socket antigo ainda emite `creds.update` durante o
