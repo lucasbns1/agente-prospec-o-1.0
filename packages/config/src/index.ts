@@ -16,6 +16,11 @@ const envSchema = z.object({
 
   REDIS_HOST: z.string().default('localhost'),
   REDIS_PORT: z.coerce.number().int().default(6379),
+  /**
+   * Qual banco do Redis (0-15). Isola uma copia da ferramenta da outra:
+   * filas, estado do canal, QR e trava de sessao, tudo de uma vez.
+   */
+  REDIS_DB: z.coerce.number().int().min(0).max(15).default(0),
   REDIS_PASSWORD: z.string().optional(),
 
   API_PORT: z.coerce.number().int().default(3333),

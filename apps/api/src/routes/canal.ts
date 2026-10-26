@@ -47,6 +47,8 @@ function getLeitor(): Redis {
       host: process.env.REDIS_HOST ?? 'localhost',
       port: Number(process.env.REDIS_PORT ?? 6379),
       password: process.env.REDIS_PASSWORD || undefined,
+      // Mesma copia, mesmo banco do Redis — ver apps/worker/src/redis.ts.
+      db: Number(process.env.REDIS_DB ?? 0),
       maxRetriesPerRequest: 2,
       enableReadyCheck: false,
       // A tela nao pode travar esperando um Redis que caiu.
