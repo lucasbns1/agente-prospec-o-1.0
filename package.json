@@ -16,6 +16,7 @@
     "typecheck": "pnpm --recursive typecheck && pnpm typecheck:scripts",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "lint": "eslint .",
+    "copia": "tsx scripts/copia.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
