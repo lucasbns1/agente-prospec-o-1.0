@@ -34,6 +34,11 @@ import {
   soltarSessao,
   RENOVACAO_MS,
 } from './services/dono-da-sessao.js';
+import {
+  assumirPasta,
+  renovarPasta,
+  soltarPasta,
+} from './services/dono-da-pasta.js';
 import { disconnectPrisma, checkDatabaseConnection } from '@prospector/database';
 import pino from 'pino';
 import { inicializarFilas, fecharFilas, TODAS_AS_FILAS } from './queues.js';
@@ -149,7 +154,15 @@ async function main(): Promise<void> {
   // o que ja estava em uso antes desta funcionalidade existir.
   let numeroAtivo = await lerNumeroAtivo();
   log.info(
-    { numero: numeroAtivo, sessao: caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo) },
+    {
+      numero: numeroAtivo,
+      // ABSOLUTO de proposito. `./data/whatsapp` nao diz nada quando ha
+      // duas copias: as duas imprimem a mesma coisa e o caminho real
+      // depende de onde cada processo foi iniciado. Comparar duas
+      // linhas iguais foi o que impediu de ver que as copias estavam
+      // na mesma pasta.
+      sessao: path.resolve(caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo)),
+    },
     'Número de WhatsApp escolhido'
   );
 
@@ -167,6 +180,34 @@ async function main(): Promise<void> {
   // ferramenta aberta em dois computadores contra o mesmo banco.
   let sessaoAtual = caminhoDaSessao(env.WHATSAPP_SESSION_PATH, numeroAtivo);
   const identidade = `${os.hostname()}:${process.pid}`;
+
+  // ============================================================
+  // DUAS TRAVAS, PORQUE SAO DOIS ENGANOS DIFERENTES
+  // ============================================================
+  // A do Redis pega dois `pnpm dev` na MESMA copia. A da pasta pega
+  // duas COPIAS apontando para a mesma sessao — que a do Redis nao
+  // alcanca, porque cada copia usa um banco do Redis diferente.
+  //
+  // O segundo caso e o que apareceu em uso: conecta uma copia, e a
+  // outra passa a pedir QR, porque as duas usam a mesma credencial e
+  // cada conexao invalida a anterior.
+  const travaDaPasta = assumirPasta(path.resolve(sessaoAtual), identidade);
+  if (!travaDaPasta.assumiu) {
+    log.error(
+      { sessao: path.resolve(sessaoAtual), dono: travaDaPasta.dono },
+      '========================================================\n' +
+        '  OUTRA COPIA JA USA ESTA PASTA DE SESSAO\n' +
+        `  Pasta: ${path.resolve(sessaoAtual)}\n` +
+        `  Dono atual: ${travaDaPasta.dono ?? 'desconhecido'}\n\n` +
+        '  Duas copias na mesma pasta usam a MESMA credencial do\n' +
+        '  WhatsApp: cada conexao invalida a outra, e as duas ficam\n' +
+        '  pedindo QR em looping.\n\n' +
+        '  Cada copia precisa do seu WHATSAPP_SESSION_PATH. O comando\n' +
+        '  `pnpm copia <nome>` ja cuida disso.\n' +
+        '========================================================'
+    );
+    process.exit(1);
+  }
 
   const trava = await assumirSessao(getPublicador(), sessaoAtual, identidade);
   if (!trava.assumiu) {
@@ -189,6 +230,7 @@ async function main(): Promise<void> {
   // proximo worker assume sem ninguem limpar nada — uma trava que so
   // abre na mao deixaria a ferramenta parada depois de uma queda feia.
   const renovacaoDaTrava = setInterval(() => {
+    renovarPasta(path.resolve(sessaoAtual), identidade);
     void renovarSessao(getPublicador(), sessaoAtual, identidade).then((ok) => {
       if (!ok) {
         log.warn(
@@ -456,6 +498,16 @@ async function main(): Promise<void> {
         );
         return;
       }
+      const pastaNova = assumirPasta(path.resolve(sessao), identidade);
+      if (!pastaNova.assumiu) {
+        log.error(
+          { sessao: path.resolve(sessao), dono: pastaNova.dono },
+          'Outra cópia já usa a pasta de sessão desse número. Troca cancelada.'
+        );
+        await soltarSessao(getPublicador(), sessao, identidade);
+        return;
+      }
+      soltarPasta(path.resolve(sessaoAtual), identidade);
       await soltarSessao(getPublicador(), sessaoAtual, identidade);
       sessaoAtual = sessao;
 
@@ -702,6 +754,7 @@ async function main(): Promise<void> {
       // nossa. Assim o proximo `pnpm dev` sobe na hora, em vez de
       // esperar o prazo vencer.
       clearInterval(renovacaoDaTrava);
+      soltarPasta(path.resolve(sessaoAtual), identidade);
       await soltarSessao(getPublicador(), sessaoAtual, identidade);
       // O assinante e uma conexao Redis em modo subscribe: ela nao fecha
       // junto com o publicador, e um processo que nao encerra e um

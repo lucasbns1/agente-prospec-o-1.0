@@ -63,7 +63,10 @@ const PREFIXOS_DE_CREDENCIAL = [
  * prefixo largo aos de credencial, e ela que segura. Mas quem protege
  * hoje e o `ehCredencial` — e e ele que os testes trancam.
  */
-const NUNCA_APAGAR = ['arquivo-mensagens.json', 'lid-mapping-'];
+// `dono.lock` e a trava que impede duas copias da ferramenta de usarem
+// esta pasta ao mesmo tempo. Apaga-la durante uma troca de sessao
+// abriria a porta justamente no momento mais perigoso.
+const NUNCA_APAGAR = ['arquivo-mensagens.json', 'lid-mapping-', 'dono.lock'];
 
 function ehCredencial(nome: string): boolean {
   if (NUNCA_APAGAR.some((p) => nome === p || nome.startsWith(p))) return false;
