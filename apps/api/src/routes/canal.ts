@@ -17,6 +17,8 @@
  * uma rota autenticada, e some assim que a sessao autentica.
  */
 import type { FastifyInstance } from 'fastify';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { prisma } from '@prospector/database';
@@ -29,6 +31,7 @@ import {
   CHAVE_SETTING_TELEFONES,
   ESTADO_CANAL_DESCONHECIDO,
   estadoEstaVelho,
+  caminhoDaSessao,
   numeroAtivoDeSetting,
   NUMEROS_WHATSAPP,
   type ComandoCanal,
@@ -156,6 +159,36 @@ async function exigirWorkerVivo(): Promise<void> {
   }
 }
 
+/**
+ * Este slot tem sessao salva em disco?
+ *
+ * ============================================================
+ * O CLIQUE PRECISA DIZER O QUE VAI CAUSAR
+ * ============================================================
+ * Trocar de numero DESCONECTA o que esta conectado. Se o slot de
+ * destino ja tem sessao salva, a volta e rapida e sem QR. Se nao tem, o
+ * resultado e outro: a conexao cai e a tela passa a pedir QR.
+ *
+ * Os dois cliques eram visualmente iguais, e a diferenca so aparecia
+ * depois — com o WhatsApp ja desconectado. Em uso real isso foi lido
+ * como "conectei um e o outro caiu", e a investigacao foi parar no
+ * lugar errado.
+ *
+ * A API olha o disco porque roda na MESMA maquina do worker e le o
+ * mesmo `WHATSAPP_SESSION_PATH`. E so a existencia do arquivo: nada do
+ * conteudo da credencial e lido, e nada dela sai desta funcao.
+ */
+function temSessaoSalva(numero: NumeroWhatsApp): boolean {
+  const base = process.env.WHATSAPP_SESSION_PATH ?? './data/whatsapp';
+  try {
+    return existsSync(join(caminhoDaSessao(base, numero), 'creds.json'));
+  } catch {
+    // Na duvida, dizer que NAO tem: o aviso aparece a mais, e nao a
+    // menos. Prometer uma volta sem QR que nao acontece e pior.
+    return false;
+  }
+}
+
 export async function rotasCanal(app: FastifyInstance): Promise<void> {
   /** Os dois numeros, para a tela desenhar os botoes. */
   app.get('/api/canal/numeros', { preHandler: exigirAutenticacao }, async () => {
@@ -170,6 +203,7 @@ export async function rotasCanal(app: FastifyInstance): Promise<void> {
         ativo: n === ativo,
         // So o ativo pode estar conectado — e nem ele sempre esta.
         conectado: n === ativo && estado.conectado,
+        temSessaoSalva: temSessaoSalva(n),
       })),
     };
   });

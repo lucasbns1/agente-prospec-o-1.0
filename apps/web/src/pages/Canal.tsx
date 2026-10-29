@@ -95,6 +95,8 @@ interface NumerosCanal {
     telefone: string | null;
     ativo: boolean;
     conectado: boolean;
+    /** Tem credencial em disco: a volta é sem QR. */
+    temSessaoSalva: boolean;
   }>;
 }
 
@@ -128,6 +130,28 @@ function EscolhaDeNumero(): JSX.Element {
     refetchInterval: 10_000,
   });
 
+  // ============================================================
+  // O CLIQUE QUE DESCONECTA PRECISA SER UMA DECISAO
+  // ============================================================
+  // Trocar de número DESCONECTA o que está conectado. Quando o slot de
+  // destino nem tem sessão salva, o resultado é a tela pedindo QR.
+  //
+  // Os dois cliques eram visualmente iguais, e a diferença só aparecia
+  // depois — com o WhatsApp já fora. Em uso real isso foi lido como
+  // "conectei um e o outro caiu", e a procura foi parar no lugar
+  // errado. Agora o clique perigoso pede confirmação, dizendo o que vai
+  // acontecer.
+  const confirmarTroca = (alvo: NumerosCanal['numeros'][number]): boolean => {
+    const conectadoAgora = data?.numeros.some((n) => n.conectado) ?? false;
+    if (!conectadoAgora) return true;
+
+    return window.confirm(
+      alvo.temSessaoSalva
+        ? `Isto vai DESCONECTAR o número que está conectado agora e ligar o ${alvo.telefone ?? `número ${alvo.numero}`}.\n\nAs campanhas ativas são pausadas. Continuar?`
+        : `O número ${alvo.numero} ainda não tem sessão salva.\n\nIsto vai DESCONECTAR o número conectado agora e a tela vai pedir um QR Code novo.\n\nSe você só quer usar o outro número, use a outra cópia da ferramenta em vez de trocar aqui.\n\nContinuar mesmo assim?`
+    );
+  };
+
   const trocar = useMutation({
     mutationFn: (numero: '1' | '2') =>
       post<{
@@ -150,12 +174,14 @@ function EscolhaDeNumero(): JSX.Element {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid gap-2 sm:grid-cols-2">
-          {(data?.numeros ?? [{ numero: '1' as const, telefone: null, ativo: true, conectado: false }, { numero: '2' as const, telefone: null, ativo: false, conectado: false }]).map(
+          {(data?.numeros ?? [{ numero: '1' as const, telefone: null, ativo: true, conectado: false, temSessaoSalva: false }, { numero: '2' as const, telefone: null, ativo: false, conectado: false, temSessaoSalva: false }]).map(
             (n) => (
               <button
                 key={n.numero}
                 type="button"
-                onClick={() => trocar.mutate(n.numero)}
+                onClick={() => {
+                  if (confirmarTroca(n)) trocar.mutate(n.numero);
+                }}
                 disabled={trocar.isPending || n.ativo}
                 aria-pressed={n.ativo}
                 className={
@@ -176,6 +202,13 @@ function EscolhaDeNumero(): JSX.Element {
                 <p className="mt-1 text-xs text-[var(--color-texto-suave)]">
                   {n.telefone ?? 'ainda não conectou nenhuma vez'}
                 </p>
+                {!n.ativo && (
+                  <p className="mt-0.5 text-xs text-[var(--color-texto-fraco)]">
+                    {n.temSessaoSalva
+                      ? 'sessão salva — troca sem pedir QR'
+                      : 'sem sessão — vai pedir QR'}
+                  </p>
+                )}
               </button>
             )
           )}
@@ -183,8 +216,9 @@ function EscolhaDeNumero(): JSX.Element {
 
         <p className="text-xs text-[var(--color-texto-suave)]">
           Só um número fica conectado por vez — dois ao mesmo tempo derrubariam
-          os dois. Cada um guarda a própria sessão, então trocar não apaga nada
-          e não pede QR de novo depois da primeira vez.
+          os dois. <strong>Clicar aqui desconecta o que está conectado agora.</strong>{' '}
+          Para usar os dois números ao mesmo tempo, rode a segunda cópia
+          (<code>pnpm copia brasil</code>) em vez de trocar por aqui.
         </p>
 
         <p className="text-xs text-[var(--color-texto-suave)]">

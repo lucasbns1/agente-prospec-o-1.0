@@ -327,3 +327,50 @@ describe('POST /api/canal/numero', () => {
     expect(await prisma.campaign.count({ where: { status: 'ATIVA' } })).toBe(1);
   });
 });
+
+/**
+ * ============================================================
+ * O CLIQUE PRECISA DIZER O QUE VAI CAUSAR
+ * ============================================================
+ * Trocar de numero DESCONECTA o que esta conectado. Se o slot de
+ * destino tem sessao salva, a volta e sem QR; se nao tem, a tela passa
+ * a pedir QR.
+ *
+ * Os dois cliques eram visualmente iguais, e a diferenca so aparecia
+ * depois — com o WhatsApp ja fora. Em uso real isso foi lido como
+ * "conectei um e o outro caiu".
+ */
+describe('GET /api/canal/numeros — o que cada slot promete', () => {
+  it('diz, por slot, se ha sessao salva em disco', async () => {
+    const r = await app.inject({
+      method: 'GET',
+      url: '/api/canal/numeros',
+      headers: { cookie },
+    });
+
+    expect(r.statusCode).toBe(200);
+    for (const n of r.json().numeros) {
+      expect(typeof n.temSessaoSalva, `numero ${n.numero}`).toBe('boolean');
+    }
+  });
+
+  it('sem pasta de sessao nenhuma, nenhum slot promete volta sem QR', async () => {
+    const original = process.env.WHATSAPP_SESSION_PATH;
+    process.env.WHATSAPP_SESSION_PATH = './pasta-que-nao-existe-em-lugar-nenhum';
+
+    try {
+      const r = await app.inject({
+        method: 'GET',
+        url: '/api/canal/numeros',
+        headers: { cookie },
+      });
+
+      // Prometer uma troca sem QR que nao acontece e pior do que avisar
+      // a mais: na duvida, a resposta e false.
+      expect(r.json().numeros.every((n: { temSessaoSalva: boolean }) => !n.temSessaoSalva)).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.WHATSAPP_SESSION_PATH;
+      else process.env.WHATSAPP_SESSION_PATH = original;
+    }
+  });
+});
