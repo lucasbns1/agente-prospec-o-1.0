@@ -614,6 +614,15 @@ export function Canal() {
                       que pedem ações opostas. Sem o código, "escaneie o
                       QR de novo" vira o conselho para todas — e para
                       conta restrita ele é pior que inútil. */}
+                  {data?.detalhe?.includes('440') && (
+                    <p className="mb-2 font-medium">
+                      Código 440: <strong>outra sessão assumiu este número.</strong>{' '}
+                      O mesmo WhatsApp está conectado em dois lugares — a outra
+                      cópia da ferramenta, ou o WhatsApp Web aberto noutro canto.
+                      Cada cópia precisa de um número diferente. Reconectar aqui
+                      só derruba o outro lado, que derruba este de volta.
+                    </p>
+                  )}
                   {data?.detalhe?.includes('403') && (
                     <p className="mb-2 font-medium">
                       Código 403: o WhatsApp está <strong>restringindo esta

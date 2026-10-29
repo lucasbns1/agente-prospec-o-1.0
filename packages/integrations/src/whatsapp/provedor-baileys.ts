@@ -60,6 +60,7 @@ import { caminhoDoArquivo, carregarArquivo, salvarArquivo } from './arquivo-em-d
 import { apagarCredenciais } from './apagar-credenciais.js';
 import { criarGuardaCredencial } from './guarda-credencial.js';
 import { criarControleDeReinicio } from './controle-de-reinicio.js';
+import { explicacaoDaQueda, reacaoAQueda } from './reacao-a-queda.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -345,9 +346,28 @@ export async function criarProvedorBaileys(
           return;
         }
 
-        const deslogado =
-          codigo === DisconnectReason?.loggedOut ||
-          (typeof codigo === 'number' && NAO_ADIANTA_RECONECTAR.has(codigo));
+        const reacao = reacaoAQueda(
+          codigo === DisconnectReason?.loggedOut ? 401 : (codigo as number | null)
+        );
+
+        // ============================================================
+        // OUTRA SESSAO ASSUMIU ESTE NUMERO (440)
+        // ============================================================
+        // A credencial continua VALIDA — apaga-la jogaria fora uma
+        // sessao boa. E reconectar e pior: a reconexao derruba a outra
+        // sessao, que reconecta e derruba esta, sem fim.
+        //
+        // Aconteceu assim: conectava uma copia da ferramenta e a outra
+        // caia; conectava a outra e a primeira caia. Parecia conflito
+        // entre as copias, e o que havia era o mesmo numero em duas.
+        if (reacao === 'parar-sessao-assumida') {
+          const explicacao = explicacaoDaQueda(440) ?? motivo;
+          log('Outra sessao assumiu este numero — parando aqui', { codigo, motivo });
+          emitir('auth_failure', `${explicacao} (código 440)`);
+          return;
+        }
+
+        const deslogado = reacao === 'descartar-credencial';
 
         if (deslogado) {
           // ============================================================

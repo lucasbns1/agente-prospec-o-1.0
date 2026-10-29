@@ -24,6 +24,7 @@ export * from './whatsapp/baileys-traducao.js';
 export * from './whatsapp/apagar-credenciais.js';
 export * from './whatsapp/guarda-credencial.js';
 export * from './whatsapp/controle-de-reinicio.js';
+export * from './whatsapp/reacao-a-queda.js';
 
 // --- Importacao (Fase 2) ---
 export * from './import/parser.js';
