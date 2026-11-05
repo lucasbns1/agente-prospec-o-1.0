@@ -18,7 +18,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { prisma } from '@prospector/database';
@@ -181,7 +181,22 @@ async function exigirWorkerVivo(): Promise<void> {
 function temSessaoSalva(numero: NumeroWhatsApp): boolean {
   const base = process.env.WHATSAPP_SESSION_PATH ?? './data/whatsapp';
   try {
-    return existsSync(join(caminhoDaSessao(base, numero), 'creds.json'));
+    // ============================================================
+    // O CAMINHO RELATIVO E DO WORKER, NAO DAQUI
+    // ============================================================
+    // `./data/whatsapp` resolve contra o diretorio de quem RODA. O
+    // worker sobe de `apps/worker`, entao a sessao mora em
+    // `apps/worker/data/whatsapp`. A API sobe de `apps/api`, e olhava
+    // para `apps/api/data/whatsapp` — uma pasta que nunca existe.
+    //
+    // O efeito: todo slot respondia "sem sessao — vai pedir QR",
+    // inclusive os que tinham sessao salva. O aviso ficou inutil
+    // justamente por aparecer sempre.
+    const absoluto = isAbsolute(base)
+      ? caminhoDaSessao(base, numero)
+      : join(process.cwd(), '..', 'worker', caminhoDaSessao(base, numero));
+
+    return existsSync(join(absoluto, 'creds.json'));
   } catch {
     // Na duvida, dizer que NAO tem: o aviso aparece a mais, e nao a
     // menos. Prometer uma volta sem QR que nao acontece e pior.

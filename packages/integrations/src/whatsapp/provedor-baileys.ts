@@ -61,6 +61,7 @@ import { apagarCredenciais } from './apagar-credenciais.js';
 import { criarGuardaCredencial } from './guarda-credencial.js';
 import { criarControleDeReinicio } from './controle-de-reinicio.js';
 import { explicacaoDaQueda, reacaoAQueda } from './reacao-a-queda.js';
+import { zerarCredencialNoLugar } from './zerar-credencial.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -211,7 +212,10 @@ export async function criarProvedorBaileys(
   // Nao importa o que sobrou no disco: o socket nasce SEM registro, e
   // um socket sem registro so tem um caminho — pedir QR.
   if (opcoes.sessaoNova) {
-    state.creds = initAuthCreds();
+    // NO LUGAR, e nao trocando o objeto: o `saveCreds` do Baileys fecha
+    // sobre a credencial lida do disco, entao trocar `state.creds`
+    // deixaria o socket com a nova e o DISCO recebendo a velha.
+    zerarCredencialNoLugar(state.creds, initAuthCreds);
     log('Sessao nova: credencial do disco ignorada, comecando do zero');
   }
 
@@ -253,7 +257,7 @@ export async function criarProvedorBaileys(
     // Zerar aqui torna o resultado independente do disco: depois de um
     // 401, o proximo socket SEMPRE nasce sem registro, e socket sem
     // registro pede QR.
-    state.creds = initAuthCreds();
+    zerarCredencialNoLugar(novo.state.creds, initAuthCreds);
     // Reabre ja apontando para o estado NOVO: reabrir com o gravador
     // antigo seria o mesmo defeito com mais passos.
     guardaCredencial.liberar(() => novo.saveCreds());
