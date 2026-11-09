@@ -374,3 +374,53 @@ describe('GET /api/canal/numeros — o que cada slot promete', () => {
     }
   });
 });
+
+/**
+ * ============================================================
+ * O NAVEGADOR NAO SEPARA COOKIE POR PORTA
+ * ============================================================
+ * `localhost:5173` e `localhost:5174` sao o MESMO host para efeito de
+ * cookie. Com um nome fixo, entrar numa copia da ferramenta
+ * sobrescrevia o cookie da outra, e a primeira passava a responder 401.
+ *
+ * Reproduzido com as duas copias no ar: login em 3333, login em 3334, e
+ * `/api/auth/me` em 3333 devolveu 401.
+ */
+describe('cookie de sessao — duas copias no mesmo navegador', () => {
+  it('o nome do cookie carrega a porta da API', async () => {
+    const { cookieSessao } = await import('../apps/api/src/plugins/auth.js');
+    const COOKIE_SESSAO = cookieSessao();
+
+    expect(COOKIE_SESSAO).toContain(process.env.API_PORT ?? '3333');
+    // O nome antigo, sem porta, e o que fazia uma copia derrubar a
+    // outra. Ele nao pode voltar.
+    expect(COOKIE_SESSAO).not.toBe('prospector_session');
+  });
+
+  it('o cookie do login e o mesmo nome que a rota autenticada le', async () => {
+    const { cookieSessao } = await import('../apps/api/src/plugins/auth.js');
+    const COOKIE_SESSAO = cookieSessao();
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        email: process.env.SEED_USER_EMAIL ?? 'admin@local',
+        senha: process.env.SEED_USER_PASSWORD ?? 'prospector123',
+      },
+    });
+
+    // Se o nome usado para GRAVAR divergir do usado para LER, ninguem
+    // consegue entrar — e o sintoma seria "login nao funciona", sem
+    // pista nenhuma.
+    const enviado = login.headers['set-cookie']!.toString();
+    expect(enviado.startsWith(`${COOKIE_SESSAO}=`)).toBe(true);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: { cookie: enviado.split(';')[0]! },
+    });
+    expect(me.statusCode).toBe(200);
+  });
+});

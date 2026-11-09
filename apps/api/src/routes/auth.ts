@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '@prospector/database';
 import { loginSchema } from '@prospector/shared';
 import {
-  COOKIE_SESSAO,
+  cookieSessao,
   criarSessao,
   destruirSessao,
   exigirAutenticacao,
@@ -51,16 +51,16 @@ export async function rotasAuth(app: FastifyInstance): Promise<void> {
     request.log.info({ userId: usuario.id }, 'Login realizado');
 
     return reply
-      .setCookie(COOKIE_SESSAO, token, opcoesCookie(expiresAt))
+      .setCookie(cookieSessao(), token, opcoesCookie(expiresAt))
       .send({
         usuario: { id: usuario.id, email: usuario.email, nome: usuario.nome },
       });
   });
 
   app.post('/api/auth/logout', async (request, reply) => {
-    const token = request.cookies[COOKIE_SESSAO];
+    const token = request.cookies[cookieSessao()];
     if (token) await destruirSessao(token);
-    return reply.clearCookie(COOKIE_SESSAO, { path: '/' }).send({ ok: true });
+    return reply.clearCookie(cookieSessao(), { path: '/' }).send({ ok: true });
   });
 
   app.get(

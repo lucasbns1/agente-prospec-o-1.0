@@ -24,7 +24,42 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { prisma } from '@prospector/database';
 import { NaoAutenticadoError } from '../lib/errors.js';
 
-export const COOKIE_SESSAO = 'prospector_session';
+/**
+ * O nome do cookie de sessao — com a porta da API dentro.
+ *
+ * ============================================================
+ * O NAVEGADOR NAO SEPARA COOKIE POR PORTA
+ * ============================================================
+ * `localhost:5173` e `localhost:5174` sao o MESMO host para efeito de
+ * cookie: a porta nao entra na conta. Com um nome fixo, entrar numa
+ * copia da ferramenta sobrescrevia o cookie da outra, e a primeira
+ * respondia 401 na requisicao seguinte.
+ *
+ * Reproduzido com as duas copias no ar: login em 3333, login em 3334,
+ * e `/api/auth/me` em 3333 passou a devolver 401.
+ *
+ * Pondo a porta no NOME, cada copia tem o seu cookie e os dois convivem
+ * no mesmo navegador. Nao e seguranca — e separacao: o cookie continua
+ * httpOnly e sameSite, e a sessao continua valendo pelo hash no banco,
+ * que e de outra copia e nao seria aceito de qualquer forma.
+ *
+ * Efeito colateral unico, e de uma vez so: quem estiver logado cai no
+ * login na primeira vez que subir esta versao, porque o cookie antigo
+ * tem outro nome.
+ */
+export function cookieSessao(): string {
+  // ============================================================
+  // LIDO NA HORA, E NAO NA CARGA DO MODULO
+  // ============================================================
+  // Como constante de modulo isto nao funcionava: os `import` de um
+  // modulo ES rodam ANTES do `config()` do dotenv, entao `API_PORT`
+  // ainda nao existia e as DUAS copias caiam no mesmo padrao, 3333 —
+  // o cookie continuava colidindo, so que com nome novo.
+  //
+  // Pego no teste: com as duas no ar, o pote do navegador ficou com um
+  // unico `prospector_session_3333` e a sessao de Portugal morreu.
+  return `prospector_session_${process.env.API_PORT ?? '3333'}`;
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -91,7 +126,7 @@ export async function exigirAutenticacao(
   request: FastifyRequest,
   _reply: FastifyReply
 ): Promise<void> {
-  const token = request.cookies[COOKIE_SESSAO];
+  const token = request.cookies[cookieSessao()];
   if (!token) throw new NaoAutenticadoError();
 
   const sessao = await prisma.session.findUnique({
